@@ -15,8 +15,8 @@ import torch
 from huggingface_hub import snapshot_download
 from torch import Tensor
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.annotation.vocab import phrase_for as contact_phrase_for
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.datasets.diverse_actor_selection import ACTION_LAYOUTS
 from lerobot.datasets.embodiment import (
     EMBODIMENT_NAMES,
@@ -48,15 +48,25 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import require_package
 
-from .action_layout import native_joint_widths, require_prefix_valid_mask, trim_to_native, valid_dim_mask
+from .action_layout import (
+    JOINT_SLOTS,
+    native_joint_widths,
+    require_prefix_valid_mask,
+    trim_to_native,
+    valid_dim_mask,
+)
 from .anchor_encoding import (
     ANCHOR_KEY,
     AnchorDecodeStep,
     AnchorEncodeStep,
     policy_action_with_anchor_to_transition,
 )
-from .hand_block import MolmoAct2HandBlockProcessorStep
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
+from .hand_block import (
+    HAND_DELTA_BLOCKS,
+    MolmoAct2HandBlockProcessorStep,
+    MolmoAct2HandMonitorProcessorStep,
+)
 
 _FAST_BIN_PROBE_LIMIT = 2048  # FAST bin values are c - min_token; nothing legitimate exceeds this
 
@@ -1297,6 +1307,10 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # per config — the encoder emits N tokens whether or not depth is present or
     # dropped out (it swaps in its learned null bank), so the prompt never varies.
     num_depth_tokens: int = 0
+    # Width of the state the prompt discretizes; None = the whole vector. The hand block's
+    # ablation C (hand_state off) renders the joint slots only, leaving the padded hand slots
+    # out of the token string instead of printing them as constant mid-range tokens.
+    prompt_state_width: int | None = None
     # Runtime toggle (not persisted): "action" builds the action prompt;
     # "subtask_generation" builds the generation prompt/labels instead. Callers
     # flip it around a pipeline call so generation gets the SAME normalization.
@@ -1357,7 +1371,14 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "rgb_dropout": self.rgb_dropout,
             "rgb_dropout_key": self.rgb_dropout_key,
             "num_depth_tokens": self.num_depth_tokens,
+            "prompt_state_width": self.prompt_state_width,
         }
+
+    def _prompt_state(self, state: Tensor) -> Tensor:
+        """The state slots the prompt renders as tokens (see prompt_state_width)."""
+        if self.prompt_state_width is None:
+            return state
+        return state[..., : int(self.prompt_state_width)]
 
     def _resolve_max_sequence_length(
         self,
@@ -1555,7 +1576,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             complementary, self._resolve_image_keys(observation), batch_size
         )
 
-        state_np = state.detach().cpu().numpy()
+        state_np = self._prompt_state(state).detach().cpu().numpy()
         prompts: list[str] = []
         fulls: list[str] = []
         flat_images: list[np.ndarray] = []
@@ -1876,7 +1897,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         prompt_texts: list[str] = []
         full_texts: list[str] = []
         flat_images: list[np.ndarray] = []
-        state_np = state.detach().cpu().numpy()
+        state_np = self._prompt_state(state).detach().cpu().numpy()
         build_action_labels = action is not None and self.action_mode in {"discrete", "both"}
         max_num_images = 0
         history_on = torch.ones(batch_size, dtype=torch.bool)
@@ -1960,7 +1981,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_horizon = int(action.shape[1])
         max_sequence_length = self._resolve_max_sequence_length(
             num_images=max_num_images,
-            state_dim=int(state.shape[-1]),
+            state_dim=int(state_np.shape[-1]),
             action_dim=max(real_action_dim, 1),
             action_horizon=action_horizon,
             include_discrete_action=build_action_labels,
@@ -2222,6 +2243,30 @@ def make_molmoact2_pre_post_processors(
         )
     if hand_block and not (use_anchor and action_encoding == "anchor"):
         raise ValueError("hand_block requires action_encoding='anchor'.")
+    hand_cfg = getattr(config, "hand", None)
+    hand_state_on = bool(getattr(hand_cfg, "hand_state", True))
+    hand_step_kwargs: dict[str, Any] = {"stats_index_key": stats_index_key, "hand_state": hand_state_on}
+    restore_action_dim = env_action_dim
+    if hand_block:
+        # The deployed command is the joint block: the monitor step drops the hand slots, so
+        # the width restore trims to the joints the robot has, not to the widened feature.
+        restore_action_dim = int(getattr(config, "hand_joint_action_dim", None) or JOINT_SLOTS)
+        if float(getattr(hand_cfg, "fk_weight", 0.0)) > 0:
+            # The FK term unnormalizes the joint block of the model's own sample and scores the
+            # residual in the hand columns' band: ship the rows' joint quantiles and the
+            # per-step half-bands of the position, rotation and aperture columns.
+            action_q01 = torch.as_tensor(artifact["stats"][ACTION]["q01"])  # [E, T, 15]
+            action_q99 = torch.as_tensor(artifact["stats"][ACTION]["q99"])
+            has_hand = [bool(v) for v in artifact["hand_block"]["layout_has_hand"]]
+            if not any(has_hand):
+                raise ValueError("stats artifact carries hand_block columns but no row has a chain.")
+            hand_row = has_hand.index(True)
+            half_band = (action_q99[hand_row] - action_q01[hand_row]) / 2.0  # [T, 15]
+            hand_step_kwargs.update(
+                joint_q01=action_q01[..., :JOINT_SLOTS].clone(),
+                joint_q99=action_q99[..., :JOINT_SLOTS].clone(),
+                block_scale=half_band[:, [JOINT_SLOTS + lo for lo, _ in HAND_DELTA_BLOCKS]].clone(),
+            )
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
@@ -2234,7 +2279,7 @@ def make_molmoact2_pre_post_processors(
             default_embodiment_index=default_embodiment_index,
         ),
         *([AnchorEncodeStep(encoding=action_encoding)] if use_anchor else []),
-        *([MolmoAct2HandBlockProcessorStep(stats_index_key=stats_index_key)] if hand_block else []),
+        *([MolmoAct2HandBlockProcessorStep(**hand_step_kwargs)] if hand_block else []),
         MolmoAct2MaskedNormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -2272,6 +2317,8 @@ def make_molmoact2_pre_post_processors(
             rgb_dropout=rgb_dropout,
             rgb_dropout_key=rgb_dropout_key,
             num_depth_tokens=num_depth_tokens,
+            # Ablation C: the prompt renders the joint state tokens only.
+            prompt_state_width=JOINT_SLOTS if hand_block and not hand_state_on else None,
         ),
         DeviceProcessorStep(device=config.device),
     ]
@@ -2286,12 +2333,13 @@ def make_molmoact2_pre_post_processors(
             default_embodiment_index=default_embodiment_index,
             stats_index_key=stats_index_key,
         ),
+        *([MolmoAct2HandMonitorProcessorStep(stats_index_key=stats_index_key)] if hand_block else []),
         *([AnchorDecodeStep(encoding=action_encoding)] if use_anchor else []),
         *(
             [
-                MolmoAct2RestoreActionLayoutProcessorStep(native_action_dim=env_action_dim)
+                MolmoAct2RestoreActionLayoutProcessorStep(native_action_dim=restore_action_dim)
             ]
-            if env_action_dim is not None
+            if restore_action_dim is not None
             else []
         ),
         DeviceProcessorStep(device="cpu"),

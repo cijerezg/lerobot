@@ -143,9 +143,7 @@ class ActionAuxiliaryLossConfig:
             has_spec = bool(self.band_spec.strip())
             has_powers = bool(self.band_powers)
             if has_spec != has_powers:
-                raise ValueError(
-                    "enabled action auxiliary loss requires band_spec and fixed band_powers."
-                )
+                raise ValueError("enabled action auxiliary loss requires band_spec and fixed band_powers.")
             if not has_spec:
                 if legacy_enabled:
                     self.enabled = False
@@ -186,9 +184,7 @@ class DiscreteActionAuxiliaryLossConfig:
                         "enabled discrete action auxiliary loss requires a positive ordinal_weight."
                     )
             elif not self.band_spec.strip():
-                raise ValueError(
-                    "enabled discrete action auxiliary loss requires a non-empty band_spec."
-                )
+                raise ValueError("enabled discrete action auxiliary loss requires a non-empty band_spec.")
             else:
                 self.path_weight = 0.0
                 self.shape_weight = 0.0
@@ -241,8 +237,13 @@ class FutureVisualLossConfig:
         if not math.isfinite(self.mistake_weight) or self.mistake_weight < 1:
             raise ValueError("future_visual_loss.mistake_weight must be finite and >= 1.")
         for name in (
-            "target_update_steps", "latent_dim", "predictor_width", "predictor_layers",
-            "predictor_heads", "calibration_pairs", "calibration_patches_per_camera",
+            "target_update_steps",
+            "latent_dim",
+            "predictor_width",
+            "predictor_layers",
+            "predictor_heads",
+            "calibration_pairs",
+            "calibration_patches_per_camera",
             "target_encode_batch_size",
         ):
             if getattr(self, name) < 1:
@@ -251,6 +252,59 @@ class FutureVisualLossConfig:
             raise ValueError("future_visual_loss.latent_dim must be >= 2 for normalized L1.")
         if self.predictor_width % self.predictor_heads:
             raise ValueError("future_visual_loss.predictor_width must divide evenly into predictor_heads.")
+
+
+# Widths of the vectors when the hand block is on (policies/molmoact2/hand_block.py).
+HAND_BLOCK_ACTION_WIDTH = 15  # joints 0..7, hand delta 8..14
+HAND_BLOCK_STATE_WIDTH = 18  # joints 0..7, hand pose 8..17
+HAND_FAST_LAYOUTS = ("joints", "masked", "hand_first")
+
+
+@dataclass
+class HandBlockConfig:
+    """The EE mixture loss knobs (docs/ee_mixture_loss/TODO.md Phase 3). Read when
+    ``MolmoAct2Config.hand_block`` is on; ignored otherwise.
+
+    Flow loss = hand term + fk_weight * FK term + joint_weight * joint term, every term a block
+    mean so each sits at the joints' chance level. Rows without a kinematic chain (MolmoAct,
+    ARX5, UR5, UR7e, YAM) have no hand block and no FK term; their joint block keeps weight 1,
+    since it is their only action signal.
+    """
+
+    # lambda on the joint flow block of rows that carry a hand block (0.1 is ablation A).
+    joint_weight: float = 1.0
+    # Weight of the FK term: hand pose of the implied clean joint sample vs the demo hand.
+    fk_weight: float = 1.0
+    # FAST tokens. "joints": the joint block only, as before the hand block. "masked": the
+    # hand chunk and the joint chunk tokenized separately, each behind its own start token,
+    # neither span attending to the other, shared positions. "hand_first": one causal
+    # sequence, hand span then joint span (ablation B).
+    fast_layout: str = "masked"
+    # Hand pose in the state (slots 8..17, discretized like the joints). Off = ablation C:
+    # the prompt carries the joint state tokens only.
+    hand_state: bool = True
+    # Framing tokens of the hand FAST span. Added to the tokenizer when absent; the policy
+    # grows its LM head and input embedding to cover them (modeling: ensure_hand_token_rows).
+    hand_start_token: str = "<hand_start>"  # nosec B105
+    hand_end_token: str = "<hand_end>"  # nosec B105
+
+    def __post_init__(self) -> None:
+        for name in ("joint_weight", "fk_weight"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"hand.{name} must be finite and >= 0, got {value}.")
+        if self.fast_layout not in HAND_FAST_LAYOUTS:
+            raise ValueError(
+                f"hand.fast_layout must be one of {HAND_FAST_LAYOUTS}, got {self.fast_layout!r}."
+            )
+        if (
+            not self.hand_start_token
+            or not self.hand_end_token
+            or self.hand_start_token == self.hand_end_token
+        ):
+            raise ValueError(
+                "hand.hand_start_token and hand.hand_end_token must be two distinct non-empty tokens."
+            )
 
 
 @PreTrainedConfig.register_subclass("molmoact2")
@@ -336,16 +390,22 @@ class MolmoAct2Config(PreTrainedConfig):
     discrete_action_auxiliary_loss: DiscreteActionAuxiliaryLossConfig = field(
         default_factory=DiscreteActionAuxiliaryLossConfig
     )
-    depth_gripper_event_loss: DepthGripperEventLossConfig = field(
-        default_factory=DepthGripperEventLossConfig
-    )
+    depth_gripper_event_loss: DepthGripperEventLossConfig = field(default_factory=DepthGripperEventLossConfig)
     num_inference_steps: int | None = None
     mask_action_dim_padding: bool = True
     # EE mixture loss (docs/ee_mixture_loss/TODO.md): append the fingertip-pose block to the
     # action chunk (slots 8..14) and the state (slots 8..17), from the kinematics assets. The
     # per-layout stats artifact must carry the matching "hand_block" columns
-    # (compute_diverse_stats.py --hand); the factory refuses a mismatch either way.
+    # (compute_diverse_stats.py --hand); the factory refuses a mismatch either way. With the
+    # flag on, the action feature is widened to 15 and the state feature to 18 in
+    # __post_init__ (the layout step pads to those widths; the trainer refuses a wider batch).
     hand_block: bool = False
+    hand: HandBlockConfig = field(default_factory=HandBlockConfig)
+    # The joint widths the features had before __post_init__ widened them: what the deployed
+    # command and the per-joint limits are measured in. Filled automatically; a config that
+    # already arrives widened and says nothing falls back to the 8 joint slots.
+    hand_joint_action_dim: int | None = None
+    hand_joint_state_dim: int | None = None
     enable_inference_cuda_graph: bool = True
     # MolmoAct2-local eval option. When enabled, stochastic continuous action
     # generation uses a rollout-local generator derived from eval_seed.
@@ -438,13 +498,9 @@ class MolmoAct2Config(PreTrainedConfig):
                 f"Unsupported dtype={self.dtype!r}. Expected 'float32', 'bfloat16', or 'float16'."
             )
         if not 0 <= self.subtask_dropout < 1:
-            raise ValueError(
-                f"subtask_dropout must be in [0, 1), got {self.subtask_dropout}."
-            )
+            raise ValueError(f"subtask_dropout must be in [0, 1), got {self.subtask_dropout}.")
         if not 0 <= self.metadata_dropout < 1:
-            raise ValueError(
-                f"metadata_dropout must be in [0, 1), got {self.metadata_dropout}."
-            )
+            raise ValueError(f"metadata_dropout must be in [0, 1), got {self.metadata_dropout}.")
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}.")
         if self.lora_alpha < 1:
@@ -483,6 +539,59 @@ class MolmoAct2Config(PreTrainedConfig):
                 raise ValueError("future_visual_loss requires trainable vision layers, without depth_warmup.")
         if self.depth_gripper_event_loss.enabled and self.pointmap_config is None:
             raise ValueError("depth_gripper_event_loss requires pointmap_config.")
+        if self.hand_block:
+            self._widen_features_for_hand_block()
+        elif self.hand != HandBlockConfig():
+            raise ValueError("hand.* settings are read only when hand_block is on.")
+
+    def _widen_features_for_hand_block(self) -> None:
+        """The hand block appends 7 action and 10 state slots after the 8 joint slots.
+
+        The layout step pads every row to these widths and the hand step fills the slots,
+        so the features say what the batch IS; a narrower feature would make the trainer's
+        width check reject the padded batch, a wider one is left alone.
+        """
+        joint_slots = HAND_BLOCK_ACTION_WIDTH - 7
+        action_feature = self.output_features.get(ACTION) if self.output_features else None
+        if action_feature is not None and action_feature.shape:
+            width = int(action_feature.shape[0])
+            if width > HAND_BLOCK_ACTION_WIDTH:
+                raise ValueError(
+                    f"hand_block expects joint action widths <= {joint_slots}, "
+                    f"got an action feature of width {width}."
+                )
+            if width < HAND_BLOCK_ACTION_WIDTH:
+                if width > joint_slots:
+                    raise ValueError(f"hand_block expects joint action widths <= {joint_slots}, got {width}.")
+                if self.hand_joint_action_dim is None:
+                    self.hand_joint_action_dim = width
+                self.output_features[ACTION] = PolicyFeature(
+                    type=action_feature.type, shape=(HAND_BLOCK_ACTION_WIDTH,)
+                )
+        if self.hand_joint_action_dim is None:
+            self.hand_joint_action_dim = joint_slots
+        if not 1 <= self.hand_joint_action_dim <= joint_slots:
+            raise ValueError(
+                f"hand_joint_action_dim must be in [1, {joint_slots}], got {self.hand_joint_action_dim}."
+            )
+        state_feature = self.input_features.get(OBS_STATE) if self.input_features else None
+        if state_feature is not None and state_feature.shape:
+            width = int(state_feature.shape[0])
+            if width > HAND_BLOCK_STATE_WIDTH:
+                raise ValueError(
+                    f"hand_block expects joint state widths <= {joint_slots}, "
+                    f"got a state feature of width {width}."
+                )
+            if width < HAND_BLOCK_STATE_WIDTH:
+                if width > joint_slots:
+                    raise ValueError(f"hand_block expects joint state widths <= {joint_slots}, got {width}.")
+                if self.hand_joint_state_dim is None:
+                    self.hand_joint_state_dim = width
+                self.input_features[OBS_STATE] = PolicyFeature(
+                    type=state_feature.type, shape=(HAND_BLOCK_STATE_WIDTH,)
+                )
+        if self.hand_joint_state_dim is None:
+            self.hand_joint_state_dim = joint_slots
 
     def inferred_max_sequence_length(
         self,

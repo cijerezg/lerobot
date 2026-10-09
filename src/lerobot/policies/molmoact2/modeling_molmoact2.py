@@ -27,6 +27,7 @@ from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
 from ..rtc.modeling_rtc import RTCProcessor
 from .action_layout import native_joint_widths
 from .configuration_molmoact2 import MolmoAct2Config
+from .hand_loss import block_mean_flow_loss, hand_fk_term, implied_clean_sample
 
 logger = logging.getLogger(__name__)
 
@@ -2664,10 +2665,30 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if return_diagnostics
             else None
         )
-        if self.config.mask_action_dim_padding:
+        hand_on = bool(getattr(self.config, "hand_block", False))
+        self._hand_loss_metrics = {}
+        if hand_on:
+            # EE mixture loss (hand_loss.py): block means instead of the valid-slot mean, so
+            # the joint block, the three hand blocks and the FK term weigh as configured.
+            if batch.get("action_dim_is_pad") is None:
+                raise RuntimeError("hand_block needs action_dim_is_pad in the batch.")
+            loss, block_means = block_mean_flow_loss(
+                loss, batch["action_dim_is_pad"], joint_weight=float(self.config.hand.joint_weight)
+            )
+            self._hand_loss_metrics.update({f"hand_flow_{k}": v.item() for k, v in block_means.items()})
+        elif self.config.mask_action_dim_padding:
             loss = self._apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
         flow_loss_by_example = loss.reshape(batch_size, -1).mean(dim=1)
         loss_by_example = flow_loss_by_example
+        fk_weight = float(self.config.hand.fk_weight) if hand_on else 0.0
+        if fk_weight > 0 and batch.get("hand_fk_valid") is not None and bool(batch["hand_fk_valid"].any()):
+            x_hat = implied_clean_sample(xt, pred_velocity, timesteps)
+            fk_by_example, fk_means = hand_fk_term(
+                x_hat, batch, action_horizon_is_pad=batch.get("action_horizon_is_pad")
+            )
+            loss_by_example = loss_by_example + fk_weight * fk_by_example.to(loss_by_example.dtype)
+            self._hand_loss_metrics.update({f"hand_{k}": v.item() for k, v in fk_means.items()})
+            self._hand_loss_metrics["hand_fk_loss"] = fk_by_example.detach().float().mean().item()
         auxiliary_components: dict[str, Tensor] = {}
         auxiliary_diagnostics: dict[str, Tensor] = {}
         auxiliary_loss_by_example = torch.zeros_like(flow_loss_by_example)
@@ -3424,6 +3445,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 )
             if flow_diagnostics_requested:
                 metrics.update(flow_diagnostics)
+
+        # Hand-block scalars (block means of the flow loss, the FK term) from the flow pass.
+        metrics.update(getattr(self, "_hand_loss_metrics", None) or {})
 
         depth_event_config = self.config.depth_gripper_event_loss
         if depth_event_config.enabled:

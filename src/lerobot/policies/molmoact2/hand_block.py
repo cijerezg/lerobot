@@ -22,7 +22,9 @@ every row (global per-step stats, one scale per block), see ``scripts/compute_di
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import math
+from dataclasses import dataclass, field
 from functools import cache
 from typing import Any
 
@@ -115,6 +117,53 @@ def hand_state(p: Tensor, r: Tensor, g: Tensor) -> Tensor:
     return torch.cat([p, r[..., :, 0], r[..., :, 1], g[..., None]], dim=-1)
 
 
+def rotation_exp(v: Tensor) -> Tensor:
+    """Rodrigues: rotation vectors (..., 3) to matrices (..., 3, 3); the inverse of ``rotation_log``."""
+    v = torch.as_tensor(v)
+    theta = v.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    k = v / theta
+    kx = torch.zeros((*v.shape[:-1], 3, 3), dtype=v.dtype, device=v.device)
+    kx[..., 0, 1], kx[..., 0, 2] = -k[..., 2], k[..., 1]
+    kx[..., 1, 0], kx[..., 1, 2] = k[..., 2], -k[..., 0]
+    kx[..., 2, 0], kx[..., 2, 1] = -k[..., 1], k[..., 0]
+    eye = torch.eye(3, dtype=v.dtype, device=v.device).expand(*v.shape[:-1], 3, 3)
+    s = torch.sin(theta)[..., None]
+    c = torch.cos(theta)[..., None]
+    return eye + s * kx + (1 - c) * (kx @ kx)
+
+
+def hand_monitor_gap(layout_ids: Tensor, anchor: Tensor, action: Tensor) -> dict[str, Tensor]:
+    """Joint-vs-hand agreement of one unnormalized chunk, the inference monitor.
+
+    ``anchor`` (B, >= 8) raw joints, ``action`` (B, T, 15) raw anchor deltas. The hand the
+    decoded joints produce, ``FK(anchor + joint delta)`` relative to ``FK(anchor)``, against the
+    hand block the model wrote. Returns per-row means over the chunk: ``position_mm``,
+    ``rotation_deg``, ``aperture_mm`` and ``valid`` (False where the layout has no chain; the
+    numbers are NaN there).
+    """
+    action = torch.as_tensor(action)
+    anchor = torch.as_tensor(anchor).to(action)
+    joints = anchor[:, None, :JOINT_SLOTS] + action[..., :JOINT_SLOTS]
+    p0, r0, g0, valid = hand_pose(layout_ids, anchor[:, :JOINT_SLOTS])
+    pt, rt, gt, _ = hand_pose(layout_ids, joints)
+    fk_delta = hand_delta(p0[:, None], r0[:, None], g0[:, None], pt, rt, gt)  # (B, T, 7)
+    pred = action[..., HAND_ACTION_SLOTS]
+    position = (fk_delta[..., :3] - pred[..., :3]).norm(dim=-1).mean(-1) * 1000.0
+    relative = rotation_exp(fk_delta[..., 3:6].double()) @ rotation_exp(pred[..., 3:6].double()).transpose(
+        -1, -2
+    )
+    angle = rotation_log(relative.reshape(-1, 3, 3)).norm(dim=-1).reshape(pred.shape[:-1])
+    rotation = angle.to(action).mean(-1) * (180.0 / math.pi)
+    aperture = (fk_delta[..., 6] - pred[..., 6]).abs().mean(-1) * 1000.0
+    nan = torch.full_like(position, float("nan"))
+    return {
+        "position_mm": torch.where(valid, position, nan),
+        "rotation_deg": torch.where(valid, rotation, nan),
+        "aperture_mm": torch.where(valid, aperture, nan),
+        "valid": valid,
+    }
+
+
 def unnormalize_joint_block(normalized: Tensor, q01: Tensor, q99: Tensor) -> Tensor:
     """Inverse of the QUANTILES normalizer on the joint block: ``(x + 1) (q99 - q01) / 2 + q01``."""
     return (normalized + 1.0) * (q99 - q01) / 2.0 + q01
@@ -147,9 +196,36 @@ class MolmoAct2HandBlockProcessorStep(ProcessorStep):
     """
 
     stats_index_key: str = "action_layout_id"
+    # Hand pose in the state (slots 8..17). Off (ablation C): the slots stay zero and padding,
+    # and the pack step renders the joint state tokens only (prompt_state_width).
+    hand_state: bool = True
+    # The FK term's inputs (hand_loss.py), gathered per row and shipped as hand_fk_* keys:
+    # the artifact's joint-block q01/q99 ([E, T, 8], so the model can unnormalize the joint
+    # block of its own sample) and the half-bands of the hand columns ([T, 3]: position,
+    # rotation, aperture) that put the FK residual in the hand block's normalized units.
+    # None = no FK keys (inference, or a run without the FK term). Tensors ride state_dict.
+    joint_q01: Tensor | None = None
+    joint_q99: Tensor | None = None
+    block_scale: Tensor | None = None
 
     def get_config(self) -> dict[str, Any]:
-        return {"stats_index_key": self.stats_index_key}
+        return {"stats_index_key": self.stats_index_key, "hand_state": bool(self.hand_state)}
+
+    def state_dict(self) -> dict[str, Tensor]:
+        return {
+            name: torch.as_tensor(getattr(self, name)).detach().cpu().clone()
+            for name in ("joint_q01", "joint_q99", "block_scale")
+            if getattr(self, name) is not None
+        }
+
+    def load_state_dict(self, state: dict[str, Tensor]) -> None:
+        for name in ("joint_q01", "joint_q99", "block_scale"):
+            if name in state:
+                setattr(self, name, torch.as_tensor(state[name]).detach().cpu().clone())
+
+    @property
+    def emits_fk_keys(self) -> bool:
+        return self.joint_q01 is not None and self.joint_q99 is not None and self.block_scale is not None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -172,15 +248,19 @@ class MolmoAct2HandBlockProcessorStep(ProcessorStep):
 
         p0, r0, g0, valid = hand_pose(layout_ids, state)
         state = state.clone()
-        state[:, HAND_STATE_SLOTS] = hand_state(p0, r0, g0)
         state_mask = torch.as_tensor(complementary["state_dim_is_pad"], dtype=torch.bool).clone()
-        state_mask[:, HAND_STATE_SLOTS] = ~valid[:, None]
+        if self.hand_state:
+            state[:, HAND_STATE_SLOTS] = hand_state(p0, r0, g0)
+            state_mask[:, HAND_STATE_SLOTS] = ~valid[:, None]
+        else:
+            state[:, HAND_STATE_SLOTS] = 0.0
+            state_mask[:, HAND_STATE_SLOTS] = True
         observation = observation.copy()
         observation[OBS_STATE] = state
         complementary["state_dim_is_pad"] = state_mask
 
         history_key = f"history.{OBS_STATE}"
-        if history_key in complementary:
+        if history_key in complementary and self.hand_state:
             history = torch.as_tensor(complementary[history_key]).clone()  # (B, H, 18)
             ph, rh, gh, _ = hand_pose(layout_ids, history)
             history[..., HAND_STATE_SLOTS] = hand_state(ph, rh, gh)
@@ -207,12 +287,120 @@ class MolmoAct2HandBlockProcessorStep(ProcessorStep):
             action_mask[:, HAND_ACTION_SLOTS] = ~valid[:, None]
             transition[TransitionKey.ACTION] = action
             complementary["action_dim_is_pad"] = action_mask
+            if self.emits_fk_keys:
+                complementary.update(
+                    self._fk_keys(layout_ids, valid, anchor, pt, rt, gt, horizon=int(action.shape[1]))
+                )
         elif "action_dim_is_pad" in complementary:
             action_mask = torch.as_tensor(complementary["action_dim_is_pad"], dtype=torch.bool).clone()
             action_mask[:, HAND_ACTION_SLOTS] = ~valid[:, None]
             complementary["action_dim_is_pad"] = action_mask
 
         transition[TransitionKey.OBSERVATION] = observation
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def _fk_keys(
+        self,
+        layout_ids: Tensor,
+        valid: Tensor,
+        anchor: Tensor,
+        pt: Tensor,
+        rt: Tensor,
+        gt: Tensor,
+        *,
+        horizon: int,
+    ) -> dict[str, Tensor]:
+        """The FK term's batch keys (hand_loss.HAND_FK_KEYS), gathered for this batch's rows."""
+        q01 = torch.as_tensor(self.joint_q01)
+        q99 = torch.as_tensor(self.joint_q99)
+        scale = torch.as_tensor(self.block_scale)
+        if int(q01.shape[1]) != horizon or int(scale.shape[0]) != horizon:
+            raise ValueError(
+                f"hand FK stats hold a {int(q01.shape[1])}-step chunk, the batch a {horizon}-step one."
+            )
+        rows = layout_ids.clamp(0, int(q01.shape[0]) - 1)
+        return {
+            "hand_fk_valid": valid.clone(),
+            "hand_fk_layout_id": layout_ids.clone(),
+            "hand_fk_anchor": anchor[:, :JOINT_SLOTS].detach().to(torch.float32).clone(),
+            "hand_fk_q01": q01[rows].to(torch.float32),
+            "hand_fk_q99": q99[rows].to(torch.float32),
+            "hand_fk_target_p": pt.detach().to(torch.float32),
+            "hand_fk_target_r": rt.detach().to(torch.float32),
+            "hand_fk_target_g": gt.detach().to(torch.float32),
+            "hand_fk_block_scale": scale.to(torch.float32).clone(),
+        }
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register(name="molmoact2_hand_monitor")
+@dataclass
+class MolmoAct2HandMonitorProcessorStep(ProcessorStep):
+    """Inference: read the hand block of the generated chunk as a free monitor, then drop it.
+
+    Insert after the unnormalizer and before ``AnchorDecodeStep``. The action arrives
+    ``(B, T, 15)`` in raw anchor-delta units, the anchor (the raw state prefix, >= 8 wide) and
+    the row's layout id ride the complementary data. The gap between the hand the decoded
+    joints produce and the hand the model wrote goes to ``complementary["hand_monitor"]`` and
+    to :attr:`last`; the action leaves 8 wide (the joint block) and so does the anchor, so the
+    anchor decode and the width restore downstream see exactly what they see with the hand
+    block off. The hand block is never executed.
+    """
+
+    stats_index_key: str = "action_layout_id"
+    # Log the batch-mean gap through ``logging`` every n calls; 0 never logs.
+    log_every: int = 20
+    last: dict[str, Tensor] | None = field(default=None, repr=False, compare=False)
+    _calls: int = field(default=0, repr=False, compare=False)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"stats_index_key": self.stats_index_key, "log_every": int(self.log_every)}
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        transition = transition.copy()
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        action = torch.as_tensor(action)
+        squeeze = action.ndim == 2
+        if squeeze:
+            action = action[None]
+        if int(action.shape[-1]) != HAND_ACTION_WIDTH:
+            raise ValueError(
+                f"hand monitor expects a {HAND_ACTION_WIDTH}-wide chunk, got {action.shape[-1]}."
+            )
+        anchor = complementary.get(ANCHOR_KEY)
+        if anchor is None:
+            raise ValueError("hand monitor runs on the anchor path; no anchor in the payload.")
+        anchor = torch.as_tensor(anchor)
+        if anchor.ndim == 1:
+            anchor = anchor[None]
+        layout_ids = complementary.get(self.stats_index_key)
+        if layout_ids is None:
+            raise ValueError(f"hand monitor needs complementary_data[{self.stats_index_key!r}].")
+        layout_ids = torch.as_tensor(layout_ids).reshape(-1).to(torch.long)
+        if int(layout_ids.numel()) == 1 and int(action.shape[0]) > 1:
+            layout_ids = layout_ids.expand(int(action.shape[0]))
+        gap = hand_monitor_gap(layout_ids.cpu(), anchor.detach().cpu(), action.detach().cpu())
+        self.last = gap
+        complementary["hand_monitor"] = gap
+        self._calls += 1
+        if self.log_every > 0 and self._calls % self.log_every == 0 and bool(gap["valid"].any()):
+            logging.getLogger(__name__).info(
+                "[hand_monitor] joints vs hand: %.1f mm, %.2f deg, %.1f mm aperture",
+                float(gap["position_mm"][gap["valid"]].mean()),
+                float(gap["rotation_deg"][gap["valid"]].mean()),
+                float(gap["aperture_mm"][gap["valid"]].mean()),
+            )
+        joints = action[..., :JOINT_SLOTS]
+        complementary[ANCHOR_KEY] = anchor[..., :JOINT_SLOTS]
+        transition[TransitionKey.ACTION] = joints[0] if squeeze else joints
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
 

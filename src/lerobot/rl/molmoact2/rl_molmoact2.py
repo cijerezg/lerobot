@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 import torch
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
 from lerobot.annotation.vocab import code_for
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MODEL_INPUT_KEYS, MolmoAct2Policy, _torch_dtype
 from lerobot.rl.molmoact2.hybrid_critic import CriticFusion, MolmoAct2Critic
@@ -254,6 +254,9 @@ class MolmoAct2RLConfig(MolmoAct2Config):
                 shape = action_feature.get("shape")
             if shape:
                 action_dim = int(shape[0])
+        if getattr(self, "hand_block", False) and getattr(self, "hand_joint_action_dim", None):
+            # The feature was widened for the hand block; the limits bound the joint command.
+            action_dim = int(self.hand_joint_action_dim)
 
         for name in ("action_lag_limits", "action_delta_limits", "action_clamp_limits", "action_step_limits"):
             limits = getattr(self, name)
