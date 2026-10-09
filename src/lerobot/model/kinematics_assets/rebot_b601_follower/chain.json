@@ -1,0 +1,44 @@
+{
+  "name": "rebot_b601_follower",
+  "robot_types": [
+    "rebot_b601_follower"
+  ],
+  "joint_units": "deg",
+  "joint_names": [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_yaw",
+    "wrist_roll"
+  ],
+  "urdf": {
+    "file": "ReBot_Arm_DM.urdf",
+    "joints": [
+      "joint1",
+      "joint2",
+      "joint3",
+      "joint4",
+      "joint5",
+      "joint6"
+    ],
+    "tool_link": "end_link"
+  },
+  "tool": {
+    "xyz": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rpy": [
+      0.0,
+      1.5707963267948966,
+      0.0
+    ]
+  },
+  "gripper": {
+    "raw_closed": 0.0,
+    "raw_open": -338.2,
+    "stroke_m": 0.057
+  }
+}

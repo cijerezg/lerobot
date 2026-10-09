@@ -48,13 +48,14 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import require_package
 
-from .action_layout import require_prefix_valid_mask, trim_to_native, valid_dim_mask
+from .action_layout import native_joint_widths, require_prefix_valid_mask, trim_to_native, valid_dim_mask
 from .anchor_encoding import (
     ANCHOR_KEY,
     AnchorDecodeStep,
     AnchorEncodeStep,
     policy_action_with_anchor_to_transition,
 )
+from .hand_block import MolmoAct2HandBlockProcessorStep
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
 
 _FAST_BIN_PROBE_LIMIT = 2048  # FAST bin values are c - min_token; nothing legitimate exceeds this
@@ -582,7 +583,7 @@ def load_embodiment_stats(path: str, *, encoding: str, chunk_size: int) -> dict[
     quantiles say nothing about absolute actions, and a 30-step artifact cannot normalize
     a 50-step chunk. Both mismatches are silent at runtime, so they are errors here.
     """
-    payload = torch.load(os.path.expanduser(path), map_location="cpu", weights_only=False)
+    payload = torch.load(os.path.expanduser(path), map_location="cpu", weights_only=False)  # nosec B614: local stats artifact
     if not isinstance(payload, dict) or payload.get("format") != EMBODIMENT_STATS_FORMAT:
         raise ValueError(
             f"{path} is not a {EMBODIMENT_STATS_FORMAT} artifact "
@@ -1853,13 +1854,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 complementary[ACTION_HOLD_KEY] = self._pad_action(
                     hold, action_is_pad, complementary.get("action_dim_is_pad")
                 )[0]
-            real_action_dim = int((~action_dim_is_pad).sum(dim=-1).max())
+            real_action_dim = int(native_joint_widths(action_dim_is_pad).max())
         elif complementary.get("action_dim_is_pad") is not None:
             # The layout step already knows each row's width; env_action_dim is the
             # widest layout in the mixture, not this robot's.
             native_mask = torch.as_tensor(complementary["action_dim_is_pad"], dtype=torch.bool)
             action_dim_is_pad[:, : native_mask.shape[-1]] = native_mask
-            real_action_dim = int((~action_dim_is_pad).sum(dim=-1).max())
+            real_action_dim = int(native_joint_widths(action_dim_is_pad).max())
         elif real_action_dim > 0:
             action_dim_is_pad[:, :real_action_dim] = False
 
@@ -1937,7 +1938,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 # width mask is prefix-valid (require_prefix_valid_mask), so the row's
                 # real dimensions are exactly its leading ones. Sequences are padded by
                 # the tokenizer AFTER this, never before.
-                native_width = int((~action_dim_is_pad[batch_idx]).sum())
+                # Joint block only: the hand block gets its own FAST tokens in Phase 3 of
+                # docs/ee_mixture_loss/TODO.md; until then the discrete target is the joints.
+                native_width = int(native_joint_widths(action_dim_is_pad[batch_idx]))
                 row_action = action[batch_idx, ..., :native_width]
                 answer = _build_discrete_action_string(
                     row_action.detach().cpu().numpy(), self.action_processor
@@ -2151,6 +2154,7 @@ def make_molmoact2_pre_post_processors(
     # so itself, so a run cannot pair layout-keyed statistics with embodiment indices.
     stats_index_key = "embodiment_index"
     native_action_dims = None
+    hand_block = False
     embodiment_stats_path = getattr(config, "embodiment_stats_path", None)
     if embodiment_stats_path:
         artifact = load_embodiment_stats(
@@ -2159,6 +2163,7 @@ def make_molmoact2_pre_post_processors(
             chunk_size=int(hf_metadata.get("action_horizon") or config.chunk_size),
         )
         embodiment_names = list(artifact["row_names"])
+        hand_block = artifact.get("hand_block") is not None
         stats_index_key = str(artifact["stats_index_key"])
         canonical_action_dim = int(artifact["action_width"])
         canonical_state_dim = int(artifact["state_width"])
@@ -2210,6 +2215,14 @@ def make_molmoact2_pre_post_processors(
     # DEPTH_TOKEN placeholder count = the 2D attention-pooler's output grid.
     num_depth_tokens = pointmap_cfg.num_pooled_tokens if pointmap_cfg is not None else 0
 
+    if hand_block != bool(getattr(config, "hand_block", False)):
+        raise ValueError(
+            f"hand_block={getattr(config, 'hand_block', False)} but the stats artifact "
+            f"{'carries' if hand_block else 'has no'} hand_block columns; the two must agree."
+        )
+    if hand_block and not (use_anchor and action_encoding == "anchor"):
+        raise ValueError("hand_block requires action_encoding='anchor'.")
+
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
@@ -2221,6 +2234,7 @@ def make_molmoact2_pre_post_processors(
             default_embodiment_index=default_embodiment_index,
         ),
         *([AnchorEncodeStep(encoding=action_encoding)] if use_anchor else []),
+        *([MolmoAct2HandBlockProcessorStep(stats_index_key=stats_index_key)] if hand_block else []),
         MolmoAct2MaskedNormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,

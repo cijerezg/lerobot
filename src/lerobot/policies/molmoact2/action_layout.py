@@ -43,6 +43,24 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
+# The joint block: slots 0..7 of every action and state vector, in source order, as
+# today. When the hand block (policies/molmoact2/hand_block.py) is on, the action is 15
+# wide (hand deltas in 8..14) and the state 18 wide (hand pose in 8..17); the joint
+# block keeps its prefix-valid padding inside these slots and the hand block is valid
+# or padding as a whole, so a 7-DoF row then has a hole at slot 7.
+JOINT_SLOTS = 8
+
+
+def native_joint_widths(dim_is_pad: Tensor) -> Tensor:
+    """Per-row count of real joint dims: the valid slots among the first ``JOINT_SLOTS``.
+
+    Equal to ``(~mask).sum(-1)`` on today's 8-wide masks; with a hand block appended it
+    excludes the hand slots, which the FAST path (joints only until Phase 3) and the
+    deployed-width slice must not count.
+    """
+    mask = torch.as_tensor(dim_is_pad, dtype=torch.bool)
+    return (~mask[..., :JOINT_SLOTS]).sum(dim=-1)
+
 
 def trim_to_native(tensor: Tensor, *, native_dim: int) -> Tensor:
     """Drop the batching padding, leaving the robot's own ``native_dim`` values.

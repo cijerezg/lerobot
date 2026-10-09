@@ -1,0 +1,21 @@
+{
+  "name": "panda_franka_hand",
+  "robot_types": ["fmb", "franka_emika_panda_franka_hand"],
+  "joint_units": "rad",
+  "joint_names": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"],
+  "dh": {
+    "convention": "craig_modified",
+    "rows_a_d_alpha": [
+      [0.0, 0.333, 0.0],
+      [0.0, 0.0, -1.5707963267948966],
+      [0.0, 0.316, 1.5707963267948966],
+      [0.0825, 0.0, 1.5707963267948966],
+      [-0.0825, 0.384, -1.5707963267948966],
+      [0.0, 0.0, 1.5707963267948966],
+      [0.088, 0.0, 1.5707963267948966]
+    ],
+    "flange_d": 0.107
+  },
+  "tool": {"xyz": [0.0, 0.0, 0.1034], "rpy": [0.0, 0.0, -0.7853981633974483]},
+  "gripper": {"raw_closed": 1.0, "raw_open": 0.0, "stroke_m": 0.08}
+}

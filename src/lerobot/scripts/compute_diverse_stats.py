@@ -66,6 +66,7 @@ from lerobot.rl.data_sources.diverse_actor_buffer import DiverseActorBuffer, Div
 from lerobot.scripts.compute_embodiment_stats import (
     ARTIFACT_FORMAT,
     LAYOUT,
+    QUANTILES,
     _encode,
     _stats_for,
     collect_root,
@@ -113,6 +114,9 @@ def collect_diverse(root: str | Path, chunk_size: int, encoding: str) -> dict[in
             "action_dim": int(chunk_array.shape[-1]),
             "state_dim": int(state_array.shape[-1]),
             "sources": [f"diverse:{root}"],
+            # Absolute chunks and their anchors, for the hand block (--hand).
+            "raw_action": chunk_array,
+            "anchor": state_array,
         }
         logger.info(
             "  layout %d %-38s %6d chunks  D=%d",
@@ -131,16 +135,23 @@ def collect_rebot(
     if not roots:
         return {}
     layout = action_layout_by_name(layout_name)
-    chunk_groups, state_groups = [], []
+    chunk_groups, state_groups, raw_groups = [], [], []
     for root in roots:
         chunks, states = collect_root(root, chunk_size, encoding)
         if len(chunks):
             chunk_groups.append(chunks)
+            raw_groups.append(collect_root(root, chunk_size, "absolute")[0])
         state_groups.append(states)
     if not chunk_groups:
         raise ValueError(f"ReBot roots {roots} yielded no action chunks.")
     action = np.concatenate(chunk_groups, axis=0)
     state = np.concatenate(state_groups, axis=0)
+    raw_action = np.concatenate(raw_groups, axis=0)
+    if encoding != "anchor":
+        raise ValueError(
+            "collect_rebot recovers chunk anchors from the anchor encoding; use --encoding anchor."
+        )
+    anchor = raw_action[:, 0] - action[:, 0]
     if action.shape[-1] != layout.dim or state.shape[-1] != layout.dim:
         raise ValueError(
             f"layout {layout.name} declares {layout.dim}D but the ReBot roots store "
@@ -154,24 +165,125 @@ def collect_rebot(
             "action_dim": layout.dim,
             "state_dim": layout.dim,
             "sources": [str(root) for root in roots],
+            "raw_action": raw_action,
+            "anchor": anchor,
         }
     }
 
 
+# q01/q99 band half-width in block scales. The QUANTILES normalizer maps [q01, q99] to [-1, 1]
+# and the clamp step cuts there, so the band must hold almost every value: for the joints the
+# empirical q01/q99 clip 2 %, and a Gaussian's q01/q99 sit at +-2.326 sigma, so the same band
+# in block scales gives the hand block the joints' clip rate and the joints' chance-MSE (~0.18).
+HAND_BAND_SCALES = 2.326
+
+
+def _block_stats(values: np.ndarray, blocks: tuple[tuple[int, int], ...]) -> dict[str, np.ndarray]:
+    """Global stats of a hand array ([N, T, D] deltas or [M, D] states): per-coordinate means,
+    one scale per block (sqrt of the mean variance over the block's coordinates, per step), and
+    q01/q99 = mean -/+ HAND_BAND_SCALES * scale, so the normalizer standardizes every coordinate
+    of a block by that one scale (TODO.md, "Units")."""
+    mean = values.mean(axis=0)
+    var = values.var(axis=0)
+    scale = np.ones_like(mean)
+    for lo, hi in blocks:
+        scale[..., lo:hi] = np.sqrt(var[..., lo:hi].mean(axis=-1, keepdims=True))
+    stats = {
+        "min": values.min(axis=0).astype(np.float32),
+        "max": values.max(axis=0).astype(np.float32),
+        "mean": mean.astype(np.float32),
+        "std": scale.astype(np.float32),
+    }
+    for q in QUANTILES:
+        stats[f"q{int(round(q * 100)):02d}"] = np.quantile(values, q, axis=0).astype(np.float32)
+    stats["q01"] = (mean - HAND_BAND_SCALES * scale).astype(np.float32)
+    stats["q99"] = (mean + HAND_BAND_SCALES * scale).astype(np.float32)
+    for lo, hi in blocks:
+        clipped = (
+            (values[..., lo:hi] < stats["q01"][..., lo:hi]) | (values[..., lo:hi] > stats["q99"][..., lo:hi])
+        ).mean()
+        logger.info("    block %d:%d clipped by the q01/q99 band: %.2f %%", lo, hi, 100 * clipped)
+    return stats
+
+
+def collect_hand(collected: dict[int, dict[str, Any]]) -> dict[str, Any]:
+    """Hand deltas of every chunk and hand states of every state, pooled over the layouts
+    that have a kinematic chain (policies/molmoact2/hand_block.LAYOUT_CHAIN_KEYS)."""
+    from lerobot.policies.molmoact2.hand_block import (
+        HAND_DELTA_BLOCKS,
+        HAND_STATE_BLOCKS,
+        hand_delta,
+        hand_pose,
+        hand_state,
+        layout_has_hand,
+    )
+
+    deltas, states, rows = [], [], {}
+    for layout_id, entry in sorted(collected.items()):
+        if not layout_has_hand(layout_id):
+            continue
+        ids = torch.full((len(entry["anchor"]),), layout_id, dtype=torch.long)
+        p0, r0, g0, _ = hand_pose(ids, torch.from_numpy(entry["anchor"]).to(torch.float64))
+        pt, rt, gt, _ = hand_pose(ids, torch.from_numpy(entry["raw_action"]).to(torch.float64))
+        delta = hand_delta(p0[:, None], r0[:, None], g0[:, None], pt, rt, gt).numpy()
+        ids_s = torch.full((len(entry["state"]),), layout_id, dtype=torch.long)
+        ps, rs, gs, _ = hand_pose(ids_s, torch.from_numpy(entry["state"]).to(torch.float64))
+        hand_states = hand_state(ps, rs, gs).numpy()
+        deltas.append(delta)
+        states.append(hand_states)
+        rows[ACTION_LAYOUTS[layout_id].name] = {"chunks": int(len(delta)), "states": int(len(hand_states))}
+        logger.info(
+            "  hand layout %d %-38s %6d chunks: |dp| p99 %.3f m, |drot| p99 %.3f rad, |dg| p99 %.3f m",
+            layout_id,
+            ACTION_LAYOUTS[layout_id].name,
+            len(delta),
+            np.percentile(np.linalg.norm(delta[..., :3], axis=-1), 99),
+            np.percentile(np.linalg.norm(delta[..., 3:6], axis=-1), 99),
+            np.percentile(np.abs(delta[..., 6]), 99),
+        )
+    if not deltas:
+        raise ValueError("--hand: no collected layout has a kinematic chain.")
+    delta_array = np.concatenate(deltas)
+    state_array = np.concatenate(states)
+    return {
+        "action": _block_stats(delta_array, HAND_DELTA_BLOCKS),
+        "state": _block_stats(state_array, HAND_STATE_BLOCKS),
+        "rows": rows,
+        "chunks": int(len(delta_array)),
+        "states": int(len(state_array)),
+    }
+
+
 def build_artifact(
-    collected: dict[int, dict[str, Any]], chunk_size: int, encoding: str
+    collected: dict[int, dict[str, Any]], chunk_size: int, encoding: str, hand: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     if not collected:
         raise ValueError("no layouts collected; nothing to build stats from.")
     action_width = max(entry["action_dim"] for entry in collected.values())
     state_width = max(entry["state_dim"] for entry in collected.values())
     num_rows = max(collected) + 1
+    if hand is not None:
+        from lerobot.policies.molmoact2.hand_block import (
+            HAND_ACTION_WIDTH,
+            HAND_STATE_WIDTH,
+            JOINT_SLOTS,
+            layout_has_hand,
+        )
+
+        if action_width > JOINT_SLOTS or state_width > JOINT_SLOTS:
+            raise ValueError(
+                f"--hand expects joint widths <= {JOINT_SLOTS}, got {action_width}/{state_width}."
+            )
+        action_width, state_width = JOINT_SLOTS, JOINT_SLOTS
 
     # The fallback row for a layout this run does not use: pooled over everything that
     # did contribute. It is never gathered here; it exists so an unused row is a sane
     # identity-ish transform rather than a NaN or a divide by zero.
     pooled_action = np.concatenate(
-        [np.pad(e["action"], ((0, 0), (0, 0), (0, action_width - e["action_dim"]))) for e in collected.values()]
+        [
+            np.pad(e["action"], ((0, 0), (0, 0), (0, action_width - e["action_dim"])))
+            for e in collected.values()
+        ]
     )
     pooled_state = np.concatenate(
         [np.pad(e["state"], ((0, 0), (0, state_width - e["state_dim"]))) for e in collected.values()]
@@ -212,7 +324,42 @@ def build_artifact(
         out["mask"] = torch.tensor(mask, dtype=torch.bool)
         return out
 
+    hand_payload = None
+    if hand is not None:
+        # The hand columns are global: the same numbers in every row, valid only for rows
+        # whose layout has a chain. native_action_dims stay the joint widths; the hand step
+        # flips the hand slots of the padding masks at run time.
+        has_hand = [layout_has_hand(row) and row in collected for row in range(num_rows)]
+        for stat in list(action_stats):
+            action_stats[stat] = [
+                np.concatenate([value, hand["action"][stat]], axis=-1) for value in action_stats[stat]
+            ]
+        for stat in list(state_stats):
+            state_stats[stat] = [
+                np.concatenate([value, hand["state"][stat]], axis=-1) for value in state_stats[stat]
+            ]
+        action_mask = [
+            row + [has] * (HAND_ACTION_WIDTH - JOINT_SLOTS)
+            for row, has in zip(action_mask, has_hand, strict=True)
+        ]
+        state_mask = [
+            row + [has] * (HAND_STATE_WIDTH - JOINT_SLOTS)
+            for row, has in zip(state_mask, has_hand, strict=True)
+        ]
+        action_width, state_width = HAND_ACTION_WIDTH, HAND_STATE_WIDTH
+        hand_payload = {
+            "action_slots": [JOINT_SLOTS, HAND_ACTION_WIDTH],
+            "state_slots": [JOINT_SLOTS, HAND_STATE_WIDTH],
+            "layout_has_hand": has_hand,
+            "delta_block_scale": torch.from_numpy(hand["action"]["std"]),
+            "state_block_scale": torch.from_numpy(hand["state"]["std"]),
+            "rows": hand["rows"],
+            "chunks": hand["chunks"],
+            "states": hand["states"],
+        }
+
     return {
+        "hand_block": hand_payload,
         "format": ARTIFACT_FORMAT,
         "layout": LAYOUT,
         "encoding": encoding,
@@ -263,12 +410,20 @@ def report(artifact: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--diverse-root", default="outputs/diverse_robot_dataset")
     parser.add_argument("--rebot-root", action="append", default=[], type=Path)
     parser.add_argument("--rebot-layout", default="rebot_b601_joint7_commanded")
     parser.add_argument("--encoding", default="anchor", choices=("absolute", "anchor", "delta"))
     parser.add_argument("--chunk-size", type=int, default=30)
+    parser.add_argument(
+        "--hand",
+        action="store_true",
+        help="append the hand block columns (fingertip pose from the kinematics assets); "
+        "action width 15, state width 18, see policies/molmoact2/hand_block.py",
+    )
     parser.add_argument("--name", default="diverse-rebot-v1")
     parser.add_argument("--out", default=None)
     parser.add_argument("--skip-diverse", action="store_true")
@@ -282,7 +437,8 @@ def main() -> None:
         logger.info("ReBot roots:")
         collected.update(collect_rebot(args.rebot_root, args.chunk_size, args.encoding, args.rebot_layout))
 
-    artifact = build_artifact(collected, args.chunk_size, args.encoding)
+    hand = collect_hand(collected) if args.hand else None
+    artifact = build_artifact(collected, args.chunk_size, args.encoding, hand)
     report(artifact)
 
     out = Path(args.out or f"outputs/stats/action_stats_{args.encoding}_{args.name}.pt")

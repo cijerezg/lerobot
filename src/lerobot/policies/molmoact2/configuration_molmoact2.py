@@ -341,6 +341,11 @@ class MolmoAct2Config(PreTrainedConfig):
     )
     num_inference_steps: int | None = None
     mask_action_dim_padding: bool = True
+    # EE mixture loss (docs/ee_mixture_loss/TODO.md): append the fingertip-pose block to the
+    # action chunk (slots 8..14) and the state (slots 8..17), from the kinematics assets. The
+    # per-layout stats artifact must carry the matching "hand_block" columns
+    # (compute_diverse_stats.py --hand); the factory refuses a mismatch either way.
+    hand_block: bool = False
     enable_inference_cuda_graph: bool = True
     # MolmoAct2-local eval option. When enabled, stochastic continuous action
     # generation uses a rollout-local generator derived from eval_seed.

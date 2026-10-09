@@ -25,6 +25,7 @@ from lerobot.utils.import_utils import require_package
 
 from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
 from ..rtc.modeling_rtc import RTCProcessor
+from .action_layout import native_joint_widths
 from .configuration_molmoact2 import MolmoAct2Config
 
 logger = logging.getLogger(__name__)
@@ -2042,7 +2043,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         action_dim_is_pad = batch.get("action_dim_is_pad")
         if action_dim_is_pad is not None:
-            valid_counts = (~action_dim_is_pad.to(dtype=torch.bool)).sum(dim=-1)
+            valid_counts = native_joint_widths(action_dim_is_pad)
             if bool((valid_counts == valid_counts[0]).all()) and int(valid_counts[0]) > 0:
                 return int(valid_counts[0])
 
@@ -3514,7 +3515,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     raise ValueError("RTC is only supported for continuous MolmoAct2 inference.")
                 action_dim_is_pad = batch.get("action_dim_is_pad")
                 native_widths = (
-                    (~action_dim_is_pad.to(dtype=torch.bool)).sum(dim=-1)
+                    native_joint_widths(action_dim_is_pad)
                     if action_dim_is_pad is not None
                     else torch.full((batch_size,), int(action_dim))
                 )
