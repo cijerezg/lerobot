@@ -247,6 +247,14 @@ _FORWARDED_COMPLEMENTARY = (
     "source_id",
 )
 
+# EE mixture loss telemetry (policies/molmoact2/hand_loss.py): the model's batch means of
+# the joint block, the hand block and the FK term -> the logged loss terms, train and val.
+_HAND_TERM_KEYS = {
+    "hand_flow_joint": "loss_hand_joint",
+    "hand_flow_hand": "loss_hand_pose",
+    "hand_fk_loss": "loss_hand_fk",
+}
+
 
 def _forwarded_complementary_keys(complementary: dict, cfg) -> list[str]:
     """Which sampler columns ride into the preprocessor for this configuration."""
@@ -304,6 +312,12 @@ class MolmoAct2Trainer(Trainer):
             "val_loss_discrete_aux",
             "loss_depth_event",
             "val_loss_depth_event",
+            "loss_hand_joint",
+            "loss_hand_pose",
+            "loss_hand_fk",
+            "val_loss_hand_joint",
+            "val_loss_hand_pose",
+            "val_loss_hand_fk",
             "future_visual_loss",
             "val_loss_future_visual",
             "val_loss_future_visual_persistence",
@@ -1036,6 +1050,9 @@ class MolmoAct2Trainer(Trainer):
             "loss_flow": metrics.get("action_flow_loss", 0.0),
             "loss_discrete_ce": metrics.get("discrete_ce_loss", 0.0),
         }
+        for source, destination in _HAND_TERM_KEYS.items():
+            if source in metrics:
+                out[destination] = float(metrics[source])
         if "action_auxiliary_loss" in metrics:
             out["loss_action_aux"] = metrics["action_auxiliary_loss"]
         if "discrete_auxiliary_loss" in metrics:
@@ -1280,6 +1297,9 @@ class MolmoAct2Trainer(Trainer):
             for key, value in metrics.items():
                 if key.startswith("future_visual_"):
                     accum[key] = accum.get(key, 0.0) + float(value) / grad_accum
+            for source, destination in _HAND_TERM_KEYS.items():
+                if source in metrics:
+                    accum[destination] = accum.get(destination, 0.0) + float(metrics[source]) / grad_accum
             accum["loss_action_aux"] += float(metrics.get("action_auxiliary_loss", 0.0)) / grad_accum
             accum["loss_discrete_ce"] += float(metrics.get("discrete_ce_loss", 0.0)) / grad_accum
             accum["loss_discrete_aux"] += float(metrics.get("discrete_auxiliary_loss", 0.0)) / grad_accum
@@ -1742,6 +1762,12 @@ class MolmoAct2Trainer(Trainer):
         console_keys = (
             "loss_flow",
             "val_loss_flow",
+            "loss_hand_joint",
+            "loss_hand_pose",
+            "loss_hand_fk",
+            "val_loss_hand_joint",
+            "val_loss_hand_pose",
+            "val_loss_hand_fk",
             "loss_action_aux",
             "val_loss_action_aux",
             "loss_discrete_ce",

@@ -121,8 +121,13 @@ class MolmoAct2Adapter(ProbablePolicy):
         gt_actions: Tensor | None = None,
         subtask: str | None = None,
         metadata: dict | None = None,
+        extra_complementary: dict | None = None,
     ) -> dict:
-        """Build the preprocessor input for molmoact2 probe forwards."""
+        """Build the preprocessor input for molmoact2 probe forwards.
+
+        ``extra_complementary`` overrides the ReBot identity columns (a diverse corpus
+        frame's own ``action_layout_id`` and embodiment), the way ``_make_batch_multi`` takes it.
+        """
         device = self._device
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
         obs_on_device, prepared = split_probe_complementary(obs_on_device)
@@ -132,6 +137,8 @@ class MolmoAct2Adapter(ProbablePolicy):
             "task": task_str,
         }
         complementary: dict = {**self._identity_columns, **presence, **prepared}
+        if extra_complementary:
+            complementary.update(extra_complementary)
         if subtask:
             complementary["subtask"] = [subtask]
         if metadata is not None:
@@ -516,6 +523,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         flow_timesteps: Tensor | None = None,
         flow_noise_seed: int | None = None,
         dropout: bool = False,
+        extra_complementary: dict | None = None,
     ) -> dict:
         """Run MolmoAct2's own training forward on one probe frame.
 
@@ -524,11 +532,14 @@ class MolmoAct2Adapter(ProbablePolicy):
         writes the FAST labels — and the forward runs without autocast, matching
         ``update_actor``. What differs from a training step is only what the caller
         asks for: dropout suppressed by default, and the flow timesteps/noise pinned.
+        ``extra_complementary`` carries a diverse frame's own identity columns (layout id,
+        embodiment) in place of the ReBot defaults.
         """
         action_dim = self.action_dim
-        gt_actions = (
-            frame["gt_actions"][: self.chunk_size, :action_dim].unsqueeze(0).to(self._device)
-        )
+        gt_actions = torch.as_tensor(frame["gt_actions"])
+        if gt_actions.ndim == 3:
+            gt_actions = gt_actions[0]
+        gt_actions = gt_actions[: self.chunk_size, :action_dim].unsqueeze(0).to(self._device)
         pack = nullcontext() if dropout else suppress_pack_dropout(self._preprocessor)
         with pack:
             batch = self._make_batch(
@@ -537,6 +548,7 @@ class MolmoAct2Adapter(ProbablePolicy):
                 gt_actions=gt_actions,
                 subtask=frame["subtask"],
                 metadata=frame["metadata"],
+                extra_complementary=extra_complementary,
             )
         for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
             if key in frame:
@@ -586,8 +598,22 @@ class MolmoAct2Adapter(ProbablePolicy):
         # away, so flow_loss_raw arrives as [B, K, T] and there is nothing left to
         # slice. flow_loss_per_dim is [D_padded] with the padded dims zeroed.
         per_dim = metrics.get("flow_loss_per_dim")
+        layout_id = batch.get("action_layout_id")
         out: dict = {
             "loss_total": float(metrics["loss"]),
+            # EE mixture loss terms (hand_loss.py), one frame so the batch means are the
+            # frame's: the joint block, the hand block (mean of its three blocks) and the
+            # FK term. None when the hand block is off.
+            "loss_hand_joint": (
+                float(metrics["hand_flow_joint"]) if "hand_flow_joint" in metrics else None
+            ),
+            "loss_hand_pose": (
+                float(metrics["hand_flow_hand"]) if "hand_flow_hand" in metrics else None
+            ),
+            "loss_hand_fk": float(metrics["hand_fk_loss"]) if "hand_fk_loss" in metrics else None,
+            "layout_id": (
+                int(torch.as_tensor(layout_id).reshape(-1)[0]) if layout_id is not None else None
+            ),
             # None, not 0.0: action_mode "discrete" runs no flow at all, and a zero
             # would be read as a perfect fit rather than as an absent measurement.
             "loss_flow": (

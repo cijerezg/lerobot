@@ -338,6 +338,7 @@ class ProbeConfig:
     enable_precision_contact_sweep: bool = False  # precision ramp + plausible contact codes on pre-commit frames, truthful prompt as reference
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
+    enable_hand_terms: bool = False  # EE mixture loss terms per frame, hand-vs-joint gap exemplars, histograms by robot (probes/hand_terms.py)
     enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
     enable_domain_representations: bool = False  # ReBot vs diverse hidden states per layer and token group (probes/domain_representations.py)
     enable_conditions_matrix: bool = False  # object x phase similarity matrix per robot, compared across robots (probes/conditions_matrix.py)
@@ -455,6 +456,13 @@ class ProbeConfig:
     input_swap_n_frames_per_episode: int | None = None
     # Deterministic generated-vs-GT 3-D action traces at each of p5 / p50 / p95.
     objective_exemplars_per_band: int = 3
+
+    # Hand terms. Same per-frame sampling as the objective probe on the val and ReBot
+    # training sources, plus hand_terms_n_diverse_frames anchors from the diverse corpus
+    # cache split evenly over its sources, so the histograms have every robot. Frames
+    # rendered per gap percentile band (p5 smallest, p50, p95 largest).
+    hand_terms_n_diverse_frames: int = 200
+    hand_terms_exemplars_per_band: int = 4
 
     # Subtask sweep: n_frames x (max_labels + n_seeds) forwards — ~20 per frame, the most
     # expensive per frame of any probe, so this is the first place a common-knob rise bites.

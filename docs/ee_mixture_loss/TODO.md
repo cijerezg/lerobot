@@ -188,20 +188,22 @@ Decisions taken while building:
 
 ## Phase 4: telemetry and probes
 
-Probe design is revisited later. What runs from the first checkpoint:
+**Built 2026-10-09** (decision 2026-10-09: the terms of the loss and their per-frame
+distribution, nothing more for now).
 
-- [ ] **Joint-vs-hand agreement, the basic telemetry.** At every validation: FK of the predicted
-      joint block vs the predicted hand block, in the global hand units, per block (position mm,
-      rotation deg, aperture mm). Needs no target, so it runs on every sample including rollouts.
-      Logged as scalars per robot.
-- [ ] **Same, against the target.** FK of the predicted joints vs the demonstrated hand, and
-      predicted hand vs demonstrated hand, per robot. The two together say which output is wrong
-      when they disagree.
-- [ ] **Probe: agreement by robot and by frame.** Extend the telemetry into a probe in the suite
-      (`probes/base.py`, `manifest.py`, viewer): distribution of the disagreement per robot, and the
-      worst frames rendered with the global camera view and the two FK fingertips drawn, to see
-      whether hard frames cluster (near singularities, large within-chunk rotations, gripper
-      transitions, specific sources).
+- [x] **Telemetry: the three terms of the loss.** `loss_hand_joint` (joint block), `loss_hand_pose`
+      (hand block) and `loss_hand_fk` (FK term), train and `val_` (held-out val loss), on Aim and
+      the console (`rl_molmoact2_trainer._HAND_TERM_KEYS`, `val_loss.py`). Batch means, as the
+      model logs them (`hand_flow_*`, `hand_fk_loss`).
+- [x] **Probe `hand_terms`** (`probes/hand_terms.py`, `probe_parameters.enable_hand_terms`): the
+      three terms per frame with the objective probe's pinned timesteps and noise, on held-out
+      ReBot, the ReBot training sources and `hand_terms_n_diverse_frames` anchors of the diverse
+      corpus cache with their own layout ids. Readouts: `hist_by_robot.png` (each term and the gap
+      `hand - joint`, one column per robot, train vs val) and `exemplars_p05/p50/p95.png` (held-out
+      frames nearest the 5th, 50th and 95th percentile of `|hand - joint|`, cameras side by side,
+      the terms and the signed gap above each). Headline scalars go to Aim (`hand_terms_val_*`).
+      Needs the diverse cache built (`cache_policy="require"`); without it the diverse rows are
+      skipped with a warning. Not yet run end-to-end.
 - [ ] **True eval, later.** Tasks demonstrated only on the Franka, run on ReBot, old vs new
       checkpoint. Not designed yet.
 

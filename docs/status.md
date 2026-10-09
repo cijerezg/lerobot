@@ -29,6 +29,7 @@ probe suite is on, plus held-out `val_loss_*` on 128 frames.
 | FAST-logit auxiliary (ordinal/path/shape) | done 2026-08-09, unit-tested, construction validated standalone | **off** — never run end-to-end (05 §2.2) |
 | Held-out `val_loss_*` (flow, FAST CE, both aux) | done 2026-08-08 | on, 128 frames |
 | EE mixture loss: hand block, block-mean flow loss, FK term, masked FAST, hand monitor (`docs/ee_mixture_loss/TODO.md`) | built 2026-10-09, unit-tested, no end-to-end run yet | **off** (`hand_block: false`) |
+| Hand terms telemetry (`loss_hand_joint/pose/fk`) and probe `hand_terms` (per-frame terms, gap percentile frames, histograms by robot) | built 2026-10-09, unit-tested | **off** (`enable_hand_terms: false`; telemetry appears once `hand_block` is on) |
 | Depth point-map into the VLM prefix | done, validated e2e | on — no gate, no DepthStream (both deleted 2026-08-03) |
 | Critic depth read | still on the old stream blocks; not migrated | off (skip_critic) |
 | Subtask generation (two-prompt, HL decode) | done | **training off** (`subtask_loss_weight: 0.0`); inference budget 64 tokens |
