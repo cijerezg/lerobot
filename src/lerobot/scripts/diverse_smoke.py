@@ -51,7 +51,6 @@ from lerobot.rl.data_sources.diverse_integration import (
 )
 from lerobot.rl.data_sources.diverse_mixture import (
     MixtureTelemetry,
-    allocate_group_quotas,
     make_hierarchical_offline_iterator,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -205,6 +204,7 @@ def _rebot_buffers(cfg, history_offsets):
             buffer.materialize_metadata(*load_metadata_rows(dataset.root))
         # build_mixture_groups reads the sampling group off it, as in training.
         buffer.offline_source = source
+        buffer.dataset = dataset
         datasets.append(dataset)
         buffers.append(buffer)
     return datasets[0], buffers
@@ -250,8 +250,9 @@ def main() -> None:
         rebot_weights=[source.weight for source in __import__(
             "lerobot.rl.offline_dataset_utils", fromlist=["get_offline_dataset_sources"]
         ).get_offline_dataset_sources(cfg)],
+        action_chunk_size=cfg.policy.n_action_steps,
     )
-    logger.info("Batch allocation: %s", allocate_group_quotas(cfg.batch_size, groups))
+    logger.info("Group shares: %s", {g.name: g.weight / sum(x.weight for x in groups) for g in groups})
 
     preprocessor = None
     if not args.skip_preprocessor:
@@ -268,6 +269,8 @@ def main() -> None:
         batch_size=cfg.batch_size,
         async_prefetch=False,
         action_chunk_size=cfg.policy.n_action_steps,
+        proportional=bool(cfg.diverse.rebot_group_weights),
+        seed=int(cfg.seed or 0),
     )
     for step in range(args.batches):
         batch = next(iterator)

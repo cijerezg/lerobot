@@ -92,6 +92,10 @@ def sample_spec_from_config(cfg) -> DiverseSampleSpec:
     depth_size = tuple(pointmap.image_size) if pointmap is not None else _image_size(cfg)
     state_feature = (cfg.policy.input_features or {}).get(OBS_STATE)
     width = int(state_feature.shape[0]) if state_feature is not None else MAX_ACTION_DIM
+    if getattr(cfg.policy, "hand_block", False):
+        # The cache carries native joints; the processor appends hand features after
+        # sampling. The widened policy state (18) is not the cache's shared width (8).
+        width = MAX_ACTION_DIM
     return DiverseSampleSpec(
         history_ages_s=ages,
         action_horizon=int(cfg.policy.chunk_size),
@@ -235,21 +239,39 @@ def build_mixture_groups(
     diverse_buffer: DiverseActorBuffer,
     *,
     rebot_weights: list[float] | None = None,
+    action_chunk_size: int = 30,
 ) -> list[MixtureGroup]:
     """ReBot first, diverse second -- the order that decides odd-batch ties."""
+    has_episode_groups = any(getattr(getattr(buffer, "offline_source", None), "episode_groups", None) for buffer in rebot_buffers)
+    if has_episode_groups and not diverse_cfg.rebot_group_weights:
+        raise ValueError("episode_groups requires diverse.rebot_group_weights")
     if diverse_cfg.rebot_group_weights:
         by_group = {name: [] for name in diverse_cfg.rebot_group_weights}
         weights = {name: [] for name in by_group}
         for index, buffer in enumerate(rebot_buffers):
-            name = buffer.offline_source.sampling_group
-            if name not in by_group:
-                raise ValueError(f"Unconfigured ReBot sampling group {name!r}")
-            by_group[name].append(buffer)
-            weights[name].append(rebot_weights[index] if rebot_weights else 1.0)
-        return [
+            partition = getattr(buffer.offline_source, "episode_groups", None)
+            if partition:
+                from lerobot.rl.data_sources.episode_groups import episode_group_views
+
+                # Uniform over eligible starts across all roots in the same task
+                # pool. Physical-root sizes must not override the task's outer share.
+                views = episode_group_views(buffer, partition, action_chunk_size)
+            else:
+                views = [(buffer.offline_source.sampling_group, buffer,
+                          rebot_weights[index] if rebot_weights else 1.0)]
+            for name, view, weight in views:
+                if name not in by_group:
+                    raise ValueError(f"Unconfigured ReBot sampling group {name!r}")
+                by_group[name].append(view)
+                weights[name].append(weight)
+        groups = [
             MixtureGroup(name, buffers, weight=diverse_cfg.rebot_group_weights[name], inner_weights=weights[name])
             for name, buffers in by_group.items()
         ] + [MixtureGroup("diverse", [diverse_buffer], weight=diverse_cfg.weight)]
+        total = sum(group.weight for group in groups)
+        logger.info("[DiverseMixture] Target sampling shares: %s",
+                    {group.name: round(group.weight / total, 6) for group in groups})
+        return groups
     return [
         MixtureGroup(
             "rebot",

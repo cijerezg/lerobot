@@ -59,6 +59,7 @@ the two corpora have to mean the same thing by it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -596,8 +597,67 @@ def _prepare_rows(
     return prepared, records, corrected
 
 
+def _assert_corrected_selection(selection: DiverseActorSelection, manifest_path: Path) -> None:
+    """Check corrected views against their build manifest, then apply the current holdout.
+
+    Corrections may remove anchors or all retained anchors of an episode. The legacy
+    ledger is therefore not applicable. Hashes keep incomplete or edited views from
+    becoming their own source of truth for the expected selection.
+    """
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    tables = {entry["path"]: entry for entry in manifest["output_semantic_tables"]}
+    root = manifest_path.parent
+    holdout = holdout_episode_ids(root)
+    expected: Counter[tuple[str, str, float]] = Counter()
+    held_out: Counter[str] = Counter()
+    for store in (selection.corpus.common, selection.corpus.fmb):
+        path = store.root / store._actor_view_name
+        relative = path.relative_to(root).as_posix()
+        if relative not in tables:
+            raise ValueError(f"corrected corpus manifest has no actor table {relative}.")
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as stream:
+            for line in stream:
+                digest.update(line)
+                size += len(line)
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if not row["retained"]:
+                    continue
+                episode = str(row["episode_id"])
+                if episode in holdout:
+                    held_out[episode] += 1
+                else:
+                    expected[(str(row["source"]), episode, float(row["anchor_s"]))] += 1
+        entry = tables[relative]
+        if size != entry["bytes"] or digest.hexdigest() != entry["sha256"]:
+            raise ValueError(
+                f"corrected actor table {relative} does not match {manifest_path}; "
+                "restore the complete audited view or rebuild its manifest."
+            )
+    actual = Counter(
+        (str(row["source"]), str(row["episode_id"]), float(row["anchor_s"]))
+        for row in selection.rows
+    )
+    if not expected or actual != expected:
+        raise ValueError(
+            "diverse selection does not match the corrected corpus manifest after holdout: "
+            f"{sum(actual.values())} anchors, expected {sum(expected.values())}; "
+            f"missing {sum((expected - actual).values())}, "
+            f"unexpected {sum((actual - expected).values())}."
+        )
+    if set(held_out) != holdout or dict(held_out) != selection.held_out:
+        raise ValueError("corrected corpus holdout accounting does not match the actor tables.")
+
+
 def assert_selection_counts(selection: DiverseActorSelection) -> None:
-    """Refuse to train on a corpus that is not the audited one."""
+    """Validate corrected views against their manifest, or the original v3 ledger."""
+    manifest_path = selection.corpus.common.root.parent / "corrected_store_manifest.json"
+    if manifest_path.is_file():
+        _assert_corrected_selection(selection, manifest_path)
+        return
     episodes = len(selection.episode_ids)
     anchors = len(selection.rows)
     if episodes != EXPECTED_EPISODES or anchors != EXPECTED_ANCHORS:

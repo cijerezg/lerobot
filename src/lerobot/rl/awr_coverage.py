@@ -16,6 +16,8 @@ def rebot_group_rows(buffer, names, action_chunk_size, *, include_skipped=False)
     """Eligible starts grouped by the same identities and boundaries as training."""
     high = max(0, buffer.size - 1) if buffer.optimize_memory and buffer.size < buffer.capacity else buffer.size
     indices = torch.arange(0, high, buffer.image_stride, device=buffer.storage_device)
+    if getattr(buffer, "sampling_indices", None) is not None:
+        indices = buffer.sampling_indices
     valid = torch.ones_like(indices, dtype=torch.bool)
     if buffer.actions.ndim == 2:
         for offset in range(action_chunk_size - 1):

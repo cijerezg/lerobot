@@ -31,6 +31,8 @@ class OfflineDatasetSourceConfig:
     normalization_source: bool = False
     sampling_group: str = "rebot"
     episodes: list[int] | None = None
+    # Sampling-only partition of the complete root. Each episode belongs to one group.
+    episode_groups: dict[str, list[int]] = field(default_factory=dict)
     # Overrides the root's meta/info.json robot_type for the prompt's embodiment clause.
     # Leave unset unless that field is missing or wrong; see lerobot/datasets/embodiment.py.
     embodiment: str | None = None
@@ -40,6 +42,14 @@ class OfflineDatasetSourceConfig:
             raise ValueError("Offline dataset source root must not be empty.")
         if self.weight <= 0:
             raise ValueError(f"Offline dataset source weight must be positive, got {self.weight}.")
+        if self.episode_groups:
+            if self.episodes is not None:
+                raise ValueError("Use episode_groups with the complete dataset, not episodes.")
+            assigned = [ep for episodes in self.episode_groups.values() for ep in episodes]
+            if any(not name or not episodes for name, episodes in self.episode_groups.items()):
+                raise ValueError("Episode groups need nonempty names and episode lists.")
+            if any(ep < 0 for ep in assigned) or len(assigned) != len(set(assigned)):
+                raise ValueError("Episode groups must contain distinct nonnegative episode indices.")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(

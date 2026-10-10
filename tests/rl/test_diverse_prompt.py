@@ -65,6 +65,8 @@ def test_provenance_ids_are_stable_and_unknown_is_zero() -> None:
     assert quality_provenance_id("model_reviewed_rubric_v2") == 5
     assert RETENTION_REASONS[0] == "unknown"
     assert retention_reason_id("useful_motion") == 1
+    assert retention_reason_id("recovery") == 3
+    assert retention_reason_id("audit_retained") == 4
 
 
 def test_an_unregistered_provenance_refuses_to_be_folded_into_an_existing_one() -> None:

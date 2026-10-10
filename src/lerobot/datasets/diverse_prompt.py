@@ -61,6 +61,7 @@ RETENTION_REASONS: tuple[str, ...] = (
     "useful_motion",
     "informative_mistake",
     "recovery",
+    "audit_retained",
 )
 
 UNKNOWN_QUALITY = -1.0

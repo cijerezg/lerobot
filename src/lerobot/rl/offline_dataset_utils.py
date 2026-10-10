@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
@@ -29,6 +29,7 @@ class OfflineDatasetSource:
     normalization_source: bool = False
     sampling_group: str = "rebot"
     episodes: list[int] | None = None
+    episode_groups: dict[str, list[int]] = field(default_factory=dict)
     # Optional override for the prompt's embodiment clause. Only needed when a root's
     # meta/info.json robot_type is missing or wrong; otherwise it is read from there.
     embodiment: str | None = None
@@ -75,6 +76,7 @@ def get_offline_dataset_sources(cfg) -> list[OfflineDatasetSource]:
                     normalization_source=i == 0,
                     sampling_group=str(_source_field(source, "sampling_group", "rebot")),
                     episodes=_source_field(source, "episodes", None),
+                    episode_groups=_source_field(source, "episode_groups", None) or {},
                     embodiment=_source_field(source, "embodiment", None),
                 )
             )

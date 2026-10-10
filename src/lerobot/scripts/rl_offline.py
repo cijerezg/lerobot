@@ -998,6 +998,7 @@ def run_offline_training(
             ),
             diverse_buffer,
             rebot_weights=get_offline_dataset_weights(cfg),
+            action_chunk_size=cfg.policy.n_action_steps,
         )
         calibration_groups = groups
         mixture_telemetry = MixtureTelemetry()
