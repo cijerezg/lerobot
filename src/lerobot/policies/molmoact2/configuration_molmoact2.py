@@ -292,12 +292,26 @@ class HandBlockConfig:
     # grows its LM head and input embedding to cover them (modeling: ensure_hand_token_rows).
     hand_start_token: str = "<hand_start>"  # nosec B105
     hand_end_token: str = "<hand_end>"  # nosec B105
+    # Separate expert parameters for the hand block (hand_head.py): hand_in (7 -> d) and
+    # hand_out (d -> 7) spliced into slots 8..14 around the checkpoint's action_embed and
+    # final_layer.linear, which stay untouched. Off: the hand block rides columns 8..14 of
+    # those two matrices.
+    expert_head: bool = True
+    # The hand framing tokens' input rows as one trainable (2, d_text) parameter, pinned to the
+    # norm of the <action_start> / <action_end> rows they start from, so the model can tell the
+    # hand span from the joint span while the embedding table is frozen. Off: the rows stay
+    # copies of the joint pair. Needs a hand FAST layout (fast_layout != "joints").
+    learn_tokens: bool = True
+    # Learning rate of that parameter. None: the fresh-parameter ("depth") group's lr.
+    token_lr: float | None = None
 
     def __post_init__(self) -> None:
         for name in ("joint_weight", "fk_weight"):
             value = getattr(self, name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"hand.{name} must be finite and >= 0, got {value}.")
+        if self.token_lr is not None and (not math.isfinite(self.token_lr) or self.token_lr <= 0):
+            raise ValueError(f"hand.token_lr must be finite and > 0 when set, got {self.token_lr}.")
         if self.fast_layout not in HAND_FAST_LAYOUTS:
             raise ValueError(
                 f"hand.fast_layout must be one of {HAND_FAST_LAYOUTS}, got {self.fast_layout!r}."

@@ -69,6 +69,13 @@ def _is_actor_depth_parameter(name: str) -> bool:
     )
 
 
+def _is_fresh_hand_parameter(name: str) -> bool:
+    """The hand block's own parameters (policies/molmoact2/hand_head.py): the expert's hand head
+    and the hand framing tokens' rows. Absent from the base checkpoint, so they train whatever the
+    layer freeze says and sit in the fresh-parameter group the pretrained merge leaves alone."""
+    return ".hand_head." in name or "hand_token_rows" in name
+
+
 def _weight_block_of(name: str) -> str:
     """Blocks of the 2026-09-11 weight-delta audit (migration/weight_deltas_2026-09-11)."""
     if name.startswith("model.model.transformer"):
@@ -533,10 +540,10 @@ class MolmoAct2Trainer(Trainer):
                 param.requires_grad = _is_actor_depth_parameter(name)
                 continue
 
-            if _is_actor_depth_parameter(name) or "state_projector" in name:
-                # Independent depth modules plus the fresh MEM state-history
-                # projector are always trainable. Without this whitelist they fall
-                # through to the unknown-parameter branch and are frozen.
+            if _is_actor_depth_parameter(name) or "state_projector" in name or _is_fresh_hand_parameter(name):
+                # Independent depth modules plus the fresh MEM state-history projector and the
+                # hand block's own parameters (hand_head.py) are always trainable. Without this
+                # whitelist they fall through to the unknown-parameter branch and are frozen.
                 param.requires_grad = True
             elif ".action_expert." in name:
                 param.requires_grad = True
@@ -604,23 +611,43 @@ class MolmoAct2Trainer(Trainer):
     @staticmethod
     def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
         """Move independent depth params (CNN/visual path/marker, plus the MEM
-        state-history state_projector and future predictor) out of the policy group into their own
+        state-history state_projector, the future predictor and the hand block's own
+        parameters) out of the policy group into their own
         "depth" group. Its LR defaults exactly to optimizer_lr; the separate group
         name exists to keep these parameters out of
         pretrained_merge_targets (the checkpoint has none of these weights, so a
-        merge would drag them back toward their init)."""
+        merge would drag them back toward their init).
+
+        ``policy.hand.token_lr`` gives the hand framing rows (``hand_token_rows``) their own
+        learning rate: they become a second torch param group inside the same "depth"
+        optimizer, so the scheduler, the step and the merge exclusion stay unchanged."""
         depth_ids = {
             id(p)
             for name, p in policy.named_parameters()
-            if _is_actor_depth_parameter(name) or "state_projector" in name
+            if _is_actor_depth_parameter(name)
+            or "state_projector" in name
             or name.startswith("future_visual.predictor.")
+            or _is_fresh_hand_parameter(name)
         }
+        token_ids = {id(p) for name, p in policy.named_parameters() if "hand_token_rows" in name}
         policy_group = next(g for g in groups if g["name"] == "policy")
         depth_params = [p for p in policy_group["params"] if id(p) in depth_ids]
         if depth_params:
             policy_group["params"] = [p for p in policy_group["params"] if id(p) not in depth_ids]
             depth_lr = cfg.policy.optimizer_lr if cfg.policy.depth_lr is None else cfg.policy.depth_lr
-            groups.append({"name": "depth", "params": depth_params, "lr": depth_lr})
+            token_lr = getattr(getattr(cfg.policy, "hand", None), "token_lr", None)
+            token_params = [p for p in depth_params if id(p) in token_ids]
+            if token_lr is not None and token_params:
+                others = [p for p in depth_params if id(p) not in token_ids]
+                params: list = [{"params": token_params, "lr": float(token_lr)}]
+                if others:
+                    params.insert(0, {"params": others, "lr": depth_lr})
+                groups.append({"name": "depth", "params": params, "lr": depth_lr})
+                logging.info(
+                    f"[MolmoAct2Trainer] hand_token_rows lr={float(token_lr):g} (depth lr={depth_lr:g})"
+                )
+            else:
+                groups.append({"name": "depth", "params": depth_params, "lr": depth_lr})
             actor_depth_count = sum(
                 parameter.numel()
                 for name, parameter in policy.named_parameters()
@@ -1399,6 +1426,11 @@ class MolmoAct2Trainer(Trainer):
         policy_opt.step()
         if depth_opt is not None:
             depth_opt.step()
+        # Hand framing rows back on their sphere (hand_head.HandTokenRows): the forward is
+        # invariant to it; it keeps the gradient scale of the norm-pinned rows stationary.
+        renormalize_hand_tokens = getattr(raw_policy, "renormalize_hand_tokens", None)
+        if callable(renormalize_hand_tokens):
+            renormalize_hand_tokens()
         if getattr(raw_policy, "future_visual", None) is not None:
             if not getattr(policy_opt, "step_was_skipped", False):
                 raw_policy.future_visual.optimizer_step(raw_policy._backbone().vision_backbone.image_vit)

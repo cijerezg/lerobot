@@ -23,7 +23,7 @@ independent source or measured on the hardware with modest effort gets checked o
 | Hand delta | anchor minus action, same as joints: `h_t = (p0 - p_t, log(R0 R_t^T)^v, g0 - g_t)`                                                                                                                                                                                                                      |
 | Units      | position m, rotation vector rad, aperture m; global per-step stats pooled over robots, one scale per block; block means so each block is 1 at chance                                                                                                                                                    |
 | FK term    | FK(predicted joints) vs FK(demo joints), absolute poses, anchor cancels; rotation block = 0.5 \* Frobenius^2, no log map; on the implied clean sample `x_hat = x_tau + (1 - tau) v_hat`, natural (1 - tau)^2 weight kept                                                                                |
-| Expert     | one token per step, action vector = joints (padded) + 7 hand dims, one input and one output projection                                                                                                                                                                                                  |
+| Expert     | one token per step, action vector = joints (padded) + 7 hand dims; the hand dims have their own input and output projections (`hand_head.py`, Phase 3b), the checkpoint's two projections stay untouched                                                                                                                                                                                                  |
 | FAST       | masked: hand block and joint block tokenized separately, each with its own start token, neither attends to the other, shared positions. A source without joints (MolmoAct) has no joint block at all: its suffix is the hand start token and the hand tokens, and it contributes no joint cross-entropy |
 | State      | joints + hand pose from our FK: position 3, first two rotation-matrix columns 6, aperture 1; discretized with the same 201-bin scheme and the same state tokens as the joints; same dropout treatment as joints                                                                                         |
 | Hand frame | fingertip midpoint, common axes (z approach, y closing), one fixed tool transform per robot                                                                                                                                                                                                             |
@@ -185,6 +185,45 @@ Decisions taken while building:
       as before) and the sequence budget with two spans are only unit-tested. Flip `hand_block`
       in `config_rl.yaml`, point `embodiment_stats_path` at the `-hand-` artifact, and watch the
       `hand_flow_*` / `hand_fk_*` metrics on the first steps.
+
+## Phase 3b: separate hand parameters
+
+**Built 2026-10-11, unit-tested, not yet run end-to-end.** Code: `policies/molmoact2/hand_head.py`;
+wiring in `modeling_molmoact2.py` (`_install_hand_parameters`), `rl_molmoact2_trainer.py` (freeze
+whitelist, fresh-parameter group, post-step renormalization), flags in `HandBlockConfig`. Tests:
+`tests/policies/test_molmoact2_hand_head.py`.
+
+Two findings on the Phase 3 build, and what replaced them:
+
+- **The hand block rode the checkpoint's projections.** Slots 8..14 of the 32-wide chunk went
+  through columns 8..14 of `action_embed` and rows 8..14 of `final_layer.linear`, pretrained
+  columns that only ever saw zeros. Now (`hand.expert_head`, default on) the hand block has its
+  own `hand_in` (7 -> d) and `hand_out` (d -> 7), spliced in by forward hooks on those two modules:
+  the pre-hook zeroes the hand slots before `action_embed` and the post-hook adds
+  `hand_in(hand)`; the hook on `final_layer.linear` overwrites slots 8..14 of its output with
+  `hand_out(h)`. One 32-wide output as before, so loss, masks, RTC and the HF sampling loop are
+  unchanged; the original columns get no gradient. `hand_in` starts as a copy of the unused
+  columns (same scale, same function at step 0), `hand_out` at zero (zero hand velocity at step 0;
+  its gradient `dL/dy . h^T` is nonzero).
+- **Nothing told the model which span it was in.** `<hand_start>` / `<hand_end>` were added with
+  input rows copied from `<action_start>` / `<action_end>`, and `freeze_embedding` keeps the table
+  frozen, so at the input side the two spans were identical for good (the LM head rows diverge,
+  since `language_from_layer` leaves the head trainable). Now (`hand.learn_tokens`, default on) the
+  two rows are one free `(2, d_text)` parameter initialized to those copies and used as
+  `r * w / ||w||` with `r` the joint row's norm: the direction learns, the magnitude cannot move.
+  A hook on `wte` swaps the rows in where the id is a hand marker. The gradient is the loss
+  gradient projected onto the tangent plane; the trainer renormalizes `w` after each step so its
+  scale stays stationary. Under `masked` only `<hand_start>` is visible to the hand bins, so it
+  carries the identity; `<hand_end>` only precedes the EOS and will barely move. Telemetry:
+  `hand_token_cos_start` / `hand_token_cos_end`, the cosine to the joint seed (1.0 = still
+  identical). `hand.token_lr` gives the rows their own lr inside the fresh-parameter optimizer.
+- Both pieces are fresh parameters: trainable whatever the layer freeze says, in the "depth"
+  (fresh) optimizer group so `pretrained_merge_targets: [policy]` never pulls them toward their
+  init, and loaded leniently (`_filter_load_keys`: absent in a checkpoint = fresh init).
+
+- [ ] **First end-to-end run**: watch `hand_token_cos_start` leave 1.0 and `hand_flow_position/
+      rotation/aperture` fall from chance; confirm the RTC path (hooks on `forward_with_context`'s
+      modules) produces a finite hand block in the inference monitor.
 
 ## Phase 4: telemetry and probes
 

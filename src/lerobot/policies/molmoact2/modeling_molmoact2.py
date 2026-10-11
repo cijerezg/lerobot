@@ -28,6 +28,7 @@ from ..rtc.modeling_rtc import RTCProcessor
 from .action_layout import native_joint_widths
 from .configuration_molmoact2 import MolmoAct2Config
 from .hand_block import HAND_ACTION_SLOTS, HAND_ACTION_WIDTH, HAND_DELTA_DIM
+from .hand_head import HandTokenRows, install_hand_expert_head, install_hand_token_rows
 from .hand_loss import block_mean_flow_loss, hand_fk_term, implied_clean_sample
 
 logger = logging.getLogger(__name__)
@@ -1505,6 +1506,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.register_buffer("_fast_aux_token_lengths", None, persistent=False)
         self.register_buffer("_fast_aux_value_bins_by_offset", None, persistent=False)
         self._fast_aux_num_bins: int | None = None
+        self.hand_token_rows: HandTokenRows | None = None
         self._load_hf_model()
         self._resolve_hand_token_rows()
         if self.config.discrete_action_auxiliary_loss.enabled:
@@ -1512,6 +1514,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self._validate_inference_action_mode()
         if self.config.enable_lora_vlm:
             self._apply_lora_adapters()
+        # After LoRA: the hooks must sit on the modules the forward actually calls, and the fresh
+        # parameters must come out trainable whatever the adapter freeze did.
+        self._install_hand_parameters()
         self.init_rtc_processor()
 
     def _load_saved_policy_action_mode(self) -> str | None:
@@ -1734,6 +1739,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
             auxiliary_keys = {f"future_visual.{key}" for key in model.future_visual.state_dict()}
             if auxiliary_keys.issubset(missing_keys):
                 missing_keys = [key for key in missing_keys if not key.startswith("future_visual.")]
+        # Separate hand parameters (hand_head.py): a checkpoint saved before they existed, or with
+        # them off, initializes them afresh; one saved with them on loads fine without them.
+        for marker in (".hand_head.", "hand_token_rows."):
+            missing_keys = [key for key in missing_keys if marker not in key]
+            unexpected_keys = [key for key in unexpected_keys if marker not in key]
         return missing_keys, unexpected_keys
 
     def prepare_future_visual(self, batch: dict[str, Tensor]) -> None:
@@ -1838,7 +1848,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         trainable_params = 0
         for name, param in self.named_parameters():
             param.requires_grad = any(
-                key in name for key in ("action_expert", *_DEPTH_PARAMETER_NAMES)
+                key in name for key in ("action_expert", "hand_token_rows", *_DEPTH_PARAMETER_NAMES)
             )
             if param.requires_grad:
                 trainable_params += param.numel()
@@ -1899,7 +1909,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            if any(key in name for key in _DEPTH_PARAMETER_NAMES):
+            if any(key in name for key in _DEPTH_PARAMETER_NAMES) or "hand_token_rows" in name:
                 depth_params.append(param)
             elif "action_expert" in name:
                 action_expert_params.append(param)
@@ -1991,6 +2001,38 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self._hand_token_ids = (int(start_id), int(end_id))
         self.model.config.hand_start_token_id = int(start_id)
         self.model.config.hand_end_token_id = int(end_id)
+
+    # ── Separate hand parameters (hand_head.py, docs/ee_mixture_loss/TODO.md Phase 3b) ──
+
+    def _install_hand_parameters(self) -> None:
+        """The expert's hand head and the hand framing tokens' input rows, per ``hand.expert_head``
+        and ``hand.learn_tokens``. Both are fresh parameters spliced in by hooks; they are made
+        trainable here regardless of the freeze that ran before (LoRA, train_action_expert_only),
+        and the trainer puts them in its fresh-parameter group."""
+        if not getattr(self.config, "hand_block", False):
+            return
+        hand = self.config.hand
+        fresh: list[nn.Parameter] = []
+        if hand.expert_head:
+            head = install_hand_expert_head(self._action_expert())
+            fresh.extend(head.parameters())
+        token_ids = getattr(self, "_hand_token_ids", None)
+        if hand.learn_tokens and token_ids is not None:
+            self.hand_token_rows = install_hand_token_rows(self._backbone().transformer.wte, token_ids)
+            fresh.extend(self.hand_token_rows.parameters())
+        for param in fresh:
+            param.requires_grad_(True)
+
+    def renormalize_hand_tokens(self) -> None:
+        """Call after each optimizer step (hand_head.HandTokenRows.renormalize)."""
+        if self.hand_token_rows is not None:
+            self.hand_token_rows.renormalize()
+
+    def hand_token_cosines(self) -> dict[str, float]:
+        """Cosine of each hand framing row to the joint row it started from; {} without the rows."""
+        if self.hand_token_rows is None:
+            return {}
+        return self.hand_token_rows.cosines()
 
     def _grow_token_rows(self, init_from: dict[int, int]) -> None:
         """Make the LM head and the input embedding cover every id in ``init_from`` (new id ->
@@ -3617,6 +3659,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         # Hand-block scalars (block means of the flow loss, the FK term) from the flow pass.
         metrics.update(getattr(self, "_hand_loss_metrics", None) or {})
+        # Hand framing rows vs their joint seeds (hand_head.py): 1.0 = the spans are still identical.
+        metrics.update(self.hand_token_cosines())
 
         depth_event_config = self.config.depth_gripper_event_loss
         if depth_event_config.enabled:
