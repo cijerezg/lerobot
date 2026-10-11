@@ -1,5 +1,6 @@
 """Read-only configured data/cache gate; does not instantiate a model or train."""
 import argparse,json
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 import torch,yaml
@@ -11,14 +12,22 @@ p=argparse.ArgumentParser();p.add_argument('--config',default='config_rl_validat
 cfg=yaml.safe_load(Path(args.config).read_text());root=Path(cfg['diverse']['root'])
 selection=select_actor_anchors(open_federated_corpus(root));held=holdout_episode_ids(root)
 assert len(held)==18 and not set(selection.episode_ids)&held
-assert len(selection.rows)==87306 and len(selection.episode_ids)==891
+# select_actor_anchors verifies corrected corpora against their audited manifest.
+# Compare caches and statistics to that selection, rather than the old v3 totals.
+anchors,episodes=len(selection.rows),len(selection.episode_ids)
 stats=torch.load(cfg['policy']['embodiment_stats_path'],map_location='cpu',weights_only=False)
-assert set(stats['probe_holdout'])==held
-for i,count in ((0,5586),(1,7401),(2,11189),(3,22618),(4,17533),(5,954),(7,21282),(8,743)):
-    assert int(stats['counts'][i,0])==count,(i,stats['counts'][i])
-cache=find_cache(root,cfg['diverse']['cache_dir'],DiverseSampleSpec(),anchors=len(selection.rows),episodes=len(selection.episode_ids))
+# Older artifacts recorded the holdout explicitly; current ones use per-layout counts.
+if 'probe_holdout' in stats:
+    assert set(stats['probe_holdout'])==held
+assert stats['chunk_size']==cfg['policy']['chunk_size']
+assert stats['encoding']==cfg['policy']['action_encoding']
+if cfg['policy'].get('hand_block'):
+    assert stats.get('hand_block'), 'Configured hand block needs hand normalization statistics'
+for i,count in Counter(int(row['action_layout_id']) for row in selection.rows).items():
+    assert tuple(stats['counts'][i].tolist())==(count,count),(i,stats['counts'][i],count)
+cache=find_cache(root,cfg['diverse']['cache_dir'],DiverseSampleSpec(),anchors=anchors,episodes=episodes)
 assert cache is not None,'Configured diverse cache is missing'
-meta=json.loads((cache/'metadata.json').read_text());assert meta['built_rows']==87306 and not meta['partial']
+meta=json.loads((cache/'metadata.json').read_text());assert meta['built_rows']==anchors and not meta['partial']
 sources=cfg['dataset']['sources']
 # The ReBot stats pool is matched by data (frame + episode counts), not by path: a re-keyed
 # root (hardlink twin under a new name) is the same data. Sources the pool never saw are
@@ -38,4 +47,4 @@ for s in sources:
     metadata=json.loads(path.read_text());assert metadata['num_transitions']==info['total_frames']
 val=Path(cfg['val_dataset_path']);vi=json.loads((val/'meta/info.json').read_text())
 assert Path(cfg['probe_parameters']['subtask_scene_sweep_frames']).is_file()
-print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), {vi["total_episodes"]} validation episodes; 891 diverse training episodes / 87306 anchors; configured stats and caches agree.')
+print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), {vi["total_episodes"]} validation episodes; {episodes} diverse training episodes / {anchors} anchors; configured stats and caches agree.')

@@ -245,6 +245,10 @@ class MolmoAct2HandBlockProcessorStep(ProcessorStep):
                 f"hand block expects the state padded to {HAND_STATE_WIDTH}, got {state.shape[-1]}."
             )
         layout_ids = torch.as_tensor(layout_ids).reshape(-1).to(torch.long)
+        # Single-robot probes pass one identity for the entire batch, as supported
+        # by the unified-layout, normalization and hand-monitor steps.
+        if layout_ids.numel() == 1 and state.shape[0] > 1:
+            layout_ids = layout_ids.expand(state.shape[0])
 
         p0, r0, g0, valid = hand_pose(layout_ids, state)
         state = state.clone()

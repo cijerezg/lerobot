@@ -1,6 +1,7 @@
 """Hand block (docs/ee_mixture_loss/TODO.md Phase 2): pose, deltas, state, masks, and the
 unnormalize-then-FK path, on the frozen kinematics assets."""
 
+import pytest
 import torch
 
 from lerobot.model.fk import get_chain
@@ -119,3 +120,47 @@ def test_native_joint_widths_ignores_hand_slots():
     mask = torch.tensor([[False] * 7 + [True] + [False] * 7, [False] * 8 + [True] * 7])
     assert native_joint_widths(mask).tolist() == [7, 8]
     assert native_joint_widths(torch.tensor([[False] * 6 + [True, True]])).tolist() == [6]
+
+
+@pytest.mark.parametrize("identity", [REBOT, torch.tensor([REBOT])])
+@pytest.mark.parametrize("with_actions", [True, False])
+def test_hand_processor_broadcasts_single_layout_over_probe_batch(identity, with_actions):
+    """ValLoss and batched probes supply one robot ID for all eight frames."""
+    batch_size, horizon = 8, 3
+    state = _rebot_state().repeat(batch_size, 1)
+    state[:, 0] += torch.arange(batch_size)
+    history = state[:, None, :].repeat(1, 2, 1) - 1.0
+    chunk = state[:, None, :].repeat(1, horizon, 1) + 2.0 if with_actions else None
+    layout = MolmoAct2UnifiedLayoutProcessorStep(
+        state_dim=HAND_STATE_WIDTH,
+        action_dim=HAND_ACTION_WIDTH,
+        native_action_dims=[8, 8, 8, 7, 7, 7, 7, 7, 7],
+        stats_index_key="action_layout_id",
+    )
+    hand = MolmoAct2HandBlockProcessorStep(
+        joint_q01=torch.full((9, horizon, JOINT_SLOTS), -10.0),
+        joint_q99=torch.full((9, horizon, JOINT_SLOTS), 10.0),
+        block_scale=torch.ones(horizon, 3),
+    )
+
+    def process(ids):
+        transition = create_transition(
+            observation={OBS_STATE: state},
+            action=chunk,
+            complementary_data={"action_layout_id": ids, f"history.{OBS_STATE}": history},
+        )
+        return hand(AnchorEncodeStep("anchor")(layout(transition)))
+
+    actual = process(identity)
+    expected = process(torch.full((batch_size,), REBOT))
+    torch.testing.assert_close(actual[TransitionKey.OBSERVATION], expected[TransitionKey.OBSERVATION])
+    if with_actions:
+        torch.testing.assert_close(actual[TransitionKey.ACTION], expected[TransitionKey.ACTION])
+    for key, value in expected[TransitionKey.COMPLEMENTARY_DATA].items():
+        if key != "action_layout_id":
+            torch.testing.assert_close(actual[TransitionKey.COMPLEMENTARY_DATA][key], value)
+
+
+def test_hand_pose_rejects_mismatched_per_row_layouts():
+    with pytest.raises(ValueError, match="do not match vectors"):
+        hand_pose(torch.tensor([REBOT, DROID]), _rebot_state().repeat(8, 1))
