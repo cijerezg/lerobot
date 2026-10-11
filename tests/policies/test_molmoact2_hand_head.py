@@ -121,7 +121,7 @@ def test_hand_token_rows_start_as_the_seeds_pin_the_norm_and_swap_only_the_hand_
     assert grad is not None and bool((grad[0] != 0).any())
     assert torch.equal(grad[1], torch.zeros_like(grad[1]))  # <hand_end> not in the loss here
     assert abs(float(torch.dot(grad[0], rows.rows.detach()[0]))) < 1e-4 * float(
-        grad[0].norm() * rows.rows[0].norm()
+        grad[0].norm() * rows.rows.detach()[0].norm()
     )
 
     # Renormalization: back on the sphere, same function.
