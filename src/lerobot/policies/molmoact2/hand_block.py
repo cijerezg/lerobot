@@ -312,14 +312,16 @@ class MolmoAct2HandBlockProcessorStep(ProcessorStep):
         horizon: int,
     ) -> dict[str, Tensor]:
         """The FK term's batch keys (hand_loss.HAND_FK_KEYS), gathered for this batch's rows."""
-        q01 = torch.as_tensor(self.joint_q01)
-        q99 = torch.as_tensor(self.joint_q99)
-        scale = torch.as_tensor(self.block_scale)
+        # Processor state is serialized on CPU, but training may have already
+        # moved this batch to CUDA. Gather stats on the batch's device.
+        q01 = torch.as_tensor(self.joint_q01, device=anchor.device, dtype=torch.float32)
+        q99 = torch.as_tensor(self.joint_q99, device=anchor.device, dtype=torch.float32)
+        scale = torch.as_tensor(self.block_scale, device=anchor.device, dtype=torch.float32)
         if int(q01.shape[1]) != horizon or int(scale.shape[0]) != horizon:
             raise ValueError(
                 f"hand FK stats hold a {int(q01.shape[1])}-step chunk, the batch a {horizon}-step one."
             )
-        rows = layout_ids.clamp(0, int(q01.shape[0]) - 1)
+        rows = layout_ids.to(device=anchor.device, dtype=torch.long).clamp(0, int(q01.shape[0]) - 1)
         return {
             "hand_fk_valid": valid.clone(),
             "hand_fk_layout_id": layout_ids.clone(),

@@ -233,6 +233,45 @@ def test_hand_step_ships_the_fk_keys_when_it_holds_the_stats():
     assert fresh.emits_fk_keys
 
 
+@pytest.mark.parametrize("device", ["cpu", pytest.param(
+    "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+)])
+def test_cpu_hand_stats_with_device_batch_support_fk_backward(device):
+    # Distinct layout rows catch an incorrect gather as well as a device mismatch.
+    offsets = torch.arange(9, dtype=torch.float32)[:, None, None]
+    q01 = (-10.0 - offsets).expand(9, HORIZON, JOINT_SLOTS).clone()
+    q99 = (10.0 + offsets).expand_as(q01).clone()
+    scale = torch.tensor([[0.05, 0.2, 0.01]]).repeat(HORIZON, 1)
+    step = MolmoAct2HandBlockProcessorStep()
+    step.load_state_dict(dict(joint_q01=q01, joint_q99=q99, block_scale=scale))
+    transition = AnchorEncodeStep("anchor")(_layout_step()(_two_row_transition()))
+
+    def move(value):
+        if torch.is_tensor(value):
+            return value.to(device)
+        if isinstance(value, dict):
+            return {key: move(item) for key, item in value.items()}
+        return value
+
+    out = step(move(transition))
+    comp = out[TransitionKey.COMPLEMENTARY_DATA]
+    for key in HAND_FK_KEYS:
+        assert comp[key].device.type == device, key
+    torch.testing.assert_close(comp["hand_fk_q01"].cpu(), q01[[REBOT, MOLMOACT]])
+    torch.testing.assert_close(comp["hand_fk_q99"].cpu(), q99[[REBOT, MOLMOACT]])
+    lo, hi = comp["hand_fk_q01"], comp["hand_fk_q99"]
+    normalized = 2 * (out[TransitionKey.ACTION][..., :JOINT_SLOTS] - lo) / (hi - lo) - 1
+    value, _ = hand_fk_term(normalized[:, None], comp)
+    torch.testing.assert_close(value, torch.zeros_like(value), atol=1e-8, rtol=0)
+    perturbed = (normalized[:, None].detach() + 0.1).requires_grad_(True)
+    value, _ = hand_fk_term(perturbed, comp)
+    value.sum().backward()
+    assert torch.isfinite(value).all() and torch.isfinite(perturbed.grad).all()
+    assert perturbed.grad[0, ..., :6].abs().sum() > 0
+    assert perturbed.grad[1].abs().sum() == 0
+    assert all(t.device.type == "cpu" for t in step.state_dict().values())
+
+
 def test_hand_step_without_stats_ships_no_fk_keys():
     out = MolmoAct2HandBlockProcessorStep()(AnchorEncodeStep("anchor")(_layout_step()(_two_row_transition())))
     assert not any(key in out[TransitionKey.COMPLEMENTARY_DATA] for key in HAND_FK_KEYS)

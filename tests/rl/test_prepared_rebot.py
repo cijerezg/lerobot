@@ -86,3 +86,21 @@ def test_consolidated_source_routes_calibration_and_missing_views_per_episode(tm
     assert info['depth.wrist_0.depth_is_present'].tolist()==[True,False]
     assert info['depth.wrist_0.intrinsics'][0].tolist()==[101.,102.,103.,104.]
     assert 'prepared_episode_index' not in info
+
+
+@pytest.mark.parametrize('missing', [None, 'rgb', 'depth'])
+def test_canonical_reannotation_without_prepared_contract(tmp_path, missing):
+    root=tmp_path/'root';root.mkdir()
+    images=['observation.images.external_0','observation.images.wrist_0']
+    features={key:{} for key in [*images,'observation.state','action']}
+    cfg=SimpleNamespace(policy=SimpleNamespace(input_features={**features,'observation.images.external_1':{}}))
+    dataset=SimpleNamespace(root=root,meta=SimpleNamespace(features=features))
+    assert set(buffer_state_keys(cfg,dataset))==set(images+['observation.state'])
+    cache=tmp_path/'cache';cache.mkdir()
+    metadata=dict(dataset_root=str(root),num_transitions=30,image_stride=3,
+                  image_keys=images[:1] if missing=='rgb' else images,
+                  depth_keys=[] if missing=='depth' else ['wrist_0.depth'],
+                  fingerprint='example',image_storage_dtype='uint8')
+    (cache/'metadata.json').write_text(json.dumps(metadata))
+    report=probe_rebot_cache(cache,history_offsets_frames=[180],depth_role='wrist',measure_reach=False)
+    assert report.usable == (missing is None), report.problems

@@ -150,10 +150,13 @@ def buffer_state_keys(cfg, dataset=None) -> list[str]:
     if dataset is not None:
         from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
 
-        if prepared_rebot_contract(dataset.root) is not None:
-            # Match the cache builder's recorded columns; absent views are supplied
-            # with masks by RoleAlignedBuffer, never looked up in the memmap.
-            return [key for key in dataset.meta.features if key.startswith("observation.")]
+        features = getattr(dataset.meta, "features", {})
+        if prepared_rebot_contract(dataset.root) is not None or (
+            on_canonical_roles(keys) and on_canonical_roles(features)
+        ):
+            # Reannotated roots can keep canonical camera names without a prepared
+            # contract. Match their recorded columns; the adapter supplies absent views.
+            return [key for key in features if key.startswith("observation.")]
     if not on_canonical_roles(keys):
         return keys
     from lerobot.rl.data_sources.rebot_role_adapter import rebot_state_keys

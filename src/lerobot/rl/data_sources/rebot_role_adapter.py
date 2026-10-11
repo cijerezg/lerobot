@@ -132,6 +132,12 @@ def probe_rebot_cache(
     if contract:
         depth_role = "wrist_0" if contract["depth_key"] else None
     present_cameras = {key.rsplit(".", 1)[-1] for key in image_keys}
+    if not contract and present_cameras and present_cameras <= set(CANONICAL_CAMERA_ROLES):
+        expected_cameras = set(CAMERA_ROLE_MAP["rebot"].values())
+        if depth_role is not None:
+            canonical_depth = CAMERA_ROLE_MAP["rebot"].get(depth_role, depth_role)
+            if f"{canonical_depth}.depth" in depth_keys:
+                depth_role = canonical_depth
     missing = sorted(expected_cameras - present_cameras)
     if missing:
         report.problems.append(f"missing RGB columns for {missing}")
