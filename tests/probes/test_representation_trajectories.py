@@ -10,7 +10,8 @@ import torch
 from lerobot.configs.train import ProbeConfig
 from lerobot.probes import representations as rep
 from lerobot.probes.representation_trajectories import (
-    cross_episode_matches, project_pca, robot_center, temporal_metrics,
+    LAG_EDGES_S, compact, cross_episode_matches, episode_center, episode_cosine_matrices,
+    lag_profile, project_pca, robot_center, temporal_metrics,
 )
 
 
@@ -41,7 +42,7 @@ def test_matches_exclude_source_episode_and_split_robot_task_in_original_space()
                     ['pick', 'pick', 'pick', 'place', 'pick', 'place', 'place'])
     x = np.array([[1., 0, 0, 0], [1., 0, 0, 0], [2., 0, 0, 0],
                   [1., 0, 0, 10], [0., 1, 0, 0], [-1., 0, 0, 0], [0., 0, 0, 0]])
-    matches = cross_episode_matches(x, rows, 1, block_size=2)
+    matches, background = cross_episode_matches(x, rows, 1, block_size=2)
     m = matches[0]
     assert m['same_robot_same_task']['target'] == 2
     assert m['same_robot_same_task']['raw_norm_ratio'] == 2
@@ -51,14 +52,18 @@ def test_matches_exclude_source_episode_and_split_robot_task_in_original_space()
     assert m['different_robot_different_task']['target'] == 5
     assert m['different_robot_different_task']['cosine'] == -1
     assert all(v is None for v in matches[6].values())
-    assert matches == cross_episode_matches(x, rows, 1, block_size=128)
+    # Background is the mean over every valid frame of other episodes, not just the best.
+    assert background[0]['background_same_robot'] == pytest.approx((1 + 1 / np.sqrt(101)) / 2)
+    assert background[0]['background_other_robot'] == pytest.approx(-0.5)
+    assert background[6] == {'background_same_robot': None, 'background_other_robot': None}
+    assert (matches, background) == cross_episode_matches(x, rows, 1, block_size=128)
 
 
 def test_target_neighborhood_support_uses_matched_episode_time_and_task():
     rows = rows_for(['a', 'b', 'b', 'b', 'b'], [0, 0, .5, 9, .8],
                     tasks=['one', 'two', 'two', 'two', 'three'])
     x = np.array([[1., 0], [1., 0], [0., 1], [1., 0], [-1., 0]])
-    match = cross_episode_matches(x, rows, 1)[0]['same_robot_different_task']
+    match = cross_episode_matches(x, rows, 1)[0][0]['same_robot_different_task']
     assert match['target'] == 1
     assert match['target_window_count'] == 2
     assert match['target_window_cosine'] == .5
@@ -90,7 +95,26 @@ def test_degenerate_pca_is_finite_and_zero_cosines_are_missing():
     assert coords.shape == (2, 3) and not coords.any()
     assert not pca['variance'].any()
     y = robot_center(x, rows)[0]
-    assert all(v is None for v in cross_episode_matches(y, rows, 1)[0].values())
+    assert all(v is None for v in cross_episode_matches(y, rows, 1)[0][0].values())
+
+
+def test_episode_centering_matrices_and_lag_profile_follow_time_not_input_order():
+    rows = rows_for(['a', 'a', 'b', 'a', 'a'], [2, 0, 5, 1, 3.5])
+    x = np.array([[1., 0], [0., 1], [1., 1], [1., 0], [0., 0]])
+    y = episode_center(x, rows)
+    np.testing.assert_allclose(y[[0, 1, 3, 4]].mean(axis=0), 0, atol=1e-12)
+    np.testing.assert_allclose(y[2], 0)  # a single-frame episode centers to nothing
+    matrices = episode_cosine_matrices(x, rows)
+    a = matrices['a']
+    assert a['ids'].tolist() == [1, 3, 0, 4] and a['times'].tolist() == [0, 1, 2, 3.5]
+    np.testing.assert_allclose(a['cosine'][:3, :3], [[1, 0, 0], [0, 1, 1], [0, 1, 1]])
+    assert np.isnan(a['cosine'][3]).all() and np.isnan(a['cosine'][:, 3]).all()  # zero vector
+    profile = lag_profile(a['cosine'], a['times'], edges=(0, 1, 2))
+    # Pairs (0,1)->gap 1 bin 0, (0,2)->2 bin 1, (1,2)->1 bin 0; frame 3 pairs are invalid.
+    assert [(p['lag_lo_s'], p['lag_hi_s'], p['pairs']) for p in profile] == [(0, 1, 2), (1, 2, 1), (2, None, 0)]
+    assert profile[0]['mean_cosine'] == .5 and profile[1]['mean_cosine'] == 0 and profile[2]['mean_cosine'] is None
+    assert lag_profile(a['cosine'], a['times'])[-1]['lag_lo_s'] == LAG_EDGES_S[-1]
+    assert compact(np.array([[1.23456, np.nan], [np.inf, -0.00004]])) == [[1.2346, None], [None, -0.0]]
 
 
 def test_sampling_balances_tasks_robots_and_preserves_episode_ends():
@@ -157,11 +181,29 @@ def test_model_free_replot_writes_linked_report_metrics_basis_and_manifest(tmp_p
     assert 'plotly' in html and 'Target-window cosine' in html
     assert '<script id="data"' in html
     assert 'umap' not in html.lower()
+    # The page stays light: per-panel data and previews are loaded from disk on demand.
+    assert 'data:image/jpeg' not in html and '"cosine"' not in html
+    light = json.loads(html.split('<script id="data" type="application/json">')[1].split('</script>')[0])
+    assert len(light['panels']) == 24 and light['panels'][0]['file'].startswith('panels/')
+    assert light['thumb_dir'] == 'cache/thumbs' and light['lag_edges_s'] == list(LAG_EDGES_S)
+    sidecars = sorted((tmp_path / 'panels').glob('*.js'))
+    assert len(sidecars) == 24
+    text = (tmp_path / 'panels' / 'action.L0.real.episode_centered.js').read_text()
+    assert text.startswith('window.__trajectoryPanel("action.L0.real.episode_centered",')
+    data = json.loads(text[text.index(',') + 1:-2])
+    episode = data['episodes']['a']
+    assert episode['ids'] == [0, 1] and [row[i] for i, row in enumerate(episode['cosine'])] == [1, 1]
+    assert len(episode['lags']) == len(LAG_EDGES_S)
+    assert set(data['temporal']) >= {'local_cosine', 'background_same_robot', 'raw_norm'}
+    assert data['matches']['same_robot_different_task']['target'][0] in (2, 3)
+    assert data['matches']['same_robot_same_task']['target'] == [None] * 4
     assert (tmp_path / 'temporal.csv').stat().st_size > 100
     assert (tmp_path / 'matches.csv').stat().st_size > 100
-    assert len(list((tmp_path / 'pca').glob('*.npz'))) == 16
+    assert 'lag_lo_s' in (tmp_path / 'lags.csv').read_text()
+    assert len(list((tmp_path / 'pca').glob('*.npz'))) == 24
     index = json.loads((tmp_path / 'index.json').read_text())
     assert index['panels'][0]['file'] == 'trajectories.html'
+    assert any(p['file'] == 'lags.csv' for p in index['panels'])
     cfg.probe_parameters.repr_view = 'block_output'
     with pytest.raises(ValueError, match='differ from cache'):
         rep.run(None, None, cfg, tmp_path)

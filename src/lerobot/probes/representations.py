@@ -6,27 +6,40 @@ using the conditions-matrix adapter seam (first flow step, fixed noise). The def
 view is the native attention input; normalization happens inside the model before
 pooling. Real and constant task/subtask prompts are captured separately.
 
-``trajectories.html`` links a shared 3-D PCA to original-space temporal cosine, raw
-norms and cross-episode nearest matches, with both camera previews. PCA is fitted
-once per group/layer/text/geometry across robots, then held fixed while filtering.
-Training rows fit the basis and robot means; a robot with only held-out rows uses
-those rows descriptively, explicitly recorded in the report. No UMAP, whitening,
-or similarity measured in the projection. Bases are refitted across checkpoints.
+``trajectories.html`` follows one episode frame by frame: a slider over its sampled
+frames drives both camera previews, a crosshair on the episode's full cosine matrix
+(every frame against every other, in the original dimensions), the selected frame's
+cosine profile along the episode, and a highlight in a shared 3-D PCA. Everything
+heavy is loaded per panel from ``panels/<key>.js`` on demand; frame previews are
+read from ``cache/thumbs``. Keep the directory together when moving the report.
 
-Local cosine excludes the frame itself and uses a time window in seconds within
-the same episode. Matches exclude the entire source episode, and split by same /
-different robot and task (exact task text). Target-window cosine averages the
-anchor's similarity to frames near its best match; this is not trajectory alignment.
-Crossings are candidates for inspection, not a confusion score or causal evidence.
-These are dataset replays, not closed-loop rollouts; text controls do not remove
-scene/state confounding. Native action queries are pooled over future positions.
+Raw cosines between model states sit near 1 because all states share a common
+direction, so three geometries are measured: raw, robot-centered (per-robot training
+mean) and episode-centered (each episode's own sampled mean, leaving only motion
+within the episode). To tell a trivially high local cosine from structure, every
+frame also records its *background*: the mean cosine to all frames of other
+episodes, same and other robot, and its best cross-episode matches. The local
+radius is a slider in the report, recomputed from the matrix; the ``lags.csv``
+profile gives mean cosine by time gap per episode, which says at what separation
+frames stop being closer than other episodes are. PCA is fitted once per
+group/layer/text/geometry across robots on training rows, then held fixed while
+filtering; a robot with only held-out rows uses those rows descriptively, recorded
+in the report. No UMAP, whitening, or similarity measured in the projection. Bases
+are refitted across checkpoints.
+
+Matches exclude the entire source episode, and split by same / different robot and
+task (exact task text). Target-window cosine averages the anchor's similarity to
+frames near its best match; this is not trajectory alignment. Crossings are
+candidates for inspection, not a confusion score or causal evidence. These are
+dataset replays, not closed-loop rollouts; text controls do not remove scene/state
+confounding. Native action queries are pooled over future positions.
 
 Sampling balances episodes over robot, task and split before distributing the frame
 budget. LeRobot rows follow the stored image grid; diverse rows use available corpus
 anchors. Sparse neighborhoods remain missing, with time gaps and counts recorded.
 ``cache/`` saves float32 selected layers and frame previews for model-free replotting;
 old whole-sequence caches are deliberately rejected. ``sampling_plan.json``,
-``temporal.csv``, ``matches.csv`` and ``pca/`` retain the underlying measurements.
+``temporal.csv``, ``matches.csv``, ``lags.csv`` and ``pca/`` retain the measurements.
 """
 from __future__ import annotations
 
@@ -336,10 +349,11 @@ def run(adapter, primary_dataset, cfg, output_dir):
                 summary=summary, status="info",
                 metrics=[Metric("frames", "Frames", fmt=0), Metric("episodes", "Episodes", fmt=0),
                          Metric("robots", "Robots", fmt=0)],
-                panels=[Panel("trajectories.html", "3-D PCA, temporal similarity and cross-episode matches",
-                              how="Click a point or timeline to inspect both cameras and nearest frames. PCA crossings alone do not establish confusion.", primary=True),
-                        Panel("temporal.csv", "Original-space local cosine, raw norms and sampling gaps"),
+                panels=[Panel("trajectories.html", "Frame slider over an episode: cameras, within-episode cosine matrix, frame profile against background, shared 3-D PCA and cross-episode matches",
+                              how="Pick a geometry (robot- or episode-centered removes the shared direction that makes raw cosines ~1), then slide through the episode. Read the profile against the background and best-match lines. PCA crossings alone do not establish confusion.", primary=True),
+                        Panel("temporal.csv", "Original-space local cosine, background cosine, raw norms and sampling gaps"),
                         Panel("matches.csv", "Cross-episode matches and neighborhood support"),
+                        Panel("lags.csv", "Mean within-episode cosine by time gap between frames, per episode"),
                         Panel("sampling_plan.json", "Exact sampled episodes and frames")],
                 see_also=["conditions_matrix", "subspace_spans", "action_trace"])
     return summary

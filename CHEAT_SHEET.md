@@ -91,18 +91,18 @@ Browser UI over a run's probes (http://127.0.0.1:7870), rescans on refresh. Take
 
 uv run python -m lerobot.scripts.view_probes outputs olmoact2_offline_rebot_all-v6
 
-## Representation trajectories (3D PCA)
+## Representation trajectories
 
-Uses `policy.pretrained_path` in `config_rl.yaml`. Captures separate image/state/action groups, real and constant prompts, then writes a self-contained `trajectories.html` under `outputs/probe/validation/step_<checkpoint>/representations/` (or the configured probe output directory).
+Uses `policy.pretrained_path` in `config_rl.yaml`. Captures separate image/state/action groups, real and constant prompts, then writes `trajectories.html` plus per-panel `panels/*.js` under `outputs/probe/validation/step_<checkpoint>/representations/` (or the configured probe output directory). Keep that directory together; the page loads panels and camera previews from it.
 
 ```bash
 .venv/bin/python -m lerobot.probes.representations --config config_rl.yaml
-# Replot without loading the model or datasets; window radius is in seconds:
+# Replot an existing cache without loading the model or datasets; window radius is in seconds:
 .venv/bin/python -m lerobot.probes.representations --config config_rl.yaml \
     --probe_parameters.mode=plot --probe_parameters.repr_local_window_s=2.0
 ```
 
-Click a trajectory/timeline point for its cameras and cross-episode matches. Compare raw and robot-centered geometry; all cosine/norm measurements use the original dimensions. `repr_max_frames` caps physical frames; constant text doubles captures. `max_episodes` is per robot, and `repr_n_frames_per_episode` controls temporal density. Old representation caches need recollection.
+Pick a geometry (raw cosines are ~1 everywhere; robot- or episode-centered shows the structure), an episode, then slide through frames: cameras, the within-episode cosine matrix, the frame's profile against the background level, the lag curve and cross-episode matches follow. `repr_max_frames` caps physical frames; constant text doubles captures. `max_episodes` is per robot, and `repr_n_frames_per_episode` controls temporal density; the report shows the median sampling gap. Old representation caches need recollection.
 
 ## Probe compare
 

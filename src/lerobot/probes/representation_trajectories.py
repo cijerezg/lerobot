@@ -14,6 +14,13 @@ MATCH_KINDS = (
     "same_robot_same_task", "same_robot_different_task",
     "different_robot_same_task", "different_robot_different_task",
 )
+GEOMETRIES = ("raw", "robot_centered", "episode_centered")
+# Lag bins in seconds for the "how local is local" curve; the last bin is open-ended.
+LAG_EDGES_S = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
+TEMPORAL_KEYS = ("local_cosine", "local_count", "previous_cosine", "previous_dt_s", "step_l2",
+                 "raw_norm", "geometry_norm", "background_same_robot", "background_other_robot")
+MATCH_KEYS = ("target", "cosine", "raw_norm_delta", "raw_norm_ratio", "distance",
+              "target_window_cosine", "target_window_count", "candidate_count", "candidate_episodes")
 
 
 def unit_vectors(x):
@@ -40,6 +47,22 @@ def robot_center(x, rows):
         y[mask] -= means[robot]
         provenance[robot] = {"rows": int(fit.sum()), "fit": "all (no training rows)" if fallback else "training"}
     return y, means, provenance
+
+
+def episode_center(x, rows):
+    """Subtract each episode's own sampled mean: what remains is motion within the episode.
+
+    This removes the scene/episode identity that dominates raw cosines, so the
+    within-episode structure (and its PCA) is about where the frame sits in the
+    episode rather than which episode it is. Descriptive by construction: every
+    episode uses all of its own sampled frames, train or held out.
+    """
+    y = x.copy()
+    episodes = np.array([r["episode"] for r in rows])
+    for episode in set(episodes):
+        mask = episodes == episode
+        y[mask] -= x[mask].mean(axis=0)
+    return y
 
 
 def project_pca(x, rows):
@@ -69,18 +92,26 @@ def project_pca(x, rows):
     }
 
 
+def episode_order(rows):
+    """Row indices of each episode in time order."""
+    episodes = np.array([r["episode"] for r in rows])
+    times = np.array([r["time_s"] for r in rows])
+    order = {}
+    for episode in sorted(set(episodes)):
+        ids = np.flatnonzero(episodes == episode)
+        order[episode] = ids[np.argsort(times[ids], kind="stable")]
+    return order, times
+
+
 def temporal_metrics(x, rows, window_s, raw_norms=None):
     """Self-excluded local cosines in seconds, plus actual previous-frame gaps."""
     z, norms, valid = unit_vectors(x)
     raw_norms = norms if raw_norms is None else raw_norms
-    episodes = np.array([r["episode"] for r in rows])
-    times = np.array([r["time_s"] for r in rows])
+    order, times = episode_order(rows)
     result = [dict(local_cosine=None, local_count=0, previous_cosine=None,
                    previous_dt_s=None, step_l2=None, raw_norm=float(raw_norms[i]),
                    geometry_norm=float(norms[i])) for i in range(len(rows))]
-    for episode in sorted(set(episodes)):
-        ids = np.flatnonzero(episodes == episode)
-        ids = ids[np.argsort(times[ids], kind="stable")]
+    for ids in order.values():
         for pos, i in enumerate(ids):
             near = ids[(np.abs(times[ids] - times[i]) <= window_s) & (ids != i) & valid[ids]]
             if valid[i] and len(near):
@@ -95,12 +126,53 @@ def temporal_metrics(x, rows, window_s, raw_norms=None):
     return result
 
 
+def episode_cosine_matrices(x, rows):
+    """Full within-episode cosine matrices in time order; invalid rows/columns are NaN.
+
+    Every local or lagged statistic is a function of this matrix and the frame times,
+    so the report derives them interactively instead of fixing one window here.
+    """
+    z, _, valid = unit_vectors(x)
+    order, times = episode_order(rows)
+    out = {}
+    for episode, ids in order.items():
+        c = np.clip(z[ids] @ z[ids].T, -1, 1)
+        c[~valid[ids], :] = np.nan
+        c[:, ~valid[ids]] = np.nan
+        out[episode] = {"ids": ids, "times": times[ids], "cosine": c}
+    return out
+
+
+def lag_profile(matrix, times, edges=LAG_EDGES_S):
+    """Mean cosine over frame pairs binned by |time gap|; the last bin is open-ended.
+
+    Bins are ``(lo, hi]`` so that, like the local window, a gap of exactly 2 s counts
+    as within 2 s. Zero-gap pairs (duplicate anchors) land in the first bin. Bins
+    without pairs are kept with ``pairs=0`` and a missing mean rather than a zero.
+    """
+    t = np.asarray(times, dtype=np.float64)
+    lag = np.abs(t[:, None] - t[None, :])
+    upper = np.triu(np.ones(lag.shape, dtype=bool), k=1) & np.isfinite(matrix)
+    bins = np.searchsorted(np.asarray(edges), lag, side="left") - 1
+    bins[lag <= edges[0]] = 0
+    profile = []
+    for k, lo in enumerate(edges):
+        hi = edges[k + 1] if k + 1 < len(edges) else None
+        mask = upper & (bins == k)
+        profile.append({"lag_lo_s": lo, "lag_hi_s": hi, "pairs": int(mask.sum()),
+                        "mean_cosine": float(matrix[mask].mean()) if mask.any() else None})
+    return profile
+
+
 def cross_episode_matches(x, rows, window_s, raw_norms=None, block_size=128):
     """Exact nearest cosine by category, in bounded blocks; no N x N output/cache.
 
     Invalid/zero vectors are ineligible. Neighborhood support compares the anchor
     with frames in the *matched* episode, near the matched time and with its task.
     Candidate counts and absent matches are retained rather than inventing zeros.
+    Also returns the per-frame *background*: mean cosine to every valid frame of
+    other episodes, split by same/other robot, the level a "local" cosine must
+    clear before it says anything about the episode rather than the robot.
     """
     z, norms, valid = unit_vectors(x)
     raw_norms = norms if raw_norms is None else raw_norms
@@ -109,14 +181,19 @@ def cross_episode_matches(x, rows, window_s, raw_norms=None, block_size=128):
     task = np.array([r["task"] for r in rows])
     times = np.array([r["time_s"] for r in rows])
     result = [{kind: None for kind in MATCH_KINDS} for _ in rows]
+    background = [{"background_same_robot": None, "background_other_robot": None} for _ in rows]
     for start in range(0, len(rows), block_size):
-        sims = z[start:start + block_size] @ z.T
+        sims = np.clip(z[start:start + block_size] @ z.T, -1, 1)
         for offset, similarities in enumerate(sims):
             i = start + offset
             if not valid[i]:
                 continue
             foreign = (ep != ep[i]) & valid
             same_robot, same_task = robot == robot[i], task == task[i]
+            for key, pool in (("background_same_robot", foreign & same_robot),
+                              ("background_other_robot", foreign & ~same_robot)):
+                if pool.any():
+                    background[i][key] = float(similarities[pool].mean())
             masks = (same_robot & same_task, same_robot & ~same_task,
                      ~same_robot & same_task, ~same_robot & ~same_task)
             for kind, mask in zip(MATCH_KINDS, masks, strict=True):
@@ -126,7 +203,7 @@ def cross_episode_matches(x, rows, window_s, raw_norms=None, block_size=128):
                 j = int(candidates[np.argmax(similarities[candidates])])
                 near = np.flatnonzero((ep == ep[j]) & (task == task[j]) & valid & (np.abs(times - times[j]) <= window_s))
                 result[i][kind] = {
-                    "target": j, "cosine": float(np.clip(similarities[j], -1, 1)),
+                    "target": j, "cosine": float(similarities[j]),
                     "raw_norm_delta": float(raw_norms[j] - raw_norms[i]),
                     "raw_norm_ratio": float(raw_norms[j] / raw_norms[i]) if raw_norms[i] > 1e-8 else None,
                     "distance": float(np.linalg.norm(x[i] - x[j])),
@@ -134,7 +211,7 @@ def cross_episode_matches(x, rows, window_s, raw_norms=None, block_size=128):
                     "target_window_count": len(near), "candidate_count": len(candidates),
                     "candidate_episodes": len(set(ep[candidates])),
                 }
-    return result
+    return result, background
 
 
 def _write_csv(path, records):
@@ -147,12 +224,24 @@ def _write_csv(path, records):
         writer.writerows(records)
 
 
+def compact(values, decimals=4):
+    """Rounded nested lists with None for non-finite entries, for a small JSON payload."""
+    a = np.asarray(values, dtype=np.float64)
+    out = np.round(a, decimals).astype(object)
+    out[~np.isfinite(a)] = None
+    return out.tolist()
+
+
+def _columns(records, keys):
+    return {key: [record.get(key) for record in records] for key in keys}
+
+
 def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constant_text=True):
     root = Path(output_dir)
     (root / "pca").mkdir(parents=True, exist_ok=True)
     all_rows = meta["rows"]
     texts = ("real", "neutral") if constant_text else ("real",)
-    panels, temporal_csv, matches_csv = [], [], []
+    panels, temporal_csv, matches_csv, lags_csv = [], [], [], []
     # Small matrices are slower with dozens of BLAS threads, especially in tests.
     with threadpool_limits(limits=2):
         for group in groups:
@@ -171,11 +260,14 @@ def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constan
                         raise ValueError(f"Nonfinite cached vectors in {group}/L{layer}/{text}")
                     raw_norms = np.linalg.norm(x, axis=1)
                     centered, means, centering = robot_center(x, rows)
-                    for geometry, values in (("raw", x), ("robot_centered", centered)):
+                    geometries = {"raw": x, "robot_centered": centered, "episode_centered": episode_center(x, rows)}
+                    for geometry in GEOMETRIES:
+                        values = geometries[geometry]
                         logging.info("Analyze trajectories: %s L%s %s %s", group, layer, text, geometry)
                         coords, pca = project_pca(values, rows)
                         temporal = temporal_metrics(values, rows, window_s, raw_norms)
-                        matches = cross_episode_matches(values, rows, window_s, raw_norms)
+                        matches, background = cross_episode_matches(values, rows, window_s, raw_norms)
+                        matrices = episode_cosine_matrices(values, rows)
                         key = f"{group}.L{layer}.{text}.{geometry}"
                         np.savez(root / "pca" / f"{key}.npz", mean=pca["mean"], components=pca["components"],
                                  variance=pca["variance"], fit_rows=ids[pca["fit_rows"]],
@@ -183,6 +275,7 @@ def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constan
                                  robot_names=np.array(list(means)), robot_means=np.stack(list(means.values())))
                         header = {"group": group, "layer": layer, "text": text, "geometry": geometry}
                         for i, row in enumerate(rows):
+                            temporal[i].update(background[i])
                             identity = {"row": row["row"], "robot": row["robot"], "episode": row["episode"],
                                         "time_s": row["time_s"], "task": row["task"], "subtask": row["subtask"],
                                         "holdout": row["holdout"]}
@@ -195,18 +288,31 @@ def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constan
                                                         "target_time_s": target["time_s"], "target_task": target["task"],
                                                         "target_subtask": target["subtask"],
                                                         **{k: v for k, v in match.items() if k != "target"}})
+                        episodes = {}
+                        for episode, m in matrices.items():
+                            first = rows[m["ids"][0]]
+                            lags = lag_profile(m["cosine"], m["times"])
+                            lags_csv.extend({**header, "episode": episode, "robot": first["robot"], "task": first["task"],
+                                             "holdout": first["holdout"], "frames": len(m["ids"]), **lag} for lag in lags)
+                            episodes[episode] = {"ids": m["ids"].tolist(), "times": compact(m["times"]),
+                                                 "cosine": compact(m["cosine"]), "lags": lags}
                         panels.append({**header, "key": key, "ids": ids.tolist(),
-                                       "xyz": coords.tolist(), "variance": pca["variance"].tolist(),
+                                       "xyz": compact(coords), "variance": pca["variance"].tolist(),
                                        "pca_fit": "all (fewer than two training rows)" if pca["fallback"] else "training",
-                                       "centering": centering, "temporal": temporal, "matches": matches})
+                                       "centering": centering, "temporal": _columns(temporal, TEMPORAL_KEYS),
+                                       "matches": {kind: _columns([m[kind] or {} for m in matches], MATCH_KEYS)
+                                                   for kind in MATCH_KINDS},
+                                       "episodes": episodes})
     if not panels:
         raise ValueError("No selected group/text has enough captured frames to analyze")
     _write_csv(root / "temporal.csv", temporal_csv)
     _write_csv(root / "matches.csv", matches_csv)
+    _write_csv(root / "lags.csv", lags_csv)
     real_rows = [r for r in all_rows if r["text"] == "real"]
     summary = {"frames": len(real_rows), "episodes": len({r["episode"] for r in real_rows}),
                "robots": len({r["robot"] for r in real_rows}), "view": meta["view"], "panels": len(panels),
-               "local_window_s": window_s, "missing_groups": sorted(set(groups) - set(arrays))}
+               "local_window_s": window_s, "lag_edges_s": list(LAG_EDGES_S), "geometries": list(GEOMETRIES),
+               "missing_groups": sorted(set(groups) - set(arrays))}
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
-    return {"rows": all_rows, "panels": panels, "window_s": window_s,
+    return {"rows": all_rows, "panels": panels, "window_s": window_s, "lag_edges_s": list(LAG_EDGES_S),
             "view": meta["view"], "checkpoint": meta.get("checkpoint", "")}, summary

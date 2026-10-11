@@ -181,16 +181,19 @@ python -m lerobot.probes.actions --config path/to/config.yaml
 
 The representation probe follows sampled frames through episodes and compares trajectories across tasks and robots. It captures separate token groups at selected layers, using the same fixed-noise, first-flow-step adapter path as the conditions matrix. The default is **native attention input**, normalized by the model before pooling. This path currently requires the MolmoAct2 per-layer capture adapter.
 
-Open `trajectories.html` in the probe viewer or directly in a browser. It is self-contained, including Plotly and cached camera previews. Select a group, layer, real/constant prompt, and raw/robot-centered geometry. Robot/task filters preserve the fitted PCA axes. Click a trajectory point or timeline to inspect both cameras and the nearest matching frames in other episodes.
+Open `trajectories.html` in the probe viewer, or directly in a browser from its own directory: the page is light and loads one group/layer/prompt/geometry panel at a time from `panels/<key>.js`, and reads camera previews from `cache/thumbs/`, so keep the directory together when copying a report. Select a group, layer, prompt and geometry, then pick an episode and slide through its frames (←/→ step, space plays). Each frame drives both camera previews, a crosshair on the episode's cosine matrix, the frame's cosine profile along the episode, the 3-D highlight and the cross-episode matches.
 
-- **Shared 3-D PCA only:** one basis across all sampled robots/episodes for each group, layer, prompt and geometry. Explained variance is shown. Coordinates are not whitened or unit-normalized. Training frames fit the basis; fewer than two training frames trigger an explicitly reported descriptive fit on all frames. Bases are refitted across checkpoints, so axes are not aligned between runs.
-- **Local temporal cosine:** average cosine to other sampled frames in the same episode within `±repr_local_window_s`, measured in the original dimensions. The report also shows predecessor cosine, the actual time gap, step distance, raw norm and neighbor counts. No neighbors or zero vectors produce missing values, not zeros.
+- **Why raw cosines are ~1:** all model states share a large common direction, so the cosine between any two raw vectors is close to 1 and "local" looks trivially local. The geometry selector sets what is removed first: *raw* (nothing), *subtract robot mean* (that robot's sampled training-frame mean, so cosines compare deviations from the robot's typical state) or *subtract episode mean* (each episode's own sampled mean, so only motion within the episode remains and the 3-D PCA overlays the episodes' internal paths). The report defaults to robot-centered.
+- **Is it trivially local?** Every frame carries its *background*: the mean cosine to all frames of other episodes, same robot and other robots, plus its best matches by category. The profile panel draws the selected frame's cosine to every frame of its episode next to those lines; structure is only non-trivial where the profile separates from the background. The *How local is local* panel plots mean cosine by time gap between frames (`lags.csv`, bins from `LAG_EDGES_S`), one curve per shown episode: where a curve meets the background or best-match level, frames that far apart are no longer closer than other episodes are.
+- **Within-episode cosine matrix:** every sampled frame of the episode against every other, in the original dimensions of the chosen geometry. The color range fits the episode by default, so block structure is visible even when all values sit between 0.98 and 1; switch to a fixed range to compare episodes. Clicking a cell selects its row frame.
+- **Local temporal cosine:** average cosine to other sampled frames in the same episode within a radius, excluding the frame itself. `repr_local_window_s` fixes the radius written to `temporal.csv`; the report's radius slider recomputes the curve and neighbor counts from the matrix. The status line shows the median sampling gap, so a radius smaller than the gap is visibly empty rather than silently one neighbor.
+- **Shared 3-D PCA only:** one basis across all sampled robots/episodes for each group, layer, prompt and geometry, fitted on training frames (fewer than two triggers an explicitly reported descriptive fit on all frames). Explained variance is shown. The selected episode is drawn bold and the others faded; the 3-D view can show all shown episodes, the selected one only, or nothing when the page feels slow. Bases are refitted across checkpoints, so axes are not aligned between runs.
 - **Cross-episode matches:** exact nearest cosine, excluding the whole source episode, split into same/different robot × same/different task. Task equality uses the exact recorded string, not a semantic classifier. Each match includes raw norm ratio/difference, distance in the selected geometry, candidate counts, and anchor-to-target-neighborhood mean cosine. That mean is local support, not temporal alignment or evidence of sustained behavioral confusion.
 - **Text control:** real task/subtask prompts and constant prompts (`Manipulate the object.` / `continue the task`) use the same observations and noise. Labels displayed in the report remain the real labels. Constant text is not proof of visual grounding.
 
-Robot centering uses that robot's sampled training-frame mean separately for each prompt/group/layer. A robot with no training rows uses its available frames descriptively, and the report names that fallback. Raw norms are always saved before this external centering and unit normalization. PCA crossings are only candidates: check original-space metrics and frames. These dataset replays cannot establish why a closed-loop policy diverted.
+Raw norms are always saved before centering and unit normalization. PCA crossings are only candidates: check original-space metrics and frames. These dataset replays cannot establish why a closed-loop policy diverted.
 
-Sampling includes configured LeRobot sources, additional datasets, validation roots and the enabled diverse corpus (training and held-out anchors). Episodes are balanced over robot/task/split, up to `max_episodes` **per robot**. Whole paths are thinned evenly under the frame cap, including both endpoints. LeRobot uses the stored image grid; diverse data uses available anchors. Sparse sampling may leave local windows empty: increase the frame budget or window and inspect the actual gaps. At least two episodes with identical task text are needed for same-task matches.
+Sampling includes configured LeRobot sources, additional datasets, validation roots and the enabled diverse corpus (training and held-out anchors). Episodes are balanced over robot/task/split, up to `max_episodes` **per robot**. Whole paths are thinned evenly under the frame cap, including both endpoints. LeRobot uses the stored image grid; diverse data uses available anchors. The frame cap is shared by all selected episodes, so many robots or episodes mean sparse frames per episode: check the median gap in the report, and lower `max_episodes` or raise `repr_max_frames` for denser within-episode matrices. At least two episodes with identical task text are needed for same-task matches.
 
 ### Standalone
 
@@ -198,17 +201,29 @@ Run from the workspace root with the root environment:
 
 ```bash
 .venv/bin/python -m lerobot.probes.representations --config config_rl.yaml
-# Recompute measurements and the report from this checkpoint's saved cache:
+# Recompute measurements and the report from this checkpoint's saved cache (no model, no datasets):
 .venv/bin/python -m lerobot.probes.representations --config config_rl.yaml \
     --probe_parameters.mode=plot
 ```
 
-Uses `policy.pretrained_path`; writes `<probe_parameters.output_dir>/validation/step_<checkpoint>/representations/`. The validation suite calls the same `run()` when `enable_representations=true`. Plot mode loads neither model nor datasets. Old whole-sequence activation caches must be recollected.
+Uses `policy.pretrained_path`; writes `<probe_parameters.output_dir>/validation/step_<checkpoint>/representations/`. The validation suite calls the same `run()` when `enable_representations=true`. Plot mode loads neither model nor datasets and accepts an existing cache from the current protocol. Old whole-sequence activation caches must be recollected.
 
 ### Config
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `enable_representations` | `false` | Validation-suite switch; enabled in the workspace YAML configs |
+| `repr_view` | `attention_input` | Native view, or `block_output`; changing view requires recollection |
+| `repr_layers` | `14,28,32` | Zero-based block indices; changing to uncached layers requires recollection |
+| `repr_groups` | `action,img_external_0,img_wrist_0,state` | Separate pooled token groups; `subtask,action_output` also supported |
+| `repr_constant_text` | `true` | Capture real and constant task/subtask text; doubles forwards |
+| `repr_n_frames_per_episode` | `null` | Inherit common frame budget; workspace configs use 128 for temporal density |
+| `repr_max_frames` | `1200` | Total physical frames across robots and splits, before text duplication |
+| `repr_local_window_s` | `2.0` | Radius in seconds for `temporal.csv` and the report's initial slider value |
+
+`repr_pca_dims`, UMAP options, and the generic `timestep` do not control this probe. Outputs include float32 caches with presence masks, `sampling_plan.json`, `temporal.csv` (with background cosines), `matches.csv`, `lags.csv`, `summary.json`, saved PCA bases/means/coordinates in `pca/`, the per-panel `panels/*.js` the report loads, and the viewer manifest. Missing token groups are reported and excluded.
+
+-----------|---------|-------------|
 | `enable_representations` | `false` | Validation-suite switch; enabled in the workspace YAML configs |
 | `repr_view` | `attention_input` | Native view, or `block_output`; changing view requires recollection |
 | `repr_layers` | `14,28,32` | Zero-based block indices; changing to uncached layers requires recollection |
