@@ -1327,6 +1327,25 @@ def _patch_training_kv_collection(backbone: Any) -> None:
     backbone._lerobot_training_kv_collection_patched = True
 
 
+def _patch_ar_decode_embeddings(model: Any) -> None:
+    """Use the full embedding module in eager and graph-backed token decoding.
+
+    The upstream shortcut indexes only the base vocabulary. Added hand markers
+    live in new_embedding, and their learned rows are applied by a wte hook;
+    both must be respected when a generated token is fed back into the model.
+    """
+    if not callable(getattr(model, "_embed_base_tokens", None)):
+        return
+    if getattr(model, "_lerobot_ar_embeddings_patched", False):
+        return
+
+    def _embed_tokens(self, input_ids: Tensor) -> Tensor:
+        return self.model.transformer.wte(input_ids)
+
+    model._embed_base_tokens = types.MethodType(_embed_tokens, model)
+    model._lerobot_ar_embeddings_patched = True
+
+
 def _patch_numpy_dtype_cast(backbone: Any) -> None:
     """Patch _to_numpy in the trust_remote_code module so bf16 tensors are cast before numpy conversion.
 
@@ -1517,6 +1536,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         # After LoRA: the hooks must sit on the modules the forward actually calls, and the fresh
         # parameters must come out trainable whatever the adapter freeze did.
         self._install_hand_parameters()
+        _patch_ar_decode_embeddings(self._hf_model())
         self.init_rtc_processor()
 
     def _load_saved_policy_action_mode(self) -> str | None:
@@ -2848,6 +2868,22 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if return_diagnostics
             else None
         )
+        joint_flow_diagnostics = {}
+        if return_diagnostics:
+            joint_width = 8 if getattr(self.config, "hand_block", False) else loss.shape[-1]
+            joint_loss = loss[..., :joint_width]
+            joint_pad = batch.get("action_dim_is_pad")
+            if joint_pad is not None:
+                joint_valid = (~joint_pad[..., :joint_width]).to(joint_loss.dtype)[:, None, None, :]
+                joint_loss = (joint_loss * joint_valid).sum(-1) / joint_valid.sum(-1).clamp_min(1.0)
+            else:
+                joint_loss = joint_loss.mean(-1)
+            joint_loss = joint_loss.detach().float()
+            joint_flow_diagnostics = {
+                "joint_flow_loss": joint_loss.mean(),
+                "joint_flow_loss_per_timestep": joint_loss.mean(-1),
+                "joint_flow_loss_per_action_step": joint_loss.mean(1),
+            }
         hand_on = bool(getattr(self.config, "hand_block", False))
         self._hand_loss_metrics = {}
         if hand_on:
@@ -2889,6 +2925,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if return_diagnostics:
             loss_diag = loss.detach().float()
             diagnostics = {
+                **joint_flow_diagnostics,
                 "flow_loss_raw": loss_diag,
                 "flow_loss_per_dim": flow_loss_per_dim,
                 "flow_loss_per_sample": flow_loss_by_example.detach().float(),

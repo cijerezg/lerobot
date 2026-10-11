@@ -13,6 +13,7 @@ from __future__ import annotations
 import collections
 import json
 import logging
+import math
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -322,6 +323,10 @@ class MolmoAct2Trainer(Trainer):
             "loss_hand_joint",
             "loss_hand_pose",
             "loss_hand_fk",
+            "hand_token_cos_start",
+            "hand_token_cos_end",
+            "hand_token_angle_start_deg",
+            "hand_token_angle_end_deg",
             "val_loss_hand_joint",
             "val_loss_hand_pose",
             "val_loss_hand_fk",
@@ -1791,12 +1796,26 @@ class MolmoAct2Trainer(Trainer):
         aim_logger,
         _policy: nn.Module,
     ) -> None:
+        # These are weight diagnostics: sample the current rows once at log time,
+        # after the optimizer update, rather than averaging forward-pass metrics.
+        token_cosines = getattr(_policy, "hand_token_cosines", None)
+        if callable(token_cosines):
+            training_infos = dict(training_infos)
+            for key, value in token_cosines().items():
+                cosine = float(value)
+                training_infos[key] = cosine
+                angle_key = key.replace("hand_token_cos_", "hand_token_angle_") + "_deg"
+                training_infos[angle_key] = math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
         console_keys = (
             "loss_flow",
             "val_loss_flow",
             "loss_hand_joint",
             "loss_hand_pose",
             "loss_hand_fk",
+            "hand_token_cos_start",
+            "hand_token_cos_end",
+            "hand_token_angle_start_deg",
+            "hand_token_angle_end_deg",
             "val_loss_hand_joint",
             "val_loss_hand_pose",
             "val_loss_hand_fk",

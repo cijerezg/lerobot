@@ -1104,7 +1104,7 @@ def run_offline_training(
                 reference_dataset=offline_dataset,
                 device=device,
                 cfg=cfg,
-                step=0,
+                step=cfg.val_step_on_start,
                 aim_logger=aim_logger,
             )
             for parameter in raw_policy.parameters():

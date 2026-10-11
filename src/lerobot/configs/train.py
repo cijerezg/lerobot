@@ -576,6 +576,7 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     val_split: float = 0.0
     val_freq: int = 1000
     val_on_start: bool = False
+    val_step_on_start: int = 0  # Checkpoint step label for standalone validation.
     # Held-out flow + FAST CE logged every log_freq alongside the train losses.
     # Frames are packed once at startup, so the per-call cost is ceil(n / batch_size)
     # forwards. 0 disables.

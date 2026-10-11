@@ -100,3 +100,34 @@ def test_histograms_render_one_column_per_robot(tmp_path):
     path = hand_terms.render_histograms(val, train, str(tmp_path))
     assert path is not None and os.path.exists(path) and os.path.getsize(path) > 0
     assert hand_terms.render_histograms([], [], str(tmp_path)) is None
+
+
+@pytest.mark.parametrize('with_targets', [False, True])
+def test_diverse_inputs_preserve_cached_event_targets(monkeypatch, with_targets):
+    from types import SimpleNamespace
+    import torch
+    from lerobot.datasets import diverse_prompt
+    from lerobot.probes.domain_representations import _diverse_inputs
+    from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
+    from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
+
+    targets = {key: torch.tensor([0.25 + i * 0.5]) for i, key in enumerate(DEPTH_GRIPPER_EVENT_TARGET_KEYS)}
+    comp = {'action_layout_id': torch.tensor([0])}
+    if with_targets:
+        comp.update(targets)
+    transition = {'state': {}, 'action': torch.zeros(1, 30, 8), 'complementary_info': comp}
+    buffer = SimpleNamespace(
+        collate=lambda indices: transition,
+        rows=[dict(episode_id='ep', source='droid', subtask='grasp', native_action_dim=7)],
+        selection=SimpleNamespace(episode_records={'ep': {}}),
+    )
+    monkeypatch.setattr(diverse_prompt, 'episode_task', lambda *args: ('move', None))
+    monkeypatch.setattr(MolmoAct2Trainer, '_inject_depth_observations', lambda obs, *args: obs)
+    frame = _diverse_inputs(buffer, SimpleNamespace(policy=SimpleNamespace()), {'index': 0})
+    assert frame['gt_actions'] is transition['action']
+    assert frame['extra']['action_layout_id'] is comp['action_layout_id']
+    for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
+        if with_targets:
+            assert frame[key] is targets[key]
+        else:
+            assert key not in frame  # Missing labels must not be fabricated.

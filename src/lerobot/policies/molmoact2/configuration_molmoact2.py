@@ -706,3 +706,7 @@ class MolmoAct2Config(PreTrainedConfig):
             self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(0,))
         if ACTION not in self.output_features:
             self.output_features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(0,))
+        # make_policy replaces output features with the dataset/environment widths
+        # after config construction. Restore the model's augmented layout before use.
+        if self.hand_block:
+            self._widen_features_for_hand_block()

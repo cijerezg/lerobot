@@ -545,3 +545,16 @@ def test_discrete_decode_reads_the_hand_span_into_the_hand_slots():
     )
     assert not chunk[0, :, 8:].any()
     del counts
+
+
+def test_hand_width_survives_factory_feature_replacement():
+    from types import SimpleNamespace
+    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+    cfg = _config(hand_block=True)
+    # make_policy fills output features from the environment after __post_init__.
+    cfg.output_features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(8,))
+    cfg.validate_features()
+    assert cfg.output_features[ACTION].shape == (HAND_ACTION_WIDTH,)
+    assert cfg.hand_joint_action_dim == 8
+    assert MolmoAct2Policy._output_action_dim(SimpleNamespace(config=cfg), {}) == HAND_ACTION_WIDTH

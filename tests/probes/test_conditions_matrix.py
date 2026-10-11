@@ -49,7 +49,7 @@ def test_constant_prompt_and_cache_protocol(tmp_path, monkeypatch):
         cm._load_cache(str(tmp_path))
 
 
-def test_headline_is_raw_rho_at_fixed_layer(tmp_path, monkeypatch):
+def test_headline_is_cross_robot_decoding_at_fixed_layer(tmp_path, monkeypatch):
     rng=np.random.default_rng(42)
     rows=[];vectors=[]
     prototypes=rng.normal(size=(6,16))
@@ -61,11 +61,13 @@ def test_headline_is_raw_rho_at_fixed_layer(tmp_path, monkeypatch):
                                      object_class=('cup','cloth')[c//3],instance=('cup','cloth')[c//3],
                                      phase=cm.PHASES[c%3],holdout=ep==3,text=text))
                     vectors.append(np.stack([prototypes[c]+rng.normal(size=16)*.4 for _ in range(2)]))
-    monkeypatch.setattr(cm,'N_NULL',32);monkeypatch.setattr(cm,'N_SPLITS',4)
     monkeypatch.setattr(cm,'plot_cell_frames',lambda *a:False)
     cfg=SimpleNamespace(probe_parameters=SimpleNamespace(random_seed=42,conditions_layers='',conditions_headline_layer=1))
     summary=cm.analyze(rows,{'action':np.array(vectors)}, {'action':np.ones(len(rows),bool)},cfg,str(tmp_path))
     assert summary['headline_layer']==1
-    assert summary['headline']['neutral.rebot_droid']==summary['fixed_layer_action']['neutral']['rebot|droid']['rho']
-    assert -1<=summary['headline']['neutral.rebot_droid']<=1
+    assert summary['fixed_layer_action']['layer'] == 1
+    for factor in ('class', 'phase'):
+        value = summary['headline'][f'decoding.neutral.droid_to_rebot.{factor}']
+        assert value == summary['decoding']['neutral.droid_to_rebot'][factor]
+        assert 0 <= value <= 1
     assert (tmp_path/'index.json').is_file()

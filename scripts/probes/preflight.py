@@ -4,6 +4,7 @@ from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 import torch,yaml
+import pandas as pd
 from lerobot.datasets.diverse_actor_selection import open_federated_corpus,select_actor_anchors,holdout_episode_ids
 from lerobot.rl.data_sources.diverse_actor_buffer import DiverseSampleSpec
 from lerobot.rl.data_sources.diverse_actor_cache import find_cache
@@ -46,5 +47,23 @@ for s in sources:
     path=Path(cfg['buffer_cache_dir'])/fp/'metadata.json';assert path.is_file(),path
     metadata=json.loads(path.read_text());assert metadata['num_transitions']==info['total_frames']
 val=Path(cfg['val_dataset_path']);vi=json.loads((val/'meta/info.json').read_text())
-assert Path(cfg['probe_parameters']['subtask_scene_sweep_frames']).is_file()
+parameters=cfg['probe_parameters']
+if parameters.get('enable_subtask_sweep'):
+    labels=set(pd.read_parquet(val/'meta/subtasks.parquet').index.astype(str))
+    missing=set(parameters.get('subtask_sweep_labels') or [])-labels
+    assert not missing, f'Subtask sweep labels absent from {val}: {sorted(missing)}'
+if parameters.get('enable_subtask_scene_sweep'):
+    frames=json.loads(Path(parameters['subtask_scene_sweep_frames']).read_text())
+    episode_table=pd.concat(pd.read_parquet(p) for p in (val/'meta/episodes').rglob('*.parquet'))
+    starts=dict(zip(episode_table.episode_index,episode_table.dataset_from_index))
+    ends=dict(zip(episode_table.episode_index,episode_table.dataset_to_index))
+    windows=json.loads((val/'meta/subtask_windows.json').read_text())['episodes']
+    assert frames, 'Scene sweep has no reviewed frames'
+    for frame in frames:
+        ep,index=frame['episode_idx'],frame['global_idx']
+        assert ep in starts and starts[ep]+frame['frame_idx']==index and starts[ep]<=index<ends[ep], frame
+        labels=[w['subtask'] for w in windows[str(ep)] if w['from_index']<=index<w['to_index']]
+        assert labels==[frame['gt_subtask']], (frame,labels)
+        assert frame['gt_subtask'] in ['grasp '+name for name in frame['present']]+['return to home'],frame
+
 print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), {vi["total_episodes"]} validation episodes; {episodes} diverse training episodes / {anchors} anchors; configured stats and caches agree.')

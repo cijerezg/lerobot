@@ -106,7 +106,7 @@ def detail_data(cache_dir, summary, spans, pivots, n_null=100, seed=42):
                     raise ValueError(f'Cache does not reproduce saved span: {group}/{layer}/{robot}')
                 bases[robot] = vt[:k].T
                 pr = [r for r in pivots if r['group']==group and r['layer']==layer and r['robot']==robot]
-                details.append(dict(kind='spectrum',group=group,layer=layer,robot=robot,s=s/s[0],qr=[r['residual_rel'] for r in pr],floor=fp16_floor(x16)/s[0]))
+                details.append(dict(kind='spectrum',group=group,layer=layer,robot=robot,s=s/s[0] if s[0] > 0 else np.full_like(s, np.nan),qr=[r['residual_rel'] for r in pr],floor=fp16_floor(x16)/s[0] if s[0] > 0 else float('nan')))
             robots = list(bases)
             for i,a in enumerate(robots):
                 for b in robots[i+1:]:

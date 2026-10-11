@@ -84,3 +84,23 @@ def test_missing_shared_cache_does_not_silently_recollect(tmp_path, monkeypatch)
     monkeypatch.setattr(cm, 'collect_cache', lambda *args: pytest.fail('unexpected capture'))
     with pytest.raises(FileNotFoundError):
         spans.run(None, None, cfg, str(tmp_path / 'subspace_spans'))
+
+
+@pytest.mark.parametrize("constant_robots", [("rebot",), ("rebot", "droid")])
+def test_zero_rank_group_still_writes_report(tmp_path, constant_robots):
+    write_cache(tmp_path / 'conditions_matrix')
+    cache = tmp_path / 'conditions_matrix/cache'
+    values = np.load(cache / 'img_external_0.npy')
+    for robot, start in (("rebot", 0), ("droid", 10)):
+        if robot in constant_robots:
+            values[start:start + 10, 0] = 0
+    np.save(cache / 'img_external_0.npy', values)
+    cfg = SimpleNamespace(probe_parameters=ProbeConfig(
+        mode='plot', enable_conditions_matrix=True, subspace_view='block_output', subspace_layers='0,1,2',
+        subspace_n_null=2, subspace_n_pivots=2))
+    output = tmp_path / 'subspace_spans'
+    spans.run(None, None, cfg, str(output))
+    details = json.loads((output / 'report_details.json').read_text())['details']
+    pairs = [r for r in details if r['kind'] == 'angle' and r['layer'] == 0]
+    assert pairs and pairs[0]['cos'] == [] and pairs[0]['null'] == []
+    assert json.loads((output / 'index.json').read_text())['id'] == 'subspace_spans'

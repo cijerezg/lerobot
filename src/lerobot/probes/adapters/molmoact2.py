@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from lerobot.policies.molmoact2.action_layout import JOINT_SLOTS
 from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY, EMBODIMENT_INDEX_KEY
 from lerobot.policies.molmoact2.processor_molmoact2 import ACTION_OUTPUT_TOKEN
 from lerobot.policies.molmoact2.modeling_molmoact2 import (
@@ -53,6 +54,14 @@ class MolmoAct2Adapter(ProbablePolicy):
     @property
     def action_dim(self) -> int:
         return int(self._cfg.policy.output_features[ACTION].shape[0])
+
+    def _probe_joint_actions(self, actions: Tensor) -> Tensor:
+        """Existing motion probes compare joint commands; hand slots are auxiliary targets.
+
+        Decode all model slots through the saved postprocessor first. Normalized
+        motion comparisons then use the same joint block as the decoded commands.
+        """
+        return actions[..., :JOINT_SLOTS] if getattr(self._cfg.policy, "hand_block", False) else actions
 
     def _inference_action_mode(self) -> str:
         requested = getattr(self._cfg.policy, "inference_action_mode", None)
@@ -176,7 +185,7 @@ class MolmoAct2Adapter(ProbablePolicy):
             TransitionKey.COMPLEMENTARY_DATA: dict(self._identity_columns),
         }
         out = norm_step(batch)
-        return out[TransitionKey.ACTION].squeeze(0).float().cpu()
+        return self._probe_joint_actions(out[TransitionKey.ACTION].squeeze(0).float().cpu())
 
     @torch.no_grad()
     def predict_action_chunk(
@@ -239,7 +248,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         finally:
             if restore_rtc:
                 rtc_config.enabled = True
-        pred_norm = norm_actions.squeeze(0).float().cpu()
+        pred_norm = self._probe_joint_actions(norm_actions.squeeze(0).float().cpu())
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):
             anchor = self._to_action_width(obs[OBS_STATE].to(self._device))
@@ -463,7 +472,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         finally:
             if restore_rtc:
                 rtc_config.enabled = True
-        pred_norm = norm_actions.float().cpu()
+        pred_norm = self._probe_joint_actions(norm_actions.float().cpu())
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):
             anchor = self._to_action_width(anchor.to(self._device))
@@ -601,6 +610,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         layout_id = batch.get("action_layout_id")
         out: dict = {
             "loss_total": float(metrics["loss"]),
+            "loss_flow_joint": float(metrics["joint_flow_loss"]) if "joint_flow_loss" in metrics else None,
             # EE mixture loss terms (hand_loss.py), one frame so the batch means are the
             # frame's: the joint block, the hand block (mean of its three blocks) and the
             # FK term. None when the hand block is off.
@@ -619,11 +629,11 @@ class MolmoAct2Adapter(ProbablePolicy):
             "loss_flow": (
                 float(metrics["action_flow_loss"]) if "action_flow_loss" in metrics else None
             ),
-            "loss_flow_by_timestep": array("flow_loss_per_timestep", drop_batch_dim=True),
-            "loss_flow_by_action_step": array("flow_loss_per_action_step", drop_batch_dim=True),
+            "loss_flow_by_timestep": array("joint_flow_loss_per_timestep", drop_batch_dim=True),
+            "loss_flow_by_action_step": array("joint_flow_loss_per_action_step", drop_batch_dim=True),
             "loss_flow_by_dim": (
                 None if per_dim is None
-                else per_dim[:action_dim].detach().float().cpu().numpy()
+                else per_dim[:min(action_dim, 8) if getattr(self._policy.config, "hand_block", False) else action_dim].detach().float().cpu().numpy()
             ),
             "flow_timesteps": array("flow_timesteps", drop_batch_dim=True),
             "loss_discrete_ce": (
@@ -1615,8 +1625,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         chunk_size, action_dim = self.chunk_size, self.action_dim
 
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
+        obs_on_device, prepared = split_probe_complementary(obs_on_device)
         obs_on_device, presence_flags = self._fill_absent_cameras(obs_on_device)
-        complementary: dict = {**self._identity_columns, **presence_flags}
+        complementary: dict = {**self._identity_columns, **presence_flags, **prepared}
         if extra_complementary:
             complementary.update(extra_complementary)
         if subtask:
@@ -1632,6 +1643,12 @@ class MolmoAct2Adapter(ProbablePolicy):
             flag = complementary.get(f"depth.{pointmap.depth_key}.depth_is_present", True)
             presence["depth"] = bool(torch.as_tensor(flag).reshape(-1)[0]) if torch.is_tensor(flag) else bool(flag)
 
+        # Corpus masks describe the raw action, before unified-layout padding and
+        # hand augmentation. Match that width here; the packed policy width can be
+        # 15 even when the corpus supplies an 8-slot mask (7 joints plus padding).
+        action_mask = complementary.get("action_dim_is_pad")
+        if action_mask is not None:
+            action_dim = int(torch.as_tensor(action_mask).shape[-1])
         flat = {
             **obs_on_device,
             "task": task_str,

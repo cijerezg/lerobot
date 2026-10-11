@@ -14,13 +14,16 @@ headline is therefore a val/train pair, and the gap carries
     $$z = \frac{\bar{\mathcal{L}}_{val} - \bar{\mathcal{L}}_{train}}
                 {\sqrt{\mathrm{SEM}_{val}^2 + \mathrm{SEM}_{train}^2}}$$
 
-Two choices make that pair comparable. Flow timesteps sit on the stratified quantile
-grid $t_k = t_0 + (t_{\max}-t_0)F^{-1}\!\big((k+\tfrac12)/K\big)$ of the training
-distribution instead of being drawn — equiprobable strata, so the mean estimates the
-same $\mathbb{E}_t[\mathcal{L}(t)]$ with the sampler's variance removed and the grid
-identical at every checkpoint. And the pack step's dropout is suppressed on both sides,
-which is why these numbers are **not** the Aim ``train/loss_flow`` curve: that one is
-measured with dropout armed and reads higher. Compare val to the train column here.
+The headline joint flow loss is the unweighted mean over valid joint dimensions.
+Hand flow, unweighted FK, and the combined flow objective are reported separately.
+With a hand block, the combined objective adds weighted joint flow, hand flow, and
+weighted FK. It is not comparable to historical joint-only flow loss.
+
+Flow timesteps use a stratified quantile grid and noise is seeded per frame.
+Prompt dropout is suppressed on both splits. The probe samples episodes evenly;
+its training sample does not reproduce the trainer's weighted dataset mixture.
+Compare val and train under this probe regime, and compare checkpoints only with
+matching data, normalization, and objective weights.
 
 Registered probe: enable with ``probe_parameters.enable_objective``.
 """
@@ -177,6 +180,10 @@ def measure_split(adapter, datasets, cfg, split: str, timesteps: np.ndarray) -> 
                 flow_noise_seed=int(p.random_seed) + int(global_idx),
                 dropout=False,
             )
+            if "loss_flow_joint" not in losses:
+                losses["loss_flow_joint"] = losses.get("loss_hand_joint")
+                if losses["loss_flow_joint"] is None:
+                    losses["loss_flow_joint"] = losses.get("loss_flow")
             rows.append(
                 {
                     **losses,
@@ -395,6 +402,9 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
         "regime": "prompt/modality dropout suppressed on both splits; flow timesteps on "
         "the stratified quantile grid; flow noise seeded per frame.",
         "loss_flow": compare(val_rows, train_rows, "loss_flow"),
+        "loss_hand_pose": compare(val_rows, train_rows, "loss_hand_pose"),
+        "loss_hand_fk": compare(val_rows, train_rows, "loss_hand_fk"),
+        "loss_flow_joint": compare(val_rows, train_rows, "loss_flow_joint"),
         "loss_discrete_ce": compare(val_rows, train_rows, "loss_discrete_ce"),
         "loss_discrete_z": compare(val_rows, train_rows, "loss_discrete_z"),
         "loss_total": compare(val_rows, train_rows, "loss_total"),
@@ -453,8 +463,8 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
         if means.size:
             summary["discrete_ce_by_position"][split] = means.tolist()
             summary["discrete_ce_by_position_n"][split] = counts.tolist()
-    summary["val_by_episode"] = group_mean(val_rows, "episode_idx", "loss_flow")
-    summary["val_by_subtask"] = group_mean(val_rows, "subtask", "loss_flow")
+    summary["val_by_episode"] = group_mean(val_rows, "episode_idx", "loss_flow_joint")
+    summary["val_by_subtask"] = group_mean(val_rows, "subtask", "loss_flow_joint")
     summary["per_frame"] = [
         {
             key: value
@@ -613,20 +623,20 @@ def _ecdf_panel(ax, val_rows, train_rows, key: str, title: str, xlabel: str) -> 
 
 def render_objective(summary, val_rows, train_rows, output_dir: str) -> None:
     fig, axes = plt.subplots(1, 4, figsize=(21, 4.4))
-    _pair_points(axes[0], summary["loss_flow"], "Flow-matching loss", "$\\mathcal{L}_{flow}$")
+    _pair_points(axes[0], summary["loss_flow_joint"], "Joint flow loss", "$\\mathcal{L}_{flow}$")
     if summary["loss_discrete_ce"]:
         _pair_points(axes[1], summary["loss_discrete_ce"], "FAST token cross-entropy", "CE (nats)")
     else:
         axes[1].text(0.5, 0.5, "no discrete head", ha="center", va="center")
         axes[1].axis("off")
     _overlaid_hist(
-        axes[2], val_rows, train_rows, "loss_flow", "Per-frame flow loss", "$\\mathcal{L}_{flow}$ per frame"
+        axes[2], val_rows, train_rows, "loss_flow_joint", "Per-frame joint flow loss", "$\\mathcal{L}_{flow}$ per frame"
     )
     _ecdf_panel(
         axes[3],
         val_rows,
         train_rows,
-        "loss_flow",
+        "loss_flow_joint",
         "Cumulative distribution — tail or shift?",
         "$\\mathcal{L}_{flow}$ per frame",
     )
@@ -638,6 +648,23 @@ def render_objective(summary, val_rows, train_rows, output_dir: str) -> None:
     )
     fig.tight_layout(rect=(0, 0, 1, 0.90))
     fig.savefig(os.path.join(output_dir, "objective.png"), bbox_inches="tight", dpi=125)
+    plt.close(fig)
+
+
+def render_flow_components(summary, output_dir: str) -> None:
+    entries = [(key, label) for key, label in (
+        ("loss_flow_joint", "Joint flow (unweighted)"),
+        ("loss_hand_pose", "Hand flow (unweighted)"),
+        ("loss_hand_fk", "FK (unweighted)"),
+        ("loss_flow", "Combined flow objective"),
+    ) if summary.get(key)]
+    if not entries:
+        return
+    fig, axes = plt.subplots(1, len(entries), figsize=(5.5 * len(entries), 4.4), squeeze=False)
+    for ax, (key, label) in zip(axes[0], entries, strict=True):
+        _pair_points(ax, summary[key], label, "loss")
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "flow_components.png"), bbox_inches="tight", dpi=125)
     plt.close(fig)
 
 
@@ -758,10 +785,10 @@ def exemplar_bands(val_rows: list[dict], n_per_band: int) -> list[dict]:
     an ordinary frame looks like next to a bad one, which is what says whether the right
     tail is a distinct failure mode or just the top of one continuum.
     """
-    scored = [r for r in val_rows if r.get("loss_flow") is not None]
+    scored = [r for r in val_rows if r.get("loss_flow_joint") is not None]
     if not scored:
         return []
-    losses = np.array([r["loss_flow"] for r in scored])
+    losses = np.array([r["loss_flow_joint"] for r in scored])
     bands = []
     for percentile, label in ((5, "best fit"), (50, "typical"), (95, "worst fit")):
         target = float(np.percentile(losses, percentile))
@@ -851,7 +878,7 @@ def render_action_exemplars(bands, adapter, dataset, cfg, output_dir: str) -> bo
                     state=state.numpy(),
                     trace_label=(
                         f"p{band['percentile']} {band['label']} · "
-                        f"flow loss {source['loss_flow']:.4f} · "
+                        f"joint flow loss {source['loss_flow_joint']:.4f} · "
                         f"ep {source['episode_idx']} frame {source['frame_idx']}"
                     ),
                     sample_names=["generated action"],
@@ -886,7 +913,7 @@ def render_action_exemplars(bands, adapter, dataset, cfg, output_dir: str) -> bo
 
 def render_breakdown(summary, val_rows, output_dir: str) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(18, 4.4))
-    train_mean = summary["loss_flow"].get("train")
+    train_mean = summary["loss_flow_joint"].get("train")
 
     for ax, group, xlabel in (
         (axes[0], summary["val_by_episode"], "held-out episode"),
@@ -912,13 +939,13 @@ def render_breakdown(summary, val_rows, output_dir: str) -> None:
         )
         ax.set_xlabel(xlabel)
         ax.set_ylabel("$\\mathcal{L}_{flow}$")
-        _style(ax, f"Val flow loss by {xlabel}")
+        _style(ax, f"Val joint flow loss by {xlabel}")
 
     # Loss against position in the episode. A rising trend means the late phase of the
     # task — where the scene is most disturbed and the demonstrations most varied — is
     # what the policy fits worst, which the per-episode means average away.
-    progress = np.array([r["progress"] for r in val_rows if r.get("loss_flow") is not None])
-    losses = column(val_rows, "loss_flow")
+    progress = np.array([r["progress"] for r in val_rows if r.get("loss_flow_joint") is not None])
+    losses = column(val_rows, "loss_flow_joint")
     if progress.size == losses.size and progress.size:
         axes[2].scatter(progress, losses, s=14, color=VAL_COLOR, alpha=0.45, edgecolor="none")
         edges = np.linspace(0, 1, 11)
@@ -934,7 +961,7 @@ def render_breakdown(summary, val_rows, output_dir: str) -> None:
         axes[2].legend(fontsize=8)
     axes[2].set_xlabel("position in the episode (0 = start, 1 = end)")
     axes[2].set_ylabel("$\\mathcal{L}_{flow}$")
-    _style(axes[2], "Val flow loss across the episode")
+    _style(axes[2], "Val joint flow loss across the episode")
 
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "breakdown.png"), bbox_inches="tight", dpi=125)
@@ -986,7 +1013,7 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
                     "global_idx": row["global_idx"],
                     "episode_idx": row["episode_idx"],
                     "frame_idx": row["frame_idx"],
-                    "loss_flow": row["loss_flow"],
+                    "loss_flow_joint": row["loss_flow_joint"],
                     "subtask": row["subtask"],
                 }
                 for row in band["frames"]
@@ -998,6 +1025,7 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
         json.dump(summary, f, indent=2)
 
     render_objective(summary, val_rows, train_rows, output_dir)
+    render_flow_components(summary, output_dir)
     render_flow(summary, output_dir)
     render_discrete(summary, val_rows, train_rows, output_dir)
     render_breakdown(summary, val_rows, output_dir)
@@ -1006,7 +1034,10 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
 
     parts = []
     for label, key in (
-        ("flow", "loss_flow"),
+        ("flow_joint", "loss_flow_joint"),
+        ("flow_combined", "loss_flow"),
+        ("flow_hand", "loss_hand_pose"),
+        ("fk", "loss_hand_fk"),
         ("flow aux", "loss_action_aux"),
         ("FAST CE", "loss_discrete_ce"),
         ("FAST aux", "loss_discrete_aux"),
@@ -1044,7 +1075,10 @@ def aim_scalars(summary: dict) -> dict:
     """
     scalars: dict[str, float] = {}
     headline_keys = (
-        ("flow", "loss_flow"),
+        ("flow_joint", "loss_flow_joint"),
+        ("flow_combined", "loss_flow"),
+        ("flow_hand", "loss_hand_pose"),
+        ("fk", "loss_hand_fk"),
         ("action_aux", "loss_action_aux"),
         ("discrete_ce", "loss_discrete_ce"),
         ("discrete_aux", "loss_discrete_aux"),
@@ -1078,19 +1112,19 @@ def _write_index(summary: dict, output_dir: str) -> None:
         see_also=["action_trace", "actions", "subtask_sweep"],
         metrics=[
             Metric(
-                "loss_flow.val",
-                "Flow loss (val)",
+                "loss_flow_joint.val",
+                "Joint flow loss (val)",
                 good="low",
                 fmt=5,
                 primary=True,
                 note="$\\mathbb{E}_{t,\\varepsilon}\\|v_\\theta(x_t) - (a - \\varepsilon)\\|^2$ "
-                "on held-out frames. Large irreducible floor, so read the ratio "
-                "and $z$, not this level.",
+                "over valid joint dimensions only, before joint weighting; excludes hand and FK. "
+                "Compare across runs only with matching data and normalization.",
                 trend=True,
             ),
             Metric(
-                "loss_flow.z",
-                "Flow gap (standard errors)",
+                "loss_flow_joint.z",
+                "Joint flow gap (standard errors)",
                 good="low",
                 fmt=1,
                 baseline=0.0,
@@ -1102,8 +1136,8 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 trend=True,
             ),
             Metric(
-                "loss_flow.ratio",
-                "Flow val/train ratio",
+                "loss_flow_joint.ratio",
+                "Joint flow val/train ratio",
                 good="low",
                 fmt=3,
                 baseline=1.0,
@@ -1111,6 +1145,22 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 note="$\\bar{\\mathcal{L}}_{val} / \\bar{\\mathcal{L}}_{train}$. The floor "
                 "compresses this toward 1, so a small excess is a large effect.",
             ),
+            *[
+                Metric(
+                    f"{key}.val", label, good="low", fmt=5, primary=True,
+                    note=note, trend=True,
+                )
+                for key, label, note in (
+                    ("loss_flow", "Combined flow objective (val)",
+                     "Trainer action_flow_loss: weighted joint flow + hand flow + weighted FK "
+                     "when the hand block is enabled. Excludes FAST and depth losses. "
+                     "Do not compare across changes in objective weights."),
+                    ("loss_hand_pose", "Hand flow loss (val)",
+                     "Unweighted mean of position, rotation, and aperture flow losses."),
+                    ("loss_hand_fk", "FK loss (val)",
+                     "Unweighted FK consistency loss; multiplied by hand.fk_weight in the combined objective."),
+                )
+            ],
             Metric(
                 "loss_action_aux.val",
                 "Flow auxiliary loss (val)",
@@ -1226,6 +1276,13 @@ def _write_index(summary: dict, output_dir: str) -> None:
         },
         panels=[
             Panel(
+                "flow_components.png", "Flow objective components",
+                "Unweighted joint flow, hand flow, and FK losses, followed by the combined "
+                "flow objective. Train/val means with SEM; component weights apply only "
+                "to the combined objective. FAST and depth losses are separate.",
+                primary=True,
+            ),
+            Panel(
                 "objective.png",
                 "Generalisation gap",
                 "**Left, middle** — $\\bar{\\mathcal{L}}$ per split, one point per split, "
@@ -1237,8 +1294,8 @@ def _write_index(summary: dict, output_dir: str) -> None:
             ),
             Panel(
                 "action_exemplars.html",
-                "GT and generated actions at low, typical, and high flow loss",
-                "Held-out frames nearest $p_5$, $p_{50}$, and $p_{95}$ of the val flow-loss "
+                "GT and generated actions at low, typical, and high joint flow loss",
+                "Held-out frames nearest $p_5$, $p_{50}$, and $p_{95}$ of the val joint-flow-loss "
                 "distribution. Black is the demonstrated action chunk; blue is one "
                 "deterministic generated chunk from the same observation. Orbit the 3-D "
                 "trace, hover a target, and use the slider or arrow keys to move between "
@@ -1248,12 +1305,12 @@ def _write_index(summary: dict, output_dir: str) -> None:
             Panel(
                 "flow.png",
                 "Where the flow loss sits",
-                "The same $\\mathcal{L}_{flow}$ resolved along three axes it is otherwise "
+                "Joint-only flow loss resolved along three axes it is otherwise "
                 "summed over. **Left** — $\\mathcal{L}(t_k)$ at each grid timestep: the "
                 "target is nearly unconditioned as $t \\to 0$, so every model rises there. "
                 "**Middle** — $\\mathcal{L}$ at each step of the 30-step chunk, averaged "
                 "over $t$ and dims. **Right** — $\\mathcal{L}$ per joint, averaged over $t$ "
-                "and chunk steps; the seven bars average back to $\\mathcal{L}_{flow}$.",
+                "and chunk steps; the valid joint bars average back to $\\mathcal{L}_{flow}$.",
                 primary=True,
             ),
             Panel(
@@ -1272,7 +1329,7 @@ def _write_index(summary: dict, output_dir: str) -> None:
             ),
             Panel(
                 "breakdown.png",
-                "Val loss by episode, subtask, and episode position",
+                "Joint val loss by episode, subtask, and episode position",
                 "$\\bar{\\mathcal{L}}_{flow}$ over the val frames grouped three ways, "
                 "against $\\bar{\\mathcal{L}}_{train}$ (dashed). **Right** — position is "
                 "the frame's index within its episode, rescaled to $[0, 1]$; the line is "

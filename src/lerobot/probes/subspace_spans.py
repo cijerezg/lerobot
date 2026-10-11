@@ -109,7 +109,7 @@ COLORS = {r: plt.get_cmap("tab10")(i) for i, r in enumerate(ROBOT_ORDER)}
 # ──────────────────────────────────────────────────────────────────────────────
 
 def numerical_rank(s: np.ndarray, tau: float) -> int:
-    return int(np.sum(s > tau * s[0]))
+    return int(np.sum(s > tau * s[0])) if len(s) and s[0] > 0 else 0
 
 
 def fp16_floor(x16: np.ndarray) -> float:
@@ -141,12 +141,15 @@ def principal_cosines(qa: np.ndarray, qb: np.ndarray) -> np.ndarray:
 
 
 def residual_outside(x: np.ndarray, q: np.ndarray) -> float:
-    return float(1.0 - np.sum((x @ q) ** 2) / np.sum(x ** 2))
+    energy = float(np.sum(x ** 2))
+    return float(1.0 - np.sum((x @ q) ** 2) / energy) if energy > 0 else float("nan")
 
 
 def null_cosines(p: int, q: int, d: int, n_null: int, rng) -> np.ndarray:
     """95th percentile of cos(theta_i) between a random p-space and a random q-space in R^d.
     By rotation invariance the q-space is the first q coordinates, so one QR per draw."""
+    if min(p, q) == 0:
+        return np.empty(0)
     draws = np.empty((n_null, min(p, q)))
     for t in range(n_null):
         qa = np.linalg.qr(rng.standard_normal((d, p)))[0]
@@ -183,7 +186,7 @@ def analyze_group(group: str, arr16: np.ndarray, sel: dict, tolerances: list[flo
             x16, x, xh, mu = centred_matrices(arr16, sel[robot], layer)
             _, s, vt = np.linalg.svd(x, full_matrices=False)
             spans[robot] = {"x": x, "s": s, "vt": vt, "floor": fp16_floor(x16), "xh": xh, "mu": mu}
-            energy = np.cumsum(s ** 2) / np.sum(s ** 2)
+            energy = np.cumsum(s ** 2) / np.sum(s ** 2) if np.any(s) else np.zeros_like(s)
             for tau in tolerances:
                 k = numerical_rank(s, tau)
                 q = vt[:k].T
@@ -191,7 +194,7 @@ def analyze_group(group: str, arr16: np.ndarray, sel: dict, tolerances: list[flo
                     "group": group, "layer": layer, "robot": robot, "tau": tau,
                     "n_frames": len(x), "n_holdout": len(spans[robot]["xh"]), "d": d,
                     "s1": s[0], "mean_norm": float(np.linalg.norm(mu)), "fp16_floor": spans[robot]["floor"], "k": k,
-                    "train_residual": max(0.0, 1.0 - energy[k - 1]),
+                    "train_residual": max(0.0, 1.0 - energy[k - 1]) if k else float("nan"),
                     "holdout_residual": residual_outside(spans[robot]["xh"], q) if len(spans[robot]["xh"]) else float("nan"),
                 })
             if layer in layers:
@@ -205,10 +208,12 @@ def analyze_group(group: str, arr16: np.ndarray, sel: dict, tolerances: list[flo
                 cos = principal_cosines(qa, qb)
                 out["pairs"].append({
                     "group": group, "layer": layer, "a": a, "b": b, "tau": tau, "p": p, "q": q_, "d": d,
-                    "overlap": float(np.sum(cos ** 2) / min(p, q_)), "null_overlap": max(p, q_) / d,
-                    "shared": int(np.sum(cos > COS_SHARED)), "cos_1": float(cos[0]),
+                    "overlap": float(np.sum(cos ** 2) / min(p, q_)) if len(cos) else float("nan"),
+                    "null_overlap": max(p, q_) / d if len(cos) else float("nan"),
+                    "shared": int(np.sum(cos > COS_SHARED)), "cos_1": float(cos[0]) if len(cos) else float("nan"),
                     "mean_cos": float(np.dot(spans[a]["mu"], spans[b]["mu"])
-                                      / (np.linalg.norm(spans[a]["mu"]) * np.linalg.norm(spans[b]["mu"]))),
+                                      / (np.linalg.norm(spans[a]["mu"]) * np.linalg.norm(spans[b]["mu"])))
+                    if np.linalg.norm(spans[a]["mu"]) * np.linalg.norm(spans[b]["mu"]) > 0 else float("nan"),
                     "residual_b_outside_a": residual_outside(spans[b]["x"], qa),
                     "residual_a_outside_b": residual_outside(spans[a]["x"], qb),
                 })
@@ -413,10 +418,10 @@ def _pivot_rows(pivots: dict, rows: list[dict]) -> list[dict]:
     by_row = {r["row"]: r for r in rows}
     out = []
     for (group, layer, robot), (order, rdiag) in sorted(pivots.items()):
-        for j, row in enumerate(order):
+        for j, row in enumerate(order[:len(rdiag)]):
             m = by_row[int(row)]
             out.append({"group": group, "layer": layer, "robot": robot, "pivot": j + 1, "row": int(row),
-                        "residual": rdiag[j], "residual_rel": rdiag[j] / rdiag[0], "episode": m["episode"],
+                        "residual": rdiag[j], "residual_rel": rdiag[j] / rdiag[0] if rdiag[0] > 0 else float("nan"), "episode": m["episode"],
                         "frame": m["frame"], "object_class": m["object_class"], "phase": m["phase"]})
     return out
 

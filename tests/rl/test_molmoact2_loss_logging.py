@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from lerobot.probes.objective import aim_scalars
@@ -265,3 +266,41 @@ def test_future_prediction_diagnostics_reach_aim():
     )
     expected = {key: 1.0 for key in keys}
     assert MolmoAct2Trainer._aim_metrics(expected) == expected
+
+
+@pytest.mark.parametrize("cosine,angle", [(1.0, 0.0), (0.5, 60.0), (0.0, 90.0), (-1.0, 180.0), (1.0000001, 0.0)])
+def test_hand_token_angles_reach_console_and_aim(caplog, cosine, angle):
+    from types import SimpleNamespace
+    from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
+
+    logged = []
+    logger = SimpleNamespace(log_dict=lambda d, **kwargs: logged.append(d))
+    policy = SimpleNamespace(hand_token_cosines=lambda: {
+        "hand_token_cos_start": cosine, "hand_token_cos_end": 0.0,
+    })
+    trainer = MolmoAct2Trainer.__new__(MolmoAct2Trainer)
+    original = {"loss_flow": 0.2}
+    with caplog.at_level("INFO"):
+        trainer.log_metrics(original, step=40, aim_logger=logger, _policy=policy)
+    assert original == {"loss_flow": 0.2}
+    assert len(logged) == 1
+    assert logged[0]["hand_token_cos_start"] == cosine
+    assert logged[0]["hand_token_cos_end"] == 0.0
+    assert logged[0]["hand_token_angle_start_deg"] == pytest.approx(angle)
+    assert logged[0]["hand_token_angle_end_deg"] == pytest.approx(90.0)
+    assert f"hand_token_angle_start_deg={angle:.4f}" in caplog.text
+    assert "hand_token_angle_end_deg=90.0000" in caplog.text
+
+
+def test_hand_token_logging_omits_disabled_tokens(caplog):
+    from types import SimpleNamespace
+    from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
+
+    trainer = MolmoAct2Trainer.__new__(MolmoAct2Trainer)
+    with caplog.at_level("INFO"):
+        trainer.log_metrics(
+            {"loss_flow": 0.2}, step=40, aim_logger=None,
+            _policy=SimpleNamespace(hand_token_cosines=lambda: {}),
+        )
+    assert "loss_flow=0.2000" in caplog.text
+    assert "hand_token_" not in caplog.text

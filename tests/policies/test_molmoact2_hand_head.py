@@ -217,3 +217,32 @@ def test_trainer_gives_the_hand_token_rows_their_own_lr_inside_the_depth_optimiz
     optimizers = build_named_adamw_optimizers(groups, SimpleNamespace(), seed=0)
     lrs = [group["lr"] for group in optimizers["depth"].param_groups]
     assert lrs == [3e-5, 1e-3]
+
+
+def test_ar_decode_accepts_added_markers_and_uses_learned_hand_rows():
+    from lerobot.policies.molmoact2.modeling_molmoact2 import _patch_ar_decode_embeddings
+
+    class SplitEmbedding(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embedding = nn.Parameter(torch.randn(10, 4))
+            self.new_embedding = nn.Parameter(torch.randn(2, 4))
+
+        def forward(self, ids):
+            return nn.functional.embedding(ids, torch.cat([self.embedding, self.new_embedding]))
+
+    wte = SplitEmbedding()
+    model = SimpleNamespace(model=SimpleNamespace(transformer=SimpleNamespace(wte=wte)))
+    model._embed_base_tokens = lambda ids: nn.functional.embedding(ids, wte.embedding)
+    rows = install_hand_token_rows(wte, (10, 11))
+    with torch.no_grad():
+        rows.rows.copy_(rows.rows.roll(1, dims=1))
+    tokens = torch.tensor([[2, 10, 11]])
+    with pytest.raises(IndexError):
+        model._embed_base_tokens(tokens)
+    _patch_ar_decode_embeddings(model)
+    _patch_ar_decode_embeddings(model)
+    decoded = model._embed_base_tokens(tokens)
+    torch.testing.assert_close(decoded[:, 0], wte.embedding[2:3])
+    torch.testing.assert_close(decoded[0, 1:], rows.effective())
+    assert not torch.allclose(decoded[0, 1:], wte.new_embedding)

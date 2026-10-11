@@ -101,6 +101,7 @@ from lerobot.probes.utils import (
     sample_episodes_evenly,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
 from lerobot.utils.utils import init_logging
 
 
@@ -224,7 +225,10 @@ def _diverse_inputs(buffer, cfg, sample: dict) -> dict:
     record = buffer.selection.episode_records[str(row["episode_id"])]
     return {"obs": obs, "task": episode_task(record, row["source"])[0], "subtask": str(row["subtask"]),
             "metadata": dict(DEPLOYMENT_METADATA), "extra": extra,
-            "gt_actions": transition["action"], "native_width": int(row["native_action_dim"])}
+            "gt_actions": transition["action"], "native_width": int(row["native_action_dim"]),
+            # Full loss probes need the cached event labels, which the trainer also
+            # forwards separately from the preprocessing identity columns.
+            **{key: comp[key] for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS if key in comp}}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

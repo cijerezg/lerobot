@@ -2036,7 +2036,8 @@ def run(adapter, dataset, cfg, output_dir):
                 except Exception as exc:
                     fast_error = f"{type(exc).__name__}: {exc}"[:240]
                     logging.warning(
-                        f"[action_trace] FAST decode failed at ep{episode_idx}:{frame_idx}: {fast_error}"
+                        f"[action_trace] FAST decode failed at ep{episode_idx}:{frame_idx}: {fast_error}",
+                        exc_info=True,
                     )
 
             record = _analyse(
