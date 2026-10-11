@@ -177,35 +177,48 @@ python -m lerobot.probes.actions --config path/to/config.yaml
 
 ---
 
-## 5. Representation Probe
+## 5. Representation Trajectories
 
-This probe captures internal hidden states from two sites — the **prefix** (VLM, after processing images and language) and the **suffix** (action expert, at a chosen diffusion timestep) — and visualizes how those representations cluster. It's useful for catching cases where the model has collapsed to a generic representation, or for confirming that distinct subtasks actually live in distinct regions of the hidden space.
+The representation probe follows sampled frames through episodes and compares trajectories across tasks and robots. It captures separate token groups at selected layers, using the same fixed-noise, first-flow-step adapter path as the conditions matrix. The default is **native attention input**, normalized by the model before pooling. This path currently requires the MolmoAct2 per-layer capture adapter.
 
-For each site, hidden states are mean-pooled over the relevant tokens and then passed through PCA and UMAP. Unlike the action manifold, here the PCA and UMAP are **re-fit at every validation step** — the goal is to track how the representation space itself evolves, not to compare against a fixed reference.
+Open `trajectories.html` in the probe viewer or directly in a browser. It is self-contained, including Plotly and cached camera previews. Select a group, layer, real/constant prompt, and raw/robot-centered geometry. Robot/task filters preserve the fitted PCA axes. Click a trajectory point or timeline to inspect both cameras and the nearest matching frames in other episodes.
 
-The probe optionally runs a **subtask injection** analysis: it does two forward passes for each frame, one with the ground-truth subtask tokens and one with the model's generated subtask tokens, and projects both into the same UMAP. The distance between the two reveals whether the model's subtask understanding is consistent with what it actually generates.
+- **Shared 3-D PCA only:** one basis across all sampled robots/episodes for each group, layer, prompt and geometry. Explained variance is shown. Coordinates are not whitened or unit-normalized. Training frames fit the basis; fewer than two training frames trigger an explicitly reported descriptive fit on all frames. Bases are refitted across checkpoints, so axes are not aligned between runs.
+- **Local temporal cosine:** average cosine to other sampled frames in the same episode within `±repr_local_window_s`, measured in the original dimensions. The report also shows predecessor cosine, the actual time gap, step distance, raw norm and neighbor counts. No neighbors or zero vectors produce missing values, not zeros.
+- **Cross-episode matches:** exact nearest cosine, excluding the whole source episode, split into same/different robot × same/different task. Task equality uses the exact recorded string, not a semantic classifier. Each match includes raw norm ratio/difference, distance in the selected geometry, candidate counts, and anchor-to-target-neighborhood mean cosine. That mean is local support, not temporal alignment or evidence of sustained behavioral confusion.
+- **Text control:** real task/subtask prompts and constant prompts (`Manipulate the object.` / `continue the task`) use the same observations and noise. Labels displayed in the report remain the real labels. Constant text is not proof of visual grounding.
 
-<p align="center">
-  <img src="../../media/readme/by_episode.png" alt="Representation UMAP colored by subtask" width="500">
-  <br>
-  <em>Representation UMAP colored by episode. Several episodes have similar representations. This can happen because 1. the model is memorizing, 2. the episodes are legitimately similar that a similar representation is reasonable. We suspect it's a combination of both.</em>
-</p>
+Robot centering uses that robot's sampled training-frame mean separately for each prompt/group/layer. A robot with no training rows uses its available frames descriptively, and the report names that fallback. Raw norms are always saved before this external centering and unit normalization. PCA crossings are only candidates: check original-space metrics and frames. These dataset replays cannot establish why a closed-loop policy diverted.
+
+Sampling includes configured LeRobot sources, additional datasets, validation roots and the enabled diverse corpus (training and held-out anchors). Episodes are balanced over robot/task/split, up to `max_episodes` **per robot**. Whole paths are thinned evenly under the frame cap, including both endpoints. LeRobot uses the stored image grid; diverse data uses available anchors. Sparse sampling may leave local windows empty: increase the frame budget or window and inspect the actual gaps. At least two episodes with identical task text are needed for same-task matches.
 
 ### Standalone
 
+Run from the workspace root with the root environment:
+
 ```bash
-python -m lerobot.probes.representations --config path/to/config.yaml
+.venv/bin/python -m lerobot.probes.representations --config config_rl.yaml
+# Recompute measurements and the report from this checkpoint's saved cache:
+.venv/bin/python -m lerobot.probes.representations --config config_rl.yaml \
+    --probe_parameters.mode=plot
 ```
+
+Uses `policy.pretrained_path`; writes `<probe_parameters.output_dir>/validation/step_<checkpoint>/representations/`. The validation suite calls the same `run()` when `enable_representations=true`. Plot mode loads neither model nor datasets. Old whole-sequence activation caches must be recollected.
 
 ### Config
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enable_representations` | `true` | Enable this probe |
-| `repr_pca_dims` | `100` | PCA components |
-| `sites` | `"prefix,suffix"` | Which activation sites to probe |
-| `subtask_injection` | `false` | Compare GT vs generated subtasks |
-| `timestep` | `0.5` | Diffusion timestep for suffix capture |
+| `enable_representations` | `false` | Validation-suite switch; enabled in the workspace YAML configs |
+| `repr_view` | `attention_input` | Native view, or `block_output`; changing view requires recollection |
+| `repr_layers` | `14,28,32` | Zero-based block indices; changing to uncached layers requires recollection |
+| `repr_groups` | `action,img_external_0,img_wrist_0,state` | Separate pooled token groups; `subtask,action_output` also supported |
+| `repr_constant_text` | `true` | Capture real and constant task/subtask text; doubles forwards |
+| `repr_n_frames_per_episode` | `null` | Inherit common frame budget; workspace configs use 128 for temporal density |
+| `repr_max_frames` | `1200` | Total physical frames across robots and splits, before text duplication |
+| `repr_local_window_s` | `2.0` | Temporal neighborhood radius in seconds, adjustable in plot mode |
+
+`repr_pca_dims`, UMAP options, and the generic `timestep` do not control this probe. Outputs include float32 caches with presence masks, `sampling_plan.json`, `temporal.csv`, `matches.csv`, `summary.json`, saved PCA bases/means/coordinates in `pca/`, and the viewer manifest. Missing token groups are reported and excluded.
 
 ---
 

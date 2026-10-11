@@ -1,543 +1,371 @@
 #!/usr/bin/env python
+"""Representation trajectories: where do episodes approach other behaviors?
+
+Capture temporal sequences with separate image, state, text and action token groups,
+using the conditions-matrix adapter seam (first flow step, fixed noise). The default
+view is the native attention input; normalization happens inside the model before
+pooling. Real and constant task/subtask prompts are captured separately.
+
+``trajectories.html`` links a shared 3-D PCA to original-space temporal cosine, raw
+norms and cross-episode nearest matches, with both camera previews. PCA is fitted
+once per group/layer/text/geometry across robots, then held fixed while filtering.
+Training rows fit the basis and robot means; a robot with only held-out rows uses
+those rows descriptively, explicitly recorded in the report. No UMAP, whitening,
+or similarity measured in the projection. Bases are refitted across checkpoints.
+
+Local cosine excludes the frame itself and uses a time window in seconds within
+the same episode. Matches exclude the entire source episode, and split by same /
+different robot and task (exact task text). Target-window cosine averages the
+anchor's similarity to frames near its best match; this is not trajectory alignment.
+Crossings are candidates for inspection, not a confusion score or causal evidence.
+These are dataset replays, not closed-loop rollouts; text controls do not remove
+scene/state confounding. Native action queries are pooled over future positions.
+
+Sampling balances episodes over robot, task and split before distributing the frame
+budget. LeRobot rows follow the stored image grid; diverse rows use available corpus
+anchors. Sparse neighborhoods remain missing, with time gaps and counts recorded.
+``cache/`` saves float32 selected layers and frame previews for model-free replotting;
+old whole-sequence caches are deliberately rejected. ``sampling_plan.json``,
+``temporal.csv``, ``matches.csv`` and ``pca/`` retain the underlying measurements.
 """
-Generic representation probe — visualise what the policy has learned by
-mean-pooling per-layer hidden states, then PCA + UMAP for plotting.
-
-Policy-agnostic: works with any policy whose ``ProbablePolicy`` adapter
-implements ``capture_representations``. Site names are policy-specific (e.g.
-pi05: ``prefix`` / ``suffix``; molmoact2: ``encoder`` / ``action_expert``) —
-the probe iterates whatever sites the adapter returns.
-
-Output layout (under ``probe_parameters.output_dir/representations/{dataset}/``):
-  activations_cache.pt              reusable tensor cache (mode=plot skips collection)
-  episode_thumbnails.png            first-frame thumbnails per episode
-  pca_variance/                     PCA scree plots
-  2d/<site>/by_episode.png          per-episode gradient (dark=early, light=late)
-  2d/<site>/by_frame.png            all episodes pooled, coloured by frame index
-  2d/<site>/by_subtask.png          all episodes pooled, coloured by subtask
-  3d/<site>/by_episode.html         interactive 3D
-  3d/<site>/by_frame.html
-  3d/<site>/by_subtask.html
-  3d/<site>/ep{A}_vs_ep{B}.html
-
-OFF BY DEFAULT (2026-07-31). The pooling is over the whole sequence of one layer,
-so the by-subtask separation it shows is produced by the subtask string sitting in
-the prompt rather than by anything the policy learned about the scene, and no number
-it reports can come out bad. Re-enable it with per-token-group pooling (image
-patches, prompt clauses, and action queries pooled separately) and a decodability
-metric — probe accuracy for episode / phase / subtask against a shuffled-label
-control — so the picture is backed by something falsifiable.
-
-Usage:
-    python -m lerobot.probes.representations config.yaml \\
-        --probe_parameters.max_episodes 5
-"""
-
 from __future__ import annotations
 
-import csv
+import json
 import logging
-import math
-import os
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
+from lerobot.probes.conditions_matrix import (
+    GROUPS, NEUTRAL_SUBTASK, NEUTRAL_TASK, _open_diverse_buffers, _rebot_inputs, _save_thumbs,
+)
+from lerobot.probes.domain_representations import _diverse_inputs
 from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.probes.representation_views import VIEW_METADATA
 from lerobot.probes.utils import (
-    EP_COLORS,
-    SEQ_CMAPS,
-    ax_style,
-    build_episode_index,
-    frame_colors_rgba,
-    get_subtask_idx,
-    load_extra_dataset,
-    load_probe_dataset,
-    makedirs,
-    plotly_3d_layout,
-    probe_frame_inputs,
-    probe_image_stride,
-    register_config_choices,
-    run_pca,
-    run_umap,
-    sample_episodes_evenly,
-    subtask_group,
+    build_episode_index, dataset_identity_columns, load_extra_dataset, load_probe_dataset,
+    probe_image_stride, register_config_choices,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
+PROTOCOL = "temporal_token_groups_v1"
+
 
 @dataclass
 class ProbeRepresentationsConfig(TrainRLServerPipelineConfig):
-    """Tunables under ``cfg.probe_parameters`` (ProbeConfig)."""
+    """Options live under probe_parameters."""
 
 
-# Sequential colormaps for representation plots.
-_REP_SEQ_CMAPS = ["Blues", "Reds", "Greens", "Oranges", "Purples",
-                  "YlOrBr", "PuRd", "BuGn", "GnBu", "OrRd"]
+def _options(cfg):
+    p = cfg.probe_parameters
+    layers = list(dict.fromkeys(int(s.strip()) for s in p.repr_layers.split(",") if s.strip()))
+    groups = list(dict.fromkeys(s.strip() for s in p.repr_groups.split(",") if s.strip()))
+    if not layers or min(layers) < 0:
+        raise ValueError("repr_layers must contain nonnegative block indices")
+    if not groups or set(groups) - {g for _, g in GROUPS}:
+        raise ValueError(f"repr_groups must be selected from {[g for _, g in GROUPS]}")
+    if p.repr_view not in VIEW_METADATA:
+        raise ValueError(f"Unknown repr_view {p.repr_view!r}")
+    if not np.isfinite(p.repr_local_window_s) or p.repr_local_window_s <= 0 or p.repr_max_frames < 2:
+        raise ValueError("repr_local_window_s must be positive; repr_max_frames must be >= 2")
+    return layers, groups
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Collection — loop over samples, ask the adapter for per-site vectors
-# ──────────────────────────────────────────────────────────────────────────────
+def _lerobot_candidates(dataset, cfg, key, holdout):
+    """Read labels/times without decoding video; no subtask-window restriction."""
+    from lerobot.datasets.embodiment import embodiment_name
+
+    identity = dataset_identity_columns(dataset, cfg)
+    robot = embodiment_name(identity["embodiment_index"]) or f"embodiment {identity['embodiment_index']}"
+    stride = probe_image_stride(cfg)
+    columns = dataset.hf_dataset.select_columns(["frame_index", "timestamp", "task_index"]).with_format(None)[:]
+    root = str(Path(dataset.root).resolve())
+    candidates = []
+    p = cfg.probe_parameters
+    budget = p.repr_n_frames_per_episode if p.repr_n_frames_per_episode is not None else p.n_frames_per_episode
+    for ep, indices in build_episode_index(dataset).items():
+        frames = []
+        available = [i for i in indices if i % stride == 0]
+        picks = np.linspace(0, len(available) - 1, min(len(available), budget), dtype=int)
+        for position in picks:
+            index = available[position]
+            task = str(dataset.meta.tasks.iloc[int(columns["task_index"][index])].name)
+            frames.append({**identity, "kind": "lerobot", "source_key": key,
+                           "source": Path(root).name, "robot": robot,
+                           "episode": f"{root}::{ep}", "episode_label": f"{Path(root).name}/{ep}",
+                           "index": index, "frame": int(columns["frame_index"][index]),
+                           "time_s": float(columns["timestamp"][index]), "task": task,
+                           "holdout": holdout})
+        if frames:
+            candidates.append(frames)
+    return candidates
+
+
+def _diverse_candidates(buffer, key, holdout, frames_per_episode):
+    from lerobot.datasets.diverse_prompt import episode_task
+
+    by_episode = defaultdict(list)
+    for index, row in enumerate(buffer.rows):
+        by_episode[(row["corpus_key"], str(row["episode_id"]))].append((index, row))
+    candidates = []
+    for (corpus, ep), items in sorted(by_episode.items()):
+        first = items[0][1]
+        task = episode_task(buffer.selection.episode_records[ep], first["source"])[0]
+        ordered = sorted(items, key=lambda item: float(item[1]["anchor_s"]))
+        ordered = list({float(row["anchor_s"]): (index, row) for index, row in ordered}.values())
+        picks = np.linspace(0, len(ordered) - 1, min(len(ordered), frames_per_episode), dtype=int)
+        frames, seen = [], set()
+        for position in picks:
+            index, row = ordered[position]
+            t = float(row["anchor_s"])
+            if t in seen:
+                continue
+            seen.add(t)
+            frames.append({"kind": "diverse", "source_key": key, "source": row["source"],
+                           "robot": str(row["embodiment"]), "episode": f"{corpus}::{ep}",
+                           "episode_label": f"{row['source']}/{ep}", "index": index,
+                           "frame": int(row["anchor_frame"]), "time_s": t, "task": task,
+                           "holdout": holdout})
+        if frames:
+            candidates.append(frames)
+    return candidates
+
+
+def select_sequences(candidates, max_episodes, frames_per_episode, max_frames, seed):
+    """Balance robot/task/split, then thin whole trajectories including both ends.
+
+    max_episodes is per robot. Source episode identity excludes duplicate copies and
+    train/holdout overlap. A hard budget never truncates just an episode's tail.
+    """
+    if frames_per_episode < 2 or max_frames < 2 or (max_episodes is not None and max_episodes < 1):
+        raise ValueError("Need >= 2 frames per episode and positive episode/frame budgets")
+    rng = np.random.default_rng(seed)
+    buckets = defaultdict(lambda: defaultdict(list))
+    seen = set()
+    for frames in candidates:
+        if len(frames) < 2:
+            continue
+        frames = sorted(frames, key=lambda r: r["time_s"])
+        first = frames[0]
+        if first["episode"] in seen:
+            raise ValueError(f"Episode appears in multiple sources/splits: {first['episode']}")
+        seen.add(first["episode"])
+        task_key = tuple(sorted({r["task"] for r in frames}))
+        buckets[first["robot"]][(first["holdout"], task_key)].append(frames)
+    queues = {}
+    for robot, cells in sorted(buckets.items()):
+        for cell in cells.values():
+            rng.shuffle(cell)
+        queue, keys = [], sorted(cells)
+        rng.shuffle(keys)
+        for i in range(max(map(len, cells.values()))):
+            for key in keys:
+                if i < len(cells[key]):
+                    queue.append(cells[key][i])
+        queues[robot] = queue if max_episodes is None else queue[:max_episodes]
+    chosen = []
+    for i in range(max((len(q) for q in queues.values()), default=0)):
+        for queue in queues.values():
+            if i < len(queue) and len(chosen) < max_frames // 2:
+                chosen.append(queue[i])
+    if not chosen:
+        raise ValueError("No episodes with at least two available frames")
+    counts = np.full(len(chosen), 2)
+    limits = np.array([min(len(ep), frames_per_episode) for ep in chosen])
+    remaining = max_frames - int(counts.sum())
+    while remaining and np.any(counts < limits):
+        for i in np.flatnonzero(counts < limits):
+            if not remaining:
+                break
+            counts[i] += 1
+            remaining -= 1
+    samples = []
+    for frames, count in zip(chosen, counts, strict=True):
+        picks = np.linspace(0, len(frames) - 1, int(count), dtype=int)
+        samples.extend(frames[i] for i in picks)
+    return sorted(samples, key=lambda s: (s["kind"], s["source_key"], s["episode"], s["time_s"]))
+
+
+def sampling_plan(dataset, cfg):
+    p = cfg.probe_parameters
+    datasets, buffers, candidates = {}, {}, []
+    n_frames = p.repr_n_frames_per_episode if p.repr_n_frames_per_episode is not None else p.n_frames_per_episode
+    if n_frames < 2:
+        raise ValueError("Need >= 2 representation frames per episode")
+    roots = [str(s.root) for s in (getattr(cfg.dataset, "sources", None) or []) if s.root]
+    roots += list(getattr(cfg.dataset, "additional_offline_dataset_paths", None) or [])
+    if getattr(cfg.dataset, "root", None):
+        roots.append(str(cfg.dataset.root))
+    if dataset is not None:
+        roots.append(str(dataset.root))
+    val_root = getattr(cfg, "val_dataset_path", None)
+    if val_root:
+        roots.append(str(val_root))
+    for root in dict.fromkeys(str(Path(r).resolve()) for r in roots):
+        ds = dataset if dataset is not None and str(Path(dataset.root).resolve()) == root else load_extra_dataset(cfg.dataset.repo_id, root)
+        datasets[root] = ds
+        held = bool(val_root and str(Path(val_root).resolve()) == root)
+        candidates += _lerobot_candidates(ds, cfg, root, held)
+    if getattr(cfg, "diverse", None) is not None and cfg.diverse.enabled:
+        buffers = _open_diverse_buffers(cfg)
+        for key, buffer in buffers.items():
+            candidates += _diverse_candidates(buffer, key, key.endswith("holdout"), n_frames)
+    samples = select_sequences(candidates, p.max_episodes, n_frames, p.repr_max_frames, p.random_seed)
+    return samples, datasets, buffers
+
 
 @torch.no_grad()
-def collect_activations(adapter: ProbablePolicy, dataset, samples, cfg):
-    """For each sampled frame, call ``adapter.capture_representations`` and stack
-    the resulting per-site vectors. Returns:
-
-        {"<site_name>": Tensor[N, hidden_dim], ..., "metadata": list[dict]}
-    """
-    chunk_size = adapter.chunk_size
-    timestep = float(getattr(cfg.probe_parameters, "timestep", 1.0))
-
-    per_site: dict[str, list[torch.Tensor]] = {}
-    metadata: list[dict] = []
-
-    for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
-        if i % 100 == 0:
-            logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
-
-        frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
-        gt_subtask, task_str = frame["subtask"], frame["task"]
-        reps = adapter.capture_representations(
-            frame["obs"], task_str, state=frame["state"], timestep=timestep,
-            gt_actions=frame["gt_actions"], gt_subtask=gt_subtask, metadata=frame["metadata"],
-        )
-        for site, vec in reps.items():
-            per_site.setdefault(site, []).append(vec)
-
-        metadata.append({
-            "episode_idx": ep_idx,
-            "frame_idx":   fr_idx,
-            "global_idx":  global_idx,
-            "subtask":     gt_subtask,
-            "subtask_idx": get_subtask_idx(dataset, global_idx),
-            "task":        task_str,
-        })
-
-    result: dict = {"metadata": metadata}
-    for site, vecs in per_site.items():
-        result[site] = torch.stack(vecs, dim=0)
-    return result
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 2D plots
-# ──────────────────────────────────────────────────────────────────────────────
-
-def plot_2d_by_episode(emb, metadata, output_path):
-    from matplotlib.patches import Patch
-
-    ep_ids    = np.array([m["episode_idx"] for m in metadata])
-    frame_ids = np.array([m["frame_idx"]   for m in metadata])
-    unique_eps = np.unique(ep_ids)
-
-    fig, ax = plt.subplots(figsize=(7, 6))
-    legend_handles = []
-    for i, ep in enumerate(unique_eps):
-        mask      = ep_ids == ep
-        ep_frames = frame_ids[mask]
-        fmin, fmax = ep_frames.min(), ep_frames.max()
-        norm  = 0.9 - (ep_frames - fmin) / max(fmax - fmin, 1) * 0.6
-        cmap  = matplotlib.colormaps.get_cmap(_REP_SEQ_CMAPS[i % len(_REP_SEQ_CMAPS)])
-        ax.scatter(emb[mask, 0], emb[mask, 1], c=cmap(norm),
-                   s=22, alpha=0.85, linewidths=0)
-        legend_handles.append(Patch(facecolor=cmap(0.6), label=f"ep {ep}"))
-
-    if len(unique_eps) <= 20:
-        ax.legend(handles=legend_handles, fontsize=6, ncol=2)
-    ax_style(ax, f"By episode ({len(unique_eps)} eps) — dark→light = early→late frame",
-             width=55)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_2d_by_frame(emb, metadata, output_path):
-    frame_ids = np.array([m["frame_idx"] for m in metadata])
-    n_eps = len(np.unique([m["episode_idx"] for m in metadata]))
-    fig, ax = plt.subplots(figsize=(7, 6))
-    sc = ax.scatter(emb[:, 0], emb[:, 1], c=frame_ids, cmap="plasma",
-                    s=22, alpha=0.80, linewidths=0)
-    plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label="Frame index within episode")
-    ax_style(ax, f"By frame index — {n_eps} episodes pooled", width=55)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_2d_by_subtask(emb, metadata, output_path):
-    groups        = np.array([subtask_group(m["subtask"]) for m in metadata])
-    unique_groups = sorted(set(groups.tolist()))
-    cmap          = matplotlib.colormaps.get_cmap("tab10")
-    n_eps         = len(np.unique([m["episode_idx"] for m in metadata]))
-
-    fig, ax = plt.subplots(figsize=(9, 6))
-    for i, g in enumerate(unique_groups):
-        mask = groups == g
-        ax.scatter(emb[mask, 0], emb[mask, 1], s=22, alpha=0.80, linewidths=0,
-                   color=cmap(i % 10), label=f"{g}  (n={int(mask.sum())})")
-    ax.legend(fontsize=8, markerscale=2, bbox_to_anchor=(1.01, 1), loc="upper left")
-    ax_style(ax, f"By subtask — {n_eps} episodes pooled", width=55)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 3D plots
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _plotly_3d(emb, traces, title, output_path):
-    import plotly.graph_objects as go  # noqa: F401  (consumed by caller traces)
-    import plotly.graph_objects as go
-    fig = go.Figure(data=traces)
-    fig.update_layout(**plotly_3d_layout(title))
-    fig.write_html(output_path)
-
-
-def plot_3d_by_episode(emb, metadata, output_path):
-    import plotly.graph_objects as go
-
-    ep_ids     = [m["episode_idx"] for m in metadata]
-    frame_ids  = [m["frame_idx"]   for m in metadata]
-    unique_eps = sorted(set(ep_ids))
-
-    traces = []
-    for i, ep in enumerate(unique_eps):
-        idx    = [j for j, e in enumerate(ep_ids) if e == ep]
-        frames = np.array([frame_ids[j] for j in idx])
-        colors = frame_colors_rgba(frames, _REP_SEQ_CMAPS[i % len(_REP_SEQ_CMAPS)], alpha=0.85)
-        hover  = [f"ep={ep} fr={metadata[j]['frame_idx']}<br>{metadata[j]['subtask']}"
-                  for j in idx]
-        traces.append(go.Scatter3d(
-            x=[emb[j, 0] for j in idx],
-            y=[emb[j, 1] for j in idx],
-            z=[emb[j, 2] for j in idx],
-            mode="markers", name=f"ep {ep}",
-            marker=dict(size=6, color=colors, line=dict(width=0)),
-            text=hover, hovertemplate="%{text}<extra></extra>",
-        ))
-    _plotly_3d(emb, traces,
-               f"3D — by episode ({len(unique_eps)} eps) · dark→pale = early→late",
-               output_path)
-
-
-def plot_3d_by_frame(emb, metadata, output_path):
-    import plotly.graph_objects as go
-
-    frame_ids = [m["frame_idx"] for m in metadata]
-    n_eps = len(set(m["episode_idx"] for m in metadata))
-    hover = [f"ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}"
-             for m in metadata]
-
-    traces = [go.Scatter3d(
-        x=emb[:, 0], y=emb[:, 1], z=emb[:, 2],
-        mode="markers",
-        marker=dict(size=6, color=frame_ids, colorscale="Plasma",
-                    showscale=True, opacity=0.85, line=dict(width=0),
-                    colorbar=dict(title="Frame index within episode")),
-        text=hover, hovertemplate="%{text}<extra></extra>",
-    )]
-    _plotly_3d(emb, traces, f"3D — by frame index — {n_eps} episodes pooled", output_path)
-
-
-def plot_3d_by_subtask(emb, metadata, output_path):
-    import plotly.graph_objects as go
-
-    groups = [subtask_group(m["subtask"]) for m in metadata]
-    n_eps = len(set(m["episode_idx"] for m in metadata))
-
-    traces = []
-    for i, g in enumerate(sorted(set(groups))):
-        idx = [j for j, gr in enumerate(groups) if gr == g]
-        hover = [f"ep={metadata[j]['episode_idx']} fr={metadata[j]['frame_idx']}"
-                 f"<br>{metadata[j]['subtask']}" for j in idx]
-        traces.append(go.Scatter3d(
-            x=[emb[j, 0] for j in idx],
-            y=[emb[j, 1] for j in idx],
-            z=[emb[j, 2] for j in idx],
-            mode="markers", name=f"{g} (n={len(idx)})",
-            marker=dict(size=6, color=EP_COLORS[i % len(EP_COLORS)],
-                        opacity=0.85, line=dict(width=0)),
-            text=hover, hovertemplate="%{text}<extra></extra>",
-        ))
-    _plotly_3d(emb, traces, f"3D — by subtask ({n_eps} eps)", output_path)
-
-
-def plot_3d_two_episodes(emb, metadata, ep_a, ep_b, output_path):
-    import plotly.graph_objects as go
-
-    ep_marker = {ep_a: "circle", ep_b: "square"}
-    traces = []
-    for ep, sym in ep_marker.items():
-        idx = [i for i, m in enumerate(metadata) if m["episode_idx"] == ep]
-        if not idx:
-            continue
-        sub = emb[idx]
-        frames = [metadata[i]["frame_idx"] for i in idx]
-        hover = [f"ep={ep} fr={metadata[i]['frame_idx']}<br>{metadata[i]['subtask']}"
-                 for i in idx]
-        traces.append(go.Scatter3d(
-            x=sub[:, 0], y=sub[:, 1], z=sub[:, 2],
-            mode="markers", name=f"Episode {ep}",
-            marker=dict(size=6, color=frames, colorscale="Plasma",
-                        showscale=(ep == ep_a), opacity=0.85, line=dict(width=0),
-                        colorbar=dict(title="Frame index"), symbol=sym),
-            text=hover, hovertemplate="%{text}<extra></extra>",
-        ))
-    _plotly_3d(emb, traces,
-               f"3D — ep {ep_a} (●) vs ep {ep_b} (■) · coloured by frame",
-               output_path)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Episode thumbnails
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _grid_layout(n: int) -> tuple[int, int]:
-    rows = max(1, math.floor(math.sqrt(n)))
-    cols = math.ceil(n / rows)
-    return rows, cols
-
-
-def _save_episode_thumbnails(dataset, ep_to_indices, output_dir):
-    sample_frame = dataset[0]
-    img_keys = sorted(
-        k for k in sample_frame.keys()
-        if k.startswith("observation.image") and isinstance(sample_frame[k], torch.Tensor)
-    )
-    if not img_keys:
-        logging.warning("No image keys found; skipping episode thumbnails.")
-        return
-
-    episodes = sorted(ep_to_indices.keys())
-    n_eps = len(episodes)
-    n_cams = len(img_keys)
-    cam_labels = [k.replace("observation.images.", "").replace("observation.image.", "")
-                  for k in img_keys]
-    rows, cols = (_grid_layout(n_eps) if n_cams == 1 else (n_eps, n_cams))
-    fig, axes = plt.subplots(rows, cols, figsize=(3 * cols, 3 * rows), squeeze=False)
-
-    for i, ep_idx in enumerate(episodes):
-        frame = dataset[ep_to_indices[ep_idx][0]]
-        r, c_start = (i, 0) if n_cams > 1 else divmod(i, cols)
-        for cam_j, (key, label) in enumerate(zip(img_keys, cam_labels)):
-            c = c_start + cam_j if n_cams == 1 else cam_j
-            ax = axes[r][c]
-            img = frame[key]
-            img_np = img.float().numpy().transpose(1, 2, 0)
-            img_np = (img_np * 255).clip(0, 255).astype(np.uint8) \
-                     if img_np.max() <= 1.0 else img_np.astype(np.uint8)
-            ax.imshow(img_np)
-            ax.axis("off")
-            ax.set_title(
-                f"ep {ep_idx}" if n_cams == 1 else f"ep {ep_idx} · {label}",
-                fontsize=7,
+def collect(adapter, cfg, samples, datasets, buffers, cache_dir):
+    layers, groups = _options(cfg)
+    p = cfg.probe_parameters
+    cache_dir = Path(cache_dir)
+    (cache_dir / "thumbs").mkdir(parents=True, exist_ok=True)
+    (cache_dir / "meta.json").unlink(missing_ok=True)
+    texts = ("real", "neutral") if p.repr_constant_text else ("real",)
+    arrays, rows = {}, []
+    present = {g: np.zeros(len(samples) * len(texts), dtype=bool) for g in groups}
+    for i, sample in enumerate(samples):
+        if i % 25 == 0:
+            logging.info("Representations: %s/%s frames", i + 1, len(samples))
+        inputs = (_rebot_inputs(datasets[sample["source_key"]], cfg, sample, adapter.chunk_size)
+                  if sample["kind"] == "lerobot" else _diverse_inputs(buffers[sample["source_key"]], cfg, sample))
+        # A camera absent in a new capture must not inherit a previous run's preview.
+        for camera in ("external_0", "wrist_0"):
+            (cache_dir / "thumbs" / f"{i:04d}.{camera}.jpg").unlink(missing_ok=True)
+        _save_thumbs(inputs["obs"], str(cache_dir), i)
+        for text in texts:
+            real = text == "real"
+            reps = adapter.capture_layer_representations(
+                inputs["obs"], inputs["task"] if real else NEUTRAL_TASK,
+                subtask=inputs["subtask"] if real else NEUTRAL_SUBTASK,
+                metadata=inputs["metadata"], extra_complementary=inputs["extra"],
+                noise_seed=int(p.random_seed), output_dtype=torch.float32,
+                capture_native_views=p.repr_view != "block_output",
             )
-
-    if n_cams == 1:
-        for j in range(n_eps, rows * cols):
-            r, c = divmod(j, cols)
-            axes[r][c].set_visible(False)
-
-    fig.suptitle(f"Episode thumbnails ({n_eps} episodes)", fontsize=10)
-    fig.tight_layout(pad=0.3)
-    fig.savefig(os.path.join(output_dir, "episode_thumbnails.png"),
-                dpi=100, bbox_inches="tight")
-    plt.close(fig)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Plotting pipeline
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _run_site(tag, X, metadata, cfg, pca_dir, output_dir):
-    """PCA → 2D UMAP → 3D UMAP → all standard plots for one activation tensor."""
-    p = cfg.probe_parameters
-    logging.info(f"  Site '{tag}'  shape={tuple(X.shape)}")
-
-    d2 = os.path.join(output_dir, "2d", tag)
-    d3 = os.path.join(output_dir, "3d", tag)
-    makedirs(d2, d3)
-
-    X_pca, _ = run_pca(X, p.repr_pca_dims, tag, pca_dir)
-
-    logging.info("    Fitting 2D UMAP …")
-    emb2 = run_umap(X_pca, 2, p.umap_n_neighbors, p.umap_min_dist, p.umap_seed)
-    plot_2d_by_episode(emb2, metadata, os.path.join(d2, "by_episode.png"))
-    plot_2d_by_frame(emb2, metadata,   os.path.join(d2, "by_frame.png"))
-    plot_2d_by_subtask(emb2, metadata, os.path.join(d2, "by_subtask.png"))
-
-    logging.info("    Fitting 3D UMAP …")
-    emb3 = run_umap(X_pca, 3, p.umap_n_neighbors, p.umap_min_dist, p.umap_seed)
-    plot_3d_by_episode(emb3, metadata, os.path.join(d3, "by_episode.html"))
-    plot_3d_by_frame(emb3, metadata,   os.path.join(d3, "by_frame.html"))
-    plot_3d_by_subtask(emb3, metadata, os.path.join(d3, "by_subtask.html"))
-    plot_3d_two_episodes(
-        emb3, metadata, p.ep_3d_a, p.ep_3d_b,
-        os.path.join(d3, f"ep{p.ep_3d_a}_vs_ep{p.ep_3d_b}.html"),
-    )
+            if p.repr_view != "block_output":
+                reps = reps.get("native_views", {}).get(p.repr_view)
+                if reps is None:
+                    raise ValueError(f"Adapter did not capture native view {p.repr_view}")
+            r = len(rows)
+            for site, group in GROUPS:
+                if group not in groups:
+                    continue
+                vec = reps.get(site, {}).get(group)
+                if vec is None:
+                    continue
+                if max(layers) >= vec.shape[0]:
+                    raise ValueError(f"repr_layers={layers} exceeds {group}'s {vec.shape[0]} blocks")
+                values = vec[layers].detach().float().cpu().numpy()
+                if not np.isfinite(values).all():
+                    raise ValueError(f"Nonfinite representation at sample {i}/{group}")
+                if group not in arrays:
+                    arrays[group] = np.lib.format.open_memmap(
+                        cache_dir / f"{group}.npy", mode="w+", dtype=np.float32,
+                        shape=(len(samples) * len(texts), *values.shape))
+                arrays[group][r] = values
+                present[group][r] = True
+            rows.append({**sample, "row": r, "sample": i, "text": text,
+                         "task": inputs["task"], "subtask": inputs["subtask"]})
+    if not arrays:
+        raise ValueError("No requested token groups were captured")
+    for array in arrays.values():
+        array.flush()
+    for group, mask in present.items():
+        np.save(cache_dir / f"{group}.present.npy", mask)
+    meta = {"protocol": PROTOCOL, "view": p.repr_view, "layers": layers,
+            "groups": list(arrays), "requested_groups": groups, "rows": rows, "noise_seed": p.random_seed,
+            "checkpoint": str(getattr(cfg.policy, "pretrained_path", "")), "flow_time": 0}
+    (cache_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
 
-def _write_manifest(output_dir: str, sites: list[str], metadata: list[dict]) -> dict:
-    """Describe the embedding plots to the manifest-driven viewer.
+def load_cache(cache_dir):
+    root = Path(cache_dir)
+    if not (root / "meta.json").exists():
+        raise ValueError("No temporal representation cache. Collect again; old whole-sequence caches are incompatible.")
+    meta = json.loads((root / "meta.json").read_text())
+    if meta.get("protocol") != PROTOCOL:
+        raise ValueError("Incompatible representation cache protocol; collect again")
+    arrays, present = {}, {}
+    for group in meta["groups"]:
+        arrays[group] = np.load(root / f"{group}.npy", mmap_mode="r")
+        present[group] = np.load(root / f"{group}.present.npy")
+        if arrays[group].shape[:2] != (len(meta["rows"]), len(meta["layers"])) or present[group].shape != (len(meta["rows"]),):
+            raise ValueError(f"Incomplete cache for {group}; collect again")
+    return meta, arrays, present
 
-    Deliberately declares no metric. Nothing here produces a number that could come
-    out bad — see the module docstring on why the probe is off by default.
-    """
-    panels = [
-        Panel(
-            "episode_thumbnails.png",
-            "First frame of every sampled episode",
-            how="What the scenes actually were. Read the embedding plots against this, or a cluster is just a colour.",
-        )
-    ]
-    for site in sites:
-        panels += [
-            Panel(
-                f"2d/{site}/by_subtask.png",
-                f"{site} — 2-D UMAP coloured by subtask",
-                how="Separation here is weak evidence: the subtask string sits in the prompt, so the encoder can separate these without having learned anything about the scene.",
-                primary=site == sites[0],
-            ),
-            Panel(
-                f"2d/{site}/by_episode.png",
-                f"{site} — 2-D UMAP coloured by episode (dark early, light late)",
-                how="Episodes tracing separate ribbons means the pooled state carries episode identity; a single shared ribbon with the time gradient aligned means it carries task phase.",
-            ),
-            Panel(f"2d/{site}/by_frame.png", f"{site} — 2-D UMAP coloured by frame index"),
-            Panel(f"pca_variance/{site}_pca_scree.png", f"{site} — PCA scree and cumulative variance"),
-            Panel(f"3d/{site}/by_subtask.html", f"{site} — interactive 3-D by subtask"),
-            Panel(f"3d/{site}/by_episode.html", f"{site} — interactive 3-D by episode"),
-            Panel(f"3d/{site}/by_frame.html", f"{site} — interactive 3-D by frame index"),
-        ]
-    return write_index(
-        output_dir,
-        sys.modules[__name__],
-        title="Representations",
-        group="Representation",
-        claim="How do the pooled per-layer hidden states arrange themselves by episode, phase, and subtask?",
-        summary={"n_frames": len(metadata), "n_sites": len(sites), "sites": sites},
-        metrics=[
-            Metric("n_frames", "Frames embedded", good="none", fmt=0),
-            Metric("n_sites", "Sites captured", good="none", fmt=0),
-        ],
-        panels=panels,
-        status="info",
-        see_also=["subtask_sweep", "attention_budget"],
-    )
-
-
-def run_plotting(cache, cfg, output_dir):
-    metadata = cache["metadata"]
-    pca_dir = os.path.join(output_dir, "pca_variance")
-    makedirs(pca_dir)
-
-    # Iterate every site the adapter produced. Order is whatever the adapter
-    # returned (Python dict insertion order).
-    sites = [site for site in cache if site != "metadata"]
-    for site in sites:
-        _run_site(site, cache[site], metadata, cfg, pca_dir, output_dir)
-    _write_manifest(output_dir, sites, metadata)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Per-dataset pipeline
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
-    """Run sample → collect → plot for one dataset."""
-    p = cfg.probe_parameters
-    makedirs(ds_dir)
-    cache_path = os.path.join(ds_dir, "activations_cache.pt")
-    cache = None
-
-    if p.mode in ("collect", "all"):
-        if adapter is None or dataset is None:
-            raise ValueError("collect mode requires both adapter and dataset.")
-        logging.info("  Building sample list …")
-        samples = sample_episodes_evenly(
-            dataset,
-            n_per_episode=p.n_frames_per_episode,
-            max_episodes=p.max_episodes,
-            seed=p.random_seed,
-            stride=probe_image_stride(cfg),
-        )
-        ep_to_indices = build_episode_index(dataset)
-        sampled_eps = {ep for ep, _, _ in samples}
-        _save_episode_thumbnails(
-            dataset,
-            {ep: ep_to_indices[ep] for ep in sampled_eps if ep in ep_to_indices},
-            ds_dir,
-        )
-
-        logging.info(f"  Collecting activations for {len(samples)} frames …")
-        cache = collect_activations(adapter, dataset, samples, cfg)
-        torch.save(cache, cache_path)
-        logging.debug(f"  Activations saved → {cache_path}")
-
-    if p.mode in ("plot", "all"):
-        if cache is None:
-            logging.info(f"  Loading cache from {cache_path} …")
-            cache = torch.load(cache_path, map_location="cpu", weights_only=False)
-        logging.info("  Running PCA + UMAP …")
-        run_plotting(cache, cfg, ds_dir)
-        logging.info(f"  Done. Plots in {ds_dir}/")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ──────────────────────────────────────────────────────────────────────────────
 
 def run(adapter, primary_dataset, cfg, output_dir):
-    """Run the representations probe on primary + additional datasets.
-
-    ``adapter`` and ``primary_dataset`` may be ``None`` only if
-    ``cfg.probe_parameters.mode == "plot"`` (re-plot from cache).
-    """
     p = cfg.probe_parameters
-    makedirs(output_dir)
+    layers, groups = _options(cfg)
+    if p.mode not in ("collect", "plot", "all"):
+        raise ValueError(f"Unknown probe mode {p.mode}")
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    if p.mode in ("collect", "all"):
+        if adapter is None:
+            raise ValueError("Representation collection requires a policy adapter")
+        samples, datasets, buffers = sampling_plan(primary_dataset, cfg)
+        plan = {"protocol": PROTOCOL, "samples": samples,
+                "episodes": len({r['episode'] for r in samples}), "frames": len(samples)}
+        (root / "sampling_plan.json").write_text(json.dumps(plan, indent=2))
+        collect(adapter, cfg, samples, datasets, buffers, root / "cache")
+    if p.mode == "collect":
+        return None
+    from lerobot.probes.representation_report import write_report
+    from lerobot.probes.representation_trajectories import analyze
 
-    _probe_one_dataset(adapter, primary_dataset, output_dir, cfg)
-
-    for extra_root in getattr(cfg.dataset, "additional_offline_dataset_paths", None) or []:
-        ds_name = os.path.basename(os.path.normpath(extra_root))
-        logging.info(f"=== Dataset: {ds_name} ===")
-        extra_ds = None
-        if p.mode in ("collect", "all"):
-            extra_ds = load_extra_dataset(cfg.dataset.repo_id, extra_root)
-        _probe_one_dataset(adapter, extra_ds,
-                           os.path.join(output_dir, ds_name), cfg)
-
-    logging.info("All datasets done.")
+    meta, arrays, present = load_cache(root / "cache")
+    if (p.repr_view != meta["view"] or set(layers) - set(meta["layers"])
+            or set(groups) - set(meta["requested_groups"])):
+        raise ValueError("Requested view/layers/groups differ from cache; collect again or select cached values")
+    if p.repr_constant_text and not any(r["text"] == "neutral" for r in meta["rows"]):
+        raise ValueError("Cache has no constant-text control; collect again or set repr_constant_text=false")
+    payload, summary = analyze(meta, arrays, present, layers, groups, p.repr_local_window_s, root,
+                               constant_text=p.repr_constant_text)
+    write_report(payload, root)
+    write_index(str(root), sys.modules[__name__], title="Representation trajectories", group="Representation",
+                claim="Where do episode trajectories approach other tasks in the original representation space?",
+                summary=summary, status="info",
+                metrics=[Metric("frames", "Frames", fmt=0), Metric("episodes", "Episodes", fmt=0),
+                         Metric("robots", "Robots", fmt=0)],
+                panels=[Panel("trajectories.html", "3-D PCA, temporal similarity and cross-episode matches",
+                              how="Click a point or timeline to inspect both cameras and nearest frames. PCA crossings alone do not establish confusion.", primary=True),
+                        Panel("temporal.csv", "Original-space local cosine, raw norms and sampling gaps"),
+                        Panel("matches.csv", "Cross-episode matches and neighborhood support"),
+                        Panel("sampling_plan.json", "Exact sampled episodes and frames")],
+                see_also=["conditions_matrix", "subspace_spans", "action_trace"])
+    return summary
 
 
 @parser.wrap()
 def probe_cli(cfg: ProbeRepresentationsConfig):
     init_logging()
-    p = cfg.probe_parameters
-    device = get_safe_torch_device(try_device=cfg.policy.device)
-    output_dir = os.path.join(p.output_dir, "representations")
+    adapter = dataset = None
+    if cfg.probe_parameters.mode in ("collect", "all"):
+        dataset = load_probe_dataset(cfg)
+        device = get_safe_torch_device(try_device=cfg.policy.device)
+        adapter = ProbablePolicy.for_config(cfg, device, dataset=dataset)
+    step = next((int(part) for part in reversed(Path(str(cfg.policy.pretrained_path or "")).parts) if part.isdigit()), 0)
+    run(adapter, dataset, cfg, Path(cfg.probe_parameters.output_dir) / "validation" / f"step_{step:08d}" / "representations")
 
-    adapter = primary_dataset = None
-    if p.mode in ("collect", "all"):
-        primary_dataset = load_probe_dataset(cfg)
-        logging.info("Loading policy adapter …")
-        adapter = ProbablePolicy.for_config(cfg, device, dataset=primary_dataset)
 
-    run(adapter, primary_dataset, cfg, output_dir)
+def main():
+    register_config_choices()
+    from lerobot.scripts.rl_offline import _extract_config_path_args, _preprocess_config_yaml
+
+    config_path, remaining = _extract_config_path_args(sys.argv[1:])
+    if config_path:
+        sys.argv = [sys.argv[0], *remaining, f"--config_path={_preprocess_config_yaml(config_path)}"]
+    probe_cli()
 
 
 if __name__ == "__main__":
-    register_config_choices()
-    probe_cli()
+    main()

@@ -353,7 +353,7 @@ probe_parameters:
   embodiment_swap_max_frames: 96
   enable_objective: true
   enable_actions: false
-  enable_representations: false
+  enable_representations: true
   enable_attention: false
   enable_spatial_memorization: false
   enable_action_drift_jacobian: false
@@ -405,7 +405,15 @@ probe_parameters:
   ref_n_frames_per_episode: 256
   action_pca_dims: 50
   action_nn_state_k: 256
-  repr_pca_dims: 48
+  # Temporal representation probe: PCA only, 3D; native attention input.
+  repr_view: attention_input
+  repr_layers: 14,28,32
+  repr_groups: action,img_external_0,img_wrist_0,state
+  repr_constant_text: true
+  # Denser than the common 32-frame budget to support local temporal comparisons.
+  repr_n_frames_per_episode: 128
+  repr_max_frames: 1200
+  repr_local_window_s: 2.0
   umap_n_neighbors: 15
   spatial_layers: 0,14,28
   attn_eval_subsample: 3

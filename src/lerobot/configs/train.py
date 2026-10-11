@@ -311,7 +311,7 @@ class ProbeConfig:
 
     # Enable / disable individual probes
     enable_actions: bool = True
-    enable_representations: bool = True
+    enable_representations: bool = False  # temporal native capture; opt in for supported adapters
     enable_attention: bool = True
     enable_spatial_memorization: bool = True
     enable_action_drift_jacobian: bool = False  # subtask-conditioned action-output/token Jacobians
@@ -376,7 +376,17 @@ class ProbeConfig:
     # several runs at one path to hold the coordinate system fixed across checkpoints; a
     # refit is logged loudly because it invalidates comparison with earlier runs.
     action_manifold_cache: str | None = None
-    repr_pca_dims: int = 100
+    repr_pca_dims: int = 100  # legacy; temporal representations always project to 3-D
+    # Temporal representations: selected native token groups at the first flow step.
+    # Common max_episodes is per robot. Keep enough frames for local time windows;
+    # the total cap thins whole episodes evenly, never truncates their endings.
+    repr_view: str = "attention_input"
+    repr_layers: str = "14,28,32"
+    repr_groups: str = "action,img_external_0,img_wrist_0,state"
+    repr_constant_text: bool = True
+    repr_n_frames_per_episode: int | None = None  # inherits n_frames_per_episode
+    repr_max_frames: int = 1200  # physical frames; constant-text control doubles forwards
+    repr_local_window_s: float = 2.0  # radius in seconds, self excluded
     # Domain representations. Frames per ReBot episode (None inherits n_frames_per_episode);
     # the diverse side draws the same total, split evenly over its sources. k is the
     # cosine neighbourhood of the purity readout.
