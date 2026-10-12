@@ -412,8 +412,11 @@ probe_parameters:
   repr_constant_text: true
   # Denser than the common 32-frame budget to support local temporal comparisons.
   repr_n_frames_per_episode: 128
-  repr_max_frames: 1200
+  # 1600 frames shared by at most 1600 // 40 = 40 episodes: >= 40 x 40 within-episode matrices.
+  repr_max_frames: 1600
+  repr_min_frames_per_episode: 40
   repr_local_window_s: 2.0
+  repr_cross_matrices: true
   umap_n_neighbors: 15
   spatial_layers: 0,14,28
   attn_eval_subsample: 3

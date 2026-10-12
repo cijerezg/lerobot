@@ -385,8 +385,14 @@ class ProbeConfig:
     repr_groups: str = "action,img_external_0,img_wrist_0,state"
     repr_constant_text: bool = True
     repr_n_frames_per_episode: int | None = None  # inherits n_frames_per_episode
-    repr_max_frames: int = 1200  # physical frames; constant-text control doubles forwards
+    repr_max_frames: int = 1600  # physical frames; constant-text control doubles forwards
+    # Episodes share repr_max_frames; this caps their number so each keeps a dense
+    # within-episode matrix (max_frames // min_frames episodes at most).
+    repr_min_frames_per_episode: int = 40
     repr_local_window_s: float = 2.0  # radius in seconds, self excluded
+    # Store every frame against every frame (uint16, per panel) for the report's anchored
+    # cross-episode grid; a few MB per panel at 1600 frames.
+    repr_cross_matrices: bool = True
     # Domain representations. Frames per ReBot episode (None inherits n_frames_per_episode);
     # the diverse side draws the same total, split evenly over its sources. k is the
     # cosine neighbourhood of the purity readout.

@@ -17,8 +17,11 @@ MATCH_KINDS = (
 GEOMETRIES = ("raw", "robot_centered", "episode_centered")
 # Lag bins in seconds for the "how local is local" curve; the last bin is open-ended.
 LAG_EDGES_S = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
+BACKGROUND_KEYS = ("background_same_robot", "background_other_robot",
+                   "background_distance_same_robot", "background_distance_other_robot",
+                   "background_lognorm_same_robot", "background_lognorm_other_robot")
 TEMPORAL_KEYS = ("local_cosine", "local_count", "previous_cosine", "previous_dt_s", "step_l2",
-                 "raw_norm", "geometry_norm", "background_same_robot", "background_other_robot")
+                 "raw_norm", "geometry_norm", *BACKGROUND_KEYS)
 MATCH_KEYS = ("target", "cosine", "raw_norm_delta", "raw_norm_ratio", "distance",
               "target_window_cosine", "target_window_count", "candidate_count", "candidate_episodes")
 
@@ -126,21 +129,45 @@ def temporal_metrics(x, rows, window_s, raw_norms=None):
     return result
 
 
-def episode_cosine_matrices(x, rows):
-    """Full within-episode cosine matrices in time order; invalid rows/columns are NaN.
+def full_cosine(x):
+    """Every frame against every frame in the original dimensions; invalid rows are NaN."""
+    z, _, valid = unit_vectors(x)
+    c = np.clip(z @ z.T, -1, 1)
+    c[~valid, :] = np.nan
+    c[:, ~valid] = np.nan
+    return c
+
+
+def episode_cosine_matrices(x, rows, full=None):
+    """Within-episode cosine matrices in time order; invalid rows/columns are NaN.
 
     Every local or lagged statistic is a function of this matrix and the frame times,
     so the report derives them interactively instead of fixing one window here.
     """
-    z, _, valid = unit_vectors(x)
+    full = full_cosine(x) if full is None else full
     order, times = episode_order(rows)
-    out = {}
-    for episode, ids in order.items():
-        c = np.clip(z[ids] @ z[ids].T, -1, 1)
-        c[~valid[ids], :] = np.nan
-        c[:, ~valid[ids]] = np.nan
-        out[episode] = {"ids": ids, "times": times[ids], "cosine": c}
-    return out
+    return {episode: {"ids": ids, "times": times[ids], "cosine": full[np.ix_(ids, ids)]}
+            for episode, ids in order.items()}
+
+
+def pack_cosine(matrix):
+    """Base64 little-endian uint16: 0 is missing, 1..65535 spans cosine -1..1 (3e-5 steps).
+
+    The report decodes this for the anchored cross-episode grid; it is the only
+    cross-episode object stored whole, so it is quantized rather than written as text.
+    """
+    import base64
+
+    m = np.asarray(matrix, dtype=np.float64)
+    q = np.where(np.isfinite(m), np.round((np.clip(m, -1, 1) + 1) / 2 * 65534) + 1, 0)
+    return base64.b64encode(q.astype("<u2").tobytes()).decode()
+
+
+def unpack_cosine(text, n):
+    import base64
+
+    q = np.frombuffer(base64.b64decode(text), dtype="<u2").reshape(n, n).astype(np.float64)
+    return np.where(q > 0, (q - 1) / 65534 * 2 - 1, np.nan)
 
 
 def lag_profile(matrix, times, edges=LAG_EDGES_S):
@@ -170,9 +197,10 @@ def cross_episode_matches(x, rows, window_s, raw_norms=None, block_size=128):
     Invalid/zero vectors are ineligible. Neighborhood support compares the anchor
     with frames in the *matched* episode, near the matched time and with its task.
     Candidate counts and absent matches are retained rather than inventing zeros.
-    Also returns the per-frame *background*: mean cosine to every valid frame of
-    other episodes, split by same/other robot, the level a "local" cosine must
-    clear before it says anything about the episode rather than the robot.
+    Also returns the per-frame *background*: mean cosine, mean L2 distance and mean
+    log2 norm ratio (other / this, geometry norms) to every valid frame of other
+    episodes, split by same/other robot: the level a "local" value must clear before
+    it says anything about the episode rather than the robot.
     """
     z, norms, valid = unit_vectors(x)
     raw_norms = norms if raw_norms is None else raw_norms
@@ -181,7 +209,7 @@ def cross_episode_matches(x, rows, window_s, raw_norms=None, block_size=128):
     task = np.array([r["task"] for r in rows])
     times = np.array([r["time_s"] for r in rows])
     result = [{kind: None for kind in MATCH_KINDS} for _ in rows]
-    background = [{"background_same_robot": None, "background_other_robot": None} for _ in rows]
+    background = [dict.fromkeys(BACKGROUND_KEYS) for _ in rows]
     for start in range(0, len(rows), block_size):
         sims = np.clip(z[start:start + block_size] @ z.T, -1, 1)
         for offset, similarities in enumerate(sims):
@@ -190,10 +218,12 @@ def cross_episode_matches(x, rows, window_s, raw_norms=None, block_size=128):
                 continue
             foreign = (ep != ep[i]) & valid
             same_robot, same_task = robot == robot[i], task == task[i]
-            for key, pool in (("background_same_robot", foreign & same_robot),
-                              ("background_other_robot", foreign & ~same_robot)):
+            for side, pool in (("same_robot", foreign & same_robot), ("other_robot", foreign & ~same_robot)):
                 if pool.any():
-                    background[i][key] = float(similarities[pool].mean())
+                    n_i, n_j, c = norms[i], norms[pool], similarities[pool]
+                    background[i][f"background_{side}"] = float(c.mean())
+                    background[i][f"background_distance_{side}"] = float(np.sqrt(np.maximum(n_i**2 + n_j**2 - 2 * n_i * n_j * c, 0)).mean())
+                    background[i][f"background_lognorm_{side}"] = float(np.log2(n_j / n_i).mean())
             masks = (same_robot & same_task, same_robot & ~same_task,
                      ~same_robot & same_task, ~same_robot & ~same_task)
             for kind, mask in zip(MATCH_KINDS, masks, strict=True):
@@ -236,7 +266,7 @@ def _columns(records, keys):
     return {key: [record.get(key) for record in records] for key in keys}
 
 
-def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constant_text=True):
+def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constant_text=True, cross_matrices=True):
     root = Path(output_dir)
     (root / "pca").mkdir(parents=True, exist_ok=True)
     all_rows = meta["rows"]
@@ -267,7 +297,8 @@ def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constan
                         coords, pca = project_pca(values, rows)
                         temporal = temporal_metrics(values, rows, window_s, raw_norms)
                         matches, background = cross_episode_matches(values, rows, window_s, raw_norms)
-                        matrices = episode_cosine_matrices(values, rows)
+                        full = full_cosine(values)
+                        matrices = episode_cosine_matrices(values, rows, full)
                         key = f"{group}.L{layer}.{text}.{geometry}"
                         np.savez(root / "pca" / f"{key}.npz", mean=pca["mean"], components=pca["components"],
                                  variance=pca["variance"], fit_rows=ids[pca["fit_rows"]],
@@ -302,7 +333,8 @@ def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constan
                                        "centering": centering, "temporal": _columns(temporal, TEMPORAL_KEYS),
                                        "matches": {kind: _columns([m[kind] or {} for m in matches], MATCH_KEYS)
                                                    for kind in MATCH_KINDS},
-                                       "episodes": episodes})
+                                       "episodes": episodes,
+                                       "cross": pack_cosine(full) if cross_matrices else None})
     if not panels:
         raise ValueError("No selected group/text has enough captured frames to analyze")
     _write_csv(root / "temporal.csv", temporal_csv)
@@ -312,6 +344,7 @@ def analyze(meta, arrays, present, layers, groups, window_s, output_dir, constan
     summary = {"frames": len(real_rows), "episodes": len({r["episode"] for r in real_rows}),
                "robots": len({r["robot"] for r in real_rows}), "view": meta["view"], "panels": len(panels),
                "local_window_s": window_s, "lag_edges_s": list(LAG_EDGES_S), "geometries": list(GEOMETRIES),
+               "cross_matrices": bool(cross_matrices),
                "missing_groups": sorted(set(groups) - set(arrays))}
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
     return {"rows": all_rows, "panels": panels, "window_s": window_s, "lag_edges_s": list(LAG_EDGES_S),

@@ -89,6 +89,8 @@ def _options(cfg):
         raise ValueError(f"Unknown repr_view {p.repr_view!r}")
     if not np.isfinite(p.repr_local_window_s) or p.repr_local_window_s <= 0 or p.repr_max_frames < 2:
         raise ValueError("repr_local_window_s must be positive; repr_max_frames must be >= 2")
+    if p.repr_min_frames_per_episode < 2 or p.repr_min_frames_per_episode > p.repr_max_frames:
+        raise ValueError("repr_min_frames_per_episode must be >= 2 and <= repr_max_frames")
     return layers, groups
 
 
@@ -152,11 +154,14 @@ def _diverse_candidates(buffer, key, holdout, frames_per_episode):
     return candidates
 
 
-def select_sequences(candidates, max_episodes, frames_per_episode, max_frames, seed):
+def select_sequences(candidates, max_episodes, frames_per_episode, max_frames, seed, min_frames_per_episode=2):
     """Balance robot/task/split, then thin whole trajectories including both ends.
 
     max_episodes is per robot. Source episode identity excludes duplicate copies and
     train/holdout overlap. A hard budget never truncates just an episode's tail.
+    min_frames_per_episode caps how many episodes share the frame budget, so that a
+    dense within-episode matrix is not traded away for more episodes: episodes are
+    taken from the balanced round-robin until ``max_frames // min_frames_per_episode``.
     """
     if frames_per_episode < 2 or max_frames < 2 or (max_episodes is not None and max_episodes < 1):
         raise ValueError("Need >= 2 frames per episode and positive episode/frame budgets")
@@ -184,10 +189,10 @@ def select_sequences(candidates, max_episodes, frames_per_episode, max_frames, s
                 if i < len(cells[key]):
                     queue.append(cells[key][i])
         queues[robot] = queue if max_episodes is None else queue[:max_episodes]
-    chosen = []
+    chosen, episode_cap = [], max_frames // max(2, min_frames_per_episode)
     for i in range(max((len(q) for q in queues.values()), default=0)):
         for queue in queues.values():
-            if i < len(queue) and len(chosen) < max_frames // 2:
+            if i < len(queue) and len(chosen) < episode_cap:
                 chosen.append(queue[i])
     if not chosen:
         raise ValueError("No episodes with at least two available frames")
@@ -231,7 +236,8 @@ def sampling_plan(dataset, cfg):
         buffers = _open_diverse_buffers(cfg)
         for key, buffer in buffers.items():
             candidates += _diverse_candidates(buffer, key, key.endswith("holdout"), n_frames)
-    samples = select_sequences(candidates, p.max_episodes, n_frames, p.repr_max_frames, p.random_seed)
+    samples = select_sequences(candidates, p.max_episodes, n_frames, p.repr_max_frames, p.random_seed,
+                               p.repr_min_frames_per_episode)
     return samples, datasets, buffers
 
 
@@ -342,7 +348,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
     if p.repr_constant_text and not any(r["text"] == "neutral" for r in meta["rows"]):
         raise ValueError("Cache has no constant-text control; collect again or set repr_constant_text=false")
     payload, summary = analyze(meta, arrays, present, layers, groups, p.repr_local_window_s, root,
-                               constant_text=p.repr_constant_text)
+                               constant_text=p.repr_constant_text, cross_matrices=p.repr_cross_matrices)
     write_report(payload, root)
     write_index(str(root), sys.modules[__name__], title="Representation trajectories", group="Representation",
                 claim="Where do episode trajectories approach other tasks in the original representation space?",
@@ -350,7 +356,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
                 metrics=[Metric("frames", "Frames", fmt=0), Metric("episodes", "Episodes", fmt=0),
                          Metric("robots", "Robots", fmt=0)],
                 panels=[Panel("trajectories.html", "Frame slider over an episode: cameras, within-episode cosine matrix, frame profile against background, shared 3-D PCA and cross-episode matches",
-                              how="Pick a geometry (robot- or episode-centered removes the shared direction that makes raw cosines ~1), then slide through the episode. Read the profile against the background and best-match lines. PCA crossings alone do not establish confusion.", primary=True),
+                              how="Pick a geometry (robot- or episode-centered removes the shared direction that makes raw cosines ~1), then slide through the episode. Read the profile against the background and best-match lines; the aligned cross-episode grid shows whether a match persists around its anchor. PCA crossings alone do not establish confusion.", primary=True),
                         Panel("temporal.csv", "Original-space local cosine, background cosine, raw norms and sampling gaps"),
                         Panel("matches.csv", "Cross-episode matches and neighborhood support"),
                         Panel("lags.csv", "Mean within-episode cosine by time gap between frames, per episode"),

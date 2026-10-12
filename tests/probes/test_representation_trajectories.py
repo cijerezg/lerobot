@@ -11,7 +11,7 @@ from lerobot.configs.train import ProbeConfig
 from lerobot.probes import representations as rep
 from lerobot.probes.representation_trajectories import (
     LAG_EDGES_S, compact, cross_episode_matches, episode_center, episode_cosine_matrices,
-    lag_profile, project_pca, robot_center, temporal_metrics,
+    full_cosine, lag_profile, pack_cosine, project_pca, robot_center, temporal_metrics, unpack_cosine,
 )
 
 
@@ -55,7 +55,9 @@ def test_matches_exclude_source_episode_and_split_robot_task_in_original_space()
     # Background is the mean over every valid frame of other episodes, not just the best.
     assert background[0]['background_same_robot'] == pytest.approx((1 + 1 / np.sqrt(101)) / 2)
     assert background[0]['background_other_robot'] == pytest.approx(-0.5)
-    assert background[6] == {'background_same_robot': None, 'background_other_robot': None}
+    assert background[0]['background_distance_other_robot'] == pytest.approx((np.sqrt(2) + 2) / 2)
+    assert background[0]['background_lognorm_same_robot'] == pytest.approx((1 + np.log2(np.sqrt(101))) / 2)
+    assert all(v is None for v in background[6].values()) and len(background[6]) == 6
     assert (matches, background) == cross_episode_matches(x, rows, 1, block_size=128)
 
 
@@ -115,6 +117,14 @@ def test_episode_centering_matrices_and_lag_profile_follow_time_not_input_order(
     assert profile[0]['mean_cosine'] == .5 and profile[1]['mean_cosine'] == 0 and profile[2]['mean_cosine'] is None
     assert lag_profile(a['cosine'], a['times'])[-1]['lag_lo_s'] == LAG_EDGES_S[-1]
     assert compact(np.array([[1.23456, np.nan], [np.inf, -0.00004]])) == [[1.2346, None], [None, -0.0]]
+    full = full_cosine(x)
+    np.testing.assert_allclose(full[np.ix_(a['ids'], a['ids'])], a['cosine'])
+    assert episode_cosine_matrices(x, rows, full)['a']['cosine'] is not None
+    back = unpack_cosine(pack_cosine(full), len(x))
+    np.testing.assert_allclose(back[:4, :4][~np.isnan(full[:4, :4])], full[:4, :4][~np.isnan(full[:4, :4])], atol=4e-5)
+    assert np.isnan(back[4]).all() and np.isnan(back[:, 4]).all()
+    np.testing.assert_allclose(unpack_cosine(pack_cosine([[-1.]]), 1), [[-1.]])
+    np.testing.assert_allclose(unpack_cosine(pack_cosine([[1.]]), 1), [[1.]])
 
 
 def test_sampling_balances_tasks_robots_and_preserves_episode_ends():
@@ -132,6 +142,9 @@ def test_sampling_balances_tasks_robots_and_preserves_episode_ends():
     for episode in {r['episode'] for r in selected}:
         times = [r['time_s'] for r in selected if r['episode'] == episode]
         assert times == sorted(set(times)) and times[0] == 0 and times[-1] == 9
+    # A minimum per episode caps how many episodes share the budget instead of thinning them.
+    dense = rep.select_sequences(candidates, 2, 8, 20, 42, min_frames_per_episode=10)
+    assert len({r['episode'] for r in dense}) == 2 and len(dense) == 16
     with pytest.raises(ValueError, match='multiple sources'):
         rep.select_sequences(candidates + candidates[:1], 2, 8, 20, 42)
     with pytest.raises(ValueError, match='>= 2'):
@@ -182,12 +195,18 @@ def test_model_free_replot_writes_linked_report_metrics_basis_and_manifest(tmp_p
     assert '<script id="data"' in html
     assert 'umap' not in html.lower()
     # The page stays light: per-panel data and previews are loaded from disk on demand.
-    assert 'data:image/jpeg' not in html and '"cosine"' not in html
+    assert 'data:image/jpeg' not in html and '"cosine":[' not in html
     light = json.loads(html.split('<script id="data" type="application/json">')[1].split('</script>')[0])
     assert len(light['panels']) == 24 and light['panels'][0]['file'].startswith('panels/')
     assert light['thumb_dir'] == 'cache/thumbs' and light['lag_edges_s'] == list(LAG_EDGES_S)
     sidecars = sorted((tmp_path / 'panels').glob('*.js'))
-    assert len(sidecars) == 24
+    assert len(sidecars) == 48 and len(list((tmp_path / 'panels').glob('*.cross.js'))) == 24
+    assert light['panels'][0]['cross_file'].endswith('.cross.js')
+    cross_text = (tmp_path / 'panels' / 'action.L0.real.raw.cross.js').read_text()
+    packed = json.loads(cross_text[cross_text.index(',') + 1:-2])
+    full = unpack_cosine(packed, 4)
+    np.testing.assert_allclose(np.diag(full), 1, atol=4e-5)
+    assert '"cross"' not in (tmp_path / 'panels' / 'action.L0.real.raw.js').read_text()
     text = (tmp_path / 'panels' / 'action.L0.real.episode_centered.js').read_text()
     assert text.startswith('window.__trajectoryPanel("action.L0.real.episode_centered",')
     data = json.loads(text[text.index(',') + 1:-2])
@@ -204,6 +223,10 @@ def test_model_free_replot_writes_linked_report_metrics_basis_and_manifest(tmp_p
     index = json.loads((tmp_path / 'index.json').read_text())
     assert index['panels'][0]['file'] == 'trajectories.html'
     assert any(p['file'] == 'lags.csv' for p in index['panels'])
+    cfg.probe_parameters.repr_cross_matrices = False
+    rep.run(None, None, cfg, tmp_path)
+    assert not list((tmp_path / 'panels').glob('*.cross.js'))
+    assert json.loads((tmp_path / 'summary.json').read_text())['cross_matrices'] is False
     cfg.probe_parameters.repr_view = 'block_output'
     with pytest.raises(ValueError, match='differ from cache'):
         rep.run(None, None, cfg, tmp_path)
