@@ -67,20 +67,20 @@ _HTML = r'''<!doctype html>
 <title>Representation trajectories</title>
 <style>
 *{box-sizing:border-box}body{margin:0;padding:20px;background:#f6f7f9;color:#202631;font:14px system-ui,sans-serif}
-h1{font-size:23px;margin:0 0 8px}h2{font-size:17px;margin:14px 0 8px}p{line-height:1.5;margin:8px 0}.muted{color:#5e6878}.caption{font-size:12px;color:#5e6878;line-height:1.45;margin:6px 0 0}
+h1{font-size:23px;margin:0 0 8px}h2{font-size:17px;margin:14px 0 8px}h3{font-size:14px;margin:12px 0 6px}p{line-height:1.5;margin:8px 0}.muted{color:#5e6878}.caption{font-size:12px;color:#5e6878;line-height:1.45;margin:6px 0 0}
 .controls{display:flex;flex-wrap:wrap;gap:12px;background:white;padding:12px;border-radius:8px;margin:14px 0}
-label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#505b6e}select,button{font:inherit;border:1px solid #b8c0ce;border-radius:4px;padding:7px;background:white;color:#202631;max-width:420px}
-button{cursor:pointer}button:hover{background:#e9f1ff}button.small{padding:3px 7px;font-size:12px}.grid{display:grid;grid-template-columns:minmax(400px,1fr) minmax(400px,1fr);gap:14px;margin-top:14px}.box{background:white;border:1px solid #e0e4eb;border-radius:8px;padding:12px;min-width:0}
-#matrix,#profile{height:520px}#timeline{height:420px}#cross{height:620px}#crossLines{height:330px}.cards{display:flex;flex-wrap:wrap;gap:10px}.card{border:1px solid #d8dfeb;border-radius:6px;padding:10px;flex:1;min-width:270px;max-width:580px}.cameras{display:flex;gap:4px;margin:7px 0}.cameras img{width:49%;object-fit:contain;max-height:190px;background:#edf0f5}.cameras span{display:block;font-size:11px}.details{font-size:12px;overflow-wrap:anywhere}.tag{font-size:11px;background:#edf0f5;border-radius:3px;padding:2px 5px}
-table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:6px 8px;border-bottom:1px solid #e1e6ee;text-align:left;vertical-align:top}tr.kind td{background:#f3f5f8;font-weight:600}tr.aligned td{background:#fff3e8}.scroll{overflow:auto}.note{padding:9px 12px;background:#edf2f8;border-radius:5px}#status,#episodeStats,#crossInfo{white-space:pre-wrap}
-.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0}.row input[type=range]{flex:1;min-width:160px}.row label.inline{flex-direction:row;align-items:center;gap:8px;flex:1}
-.crossgrid{display:grid;grid-template-columns:minmax(400px,3fr) minmax(300px,2fr);gap:14px}
+label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#505b6e}select,button{font:inherit;border:1px solid #b8c0ce;border-radius:4px;padding:7px;background:white;color:#202631;max-width:560px}
+button{cursor:pointer}button:hover{background:#e9f1ff}button.small{padding:3px 7px;font-size:12px}button.on{background:#e37525;border-color:#e37525;color:white}.grid{display:grid;grid-template-columns:minmax(400px,1fr) minmax(400px,1fr);gap:14px;margin-top:14px}.box{background:white;border:1px solid #e0e4eb;border-radius:8px;padding:12px;min-width:0;margin-top:14px}
+#matrix,#profile{height:520px}#timeline{height:420px}#cross{height:600px}#crossLines{height:320px}.cards{display:flex;flex-wrap:wrap;gap:10px}.card{border:1px solid #d8dfeb;border-radius:6px;padding:10px;flex:1;min-width:270px;max-width:580px}.card.anchor{border-color:#202631}.card.counterpart{border-color:#e37525}.cameras{display:flex;gap:4px;margin:7px 0}.cameras img{width:49%;object-fit:contain;max-height:190px;background:#edf0f5}.cameras span{display:block;font-size:11px}.details{font-size:12px;overflow-wrap:anywhere}.tag{font-size:11px;background:#edf0f5;border-radius:3px;padding:2px 5px}
+table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:6px 8px;border-bottom:1px solid #e1e6ee;text-align:left;vertical-align:top}th{color:#505b6e;font-weight:600}tr.kind td{background:#f3f5f8;font-weight:600;padding-top:9px}tr.pick{cursor:pointer}tr.pick:hover td{background:#edf5ff}tr.pick.aligned td{background:#fff0e3;box-shadow:inset 3px 0 0 #e37525}.scroll{overflow:auto}.note{padding:9px 12px;background:#edf2f8;border-radius:5px}#status,#episodeStats,#crossInfo{white-space:pre-wrap}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0}.row input[type=range]{flex:1;min-width:160px}.row label.inline{flex-direction:row;align-items:center;gap:8px;flex:1}.row.toolbar{gap:14px}
+.crossgrid{display:grid;grid-template-columns:minmax(400px,3fr) minmax(300px,2fr);gap:14px;margin-top:10px}
 @media(max-width:950px){.grid,.crossgrid{grid-template-columns:1fr}body{padding:10px}#matrix,#profile{height:420px}}
 </style>
 <script>__PLOTLY__</script>
 <h1>Representation trajectories</h1>
-<p class="muted">Follow an episode frame by frame. Every pairwise view compares two frames' pooled vectors in the original dimensions of the chosen geometry, under the chosen measure: cosine (direction only), L2 distance (direction and magnitude), or log2 norm ratio (magnitude only). Next to each value sits the level it reaches against <em>other</em> episodes, so a high similarity can be read as trivial or not.</p>
-<p class="note">Raw cosines between model states sit near 1 because all states share a large common direction. “Subtract robot mean” removes the per-robot part; “subtract episode mean” also removes the scene so only motion within the episode remains. The background line is the frame's mean value against other episodes of the same robot: a similarity is only informative where it clears that line. Dataset replays at the first flow step with fixed noise.</p>
+<p class="muted">Pick an <b>anchor frame</b>; every panel is about it. Pairwise views compare two frames' pooled vectors in the original dimensions of the chosen geometry, under the chosen measure: cosine (direction only), L2 distance (direction and magnitude), or log2 norm ratio (magnitude only). Next to each value sits the level it reaches against <em>other</em> episodes, so a high similarity can be read as trivial or not.</p>
+<p class="note">Raw cosines between model states sit near 1 because all states share a large common direction. “Subtract robot mean” removes the per-robot part; “subtract episode mean” also removes the scene so only motion within the episode remains. The <em>background</em> of a frame is its mean value against all frames of other episodes of a robot group: a similarity is only informative where it clears that level. Dataset replays at the first flow step with fixed noise.</p>
 <div class="controls">
 <label>Token group<select id="group"></select></label><label>Layer<select id="layer"></select></label>
 <label>Prompt<select id="text"><option value="real">Real task / subtask</option><option value="neutral">Constant task / subtask</option></select></label>
@@ -90,29 +90,30 @@ table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:6px 8px;b
 <label>Color range<select id="crange"><option value="auto">Fit to this episode</option><option value="panel">Same for all episodes</option></select></label>
 </div>
 <p id="status" class="muted"></p>
-<section class="box"><h2>Episode</h2>
-<div class="row"><label>Episode<select id="episode"></select></label><p id="episodeStats" class="muted" style="margin:0"></p></div>
+<section class="box"><h2>Anchor frame</h2>
+<div class="row"><button id="epPrev" title="Previous episode">◀ episode</button><label>Anchor episode<select id="episode"></select></label><button id="epNext" title="Next episode">episode ▶</button><p id="episodeStats" class="muted" style="margin:0"></p></div>
 <div class="row"><button id="play">▶ Play</button><button id="previous">←</button><input type="range" id="frame" min="0" max="0" value="0"><button id="next">→</button><span id="frameStats" class="muted"></span></div>
-<div id="anchor" class="cards"></div></section>
-<div class="grid"><section class="box"><h2>Within-episode matrix</h2><div id="matrix"></div>
+<div id="anchor" class="cards"></div>
+<p class="caption">Change the anchor here (episode arrows, the frame slider, ← → keys), by clicking any point or cell in the plots below, or with <b>Make anchor</b> on a counterpart, which jumps to that frame in its own episode.</p></section>
+<div class="grid"><section class="box" style="margin-top:0"><h2>Within-episode matrix</h2><div id="matrix"></div>
 <p class="caption" id="matrixCaption"></p></section>
-<section class="box"><h2>Selected frame against its episode</h2>
+<section class="box" style="margin-top:0"><h2>Anchor frame against its episode</h2>
 <div class="row"><label class="inline"><span>Local radius: ±<span id="radiusLabel"></span> s</span><input type="range" id="radius" min="0.25" max="30" step="0.25"></label><span id="radiusStats" class="muted"></span></div><div id="profile"></div>
-<p class="caption">Black: the selected frame against every other frame of its episode, by time; the shaded band is the local radius and the vertical line the selected frame. Dashed grey: this frame's mean value against all frames of other episodes of the same robot (background). Dotted: its single best cross-episode match (found by cosine), same task and different task, under the current measure. The episode's structure is informative only where the black line is clearly on the similar side of the dashed line.</p></section></div>
-<section class="box"><h2>Nearest frames in other episodes</h2><p class="muted">Matches are found by cosine on the selected frame. Each category lists its top episodes (best first), one frame per episode, searched over every captured episode in this group, layer and prompt, including episodes hidden by display filters. “Same task” uses exact recorded task text; different wording may describe the same behavior. Target-window cosine compares the selected frame to frames within ±<span id="windowLabel"></span> s of the match, inside the match's episode and task; a support count of 1 is just the matched frame. <b>Align grid</b> centers the grid below on that match; the highlighted row is the one currently shown.</p>
-<div class="scroll"><table><thead><tr><th>Candidate set</th><th>Rank</th><th>Cosine</th><th>Distance</th><th>Raw norm ratio<br>target / anchor</th><th>Target-window cosine</th><th>Support</th><th>Episode / time</th><th></th></tr></thead><tbody id="matches"></tbody></table></div>
-<div id="matchCards" class="cards" style="margin-top:12px"></div></section>
-<section class="box"><h2>Aligned cross-episode grid</h2>
-<div class="row"><label>Align with<select id="crossWith"><option value="any">Best match: any category</option><option value="same_robot_same_task">Best match: same robot · same task</option><option value="same_robot_different_task">Best match: same robot · different task</option><option value="different_robot_same_task">Best match: other robot · same task</option><option value="different_robot_different_task">Best match: other robot · different task</option><option value="episode">Chosen episode (its best frame by current measure)</option></select></label>
-<label>Rank<select id="rank"></select></label><label>Episode<select id="crossEpisode"></select></label>
-<label>Offset step Δ<select id="delta"><option value="1">1 s</option><option value="2" selected>2 s</option><option value="4">4 s</option><option value="8">8 s</option></select></label>
+<p class="caption">Black: the anchor against every other frame of its episode, by time; the shaded band is the local radius and the vertical line the anchor. Dashed grey: the anchor's background against other episodes of the same robot. Dotted: its best counterpart (found by cosine), same task and different task, under the current measure. The episode's structure is informative only where the black line is clearly on the similar side of the dashed line.</p></section></div>
+<section class="box"><h2>Counterparts of the anchor frame</h2>
+<p class="muted">Frames in <em>other</em> episodes whose vector is closest to the anchor's, found by cosine over every captured episode of this group, layer and prompt (display filters do not restrict the search). Four candidate sets, by robot and by exact recorded task text (different wording may describe the same behavior); each lists the best frame of its top <span id="topkLabel"></span> episodes. <b>Click a row</b> to center the aligned grid below on that counterpart. <b>Make anchor</b> jumps to that frame in its own episode, so its counterparts are listed instead.</p>
+<div class="row toolbar"><button id="alignBest" class="small">Best overall (any set)</button><label style="flex-direction:row;align-items:center;gap:6px">or the best frame of a chosen episode:<select id="crossEpisode"></select></label></div>
+<div class="scroll"><table><thead><tr><th>Candidate set</th><th>#</th><th>Episode · time</th><th>Task · step</th><th>Cosine</th><th>Above background</th><th>Holds over ±<span id="windowLabel"></span> s</th><th></th></tr></thead><tbody id="matches"></tbody></table></div>
+<p class="caption"><b>Cosine:</b> between the anchor's vector and that frame's, in the chosen geometry. <b>Above background:</b> that cosine minus the anchor's mean cosine to <em>all</em> frames of other episodes of that candidate set's robot group (same robot for the first two sets, other robots for the last two): near zero means the frame is no closer than a typical frame of that group, however high the cosine. <b>Holds over ±W s:</b> the anchor's mean cosine to the n frames within ±W s of the counterpart in its episode (n in brackets); close to the cosine means the match is not a single-frame coincidence. The table is always cosine; the grid below uses the chosen measure.</p>
+<h3>Aligned grid: the anchor's episode against the counterpart's episode</h3>
+<div class="row"><label>Offset step Δ<select id="delta"><option value="1">1 s</option><option value="2" selected>2 s</option><option value="4">4 s</option><option value="8">8 s</option></select></label>
 <label>Span<select id="span"><option value="5" selected>±5 steps (11 × 11)</option><option value="7">±7 steps (15 × 15)</option></select></label></div>
 <p id="crossInfo" class="muted"></p>
 <div class="crossgrid"><div><div id="cross"></div></div><div><div id="crossLines"></div><div id="crossCards" class="cards"></div></div></div>
-<p class="caption">The selected frame and the frame it is aligned with sit at the center cell (0, 0). Rows are the selected episode at offsets of −Δ·span … +Δ·span seconds from the selected frame; columns are the other episode at the same offsets from the aligned frame. Each cell is the current measure between the two sampled frames nearest to those times (hover shows the frames actually used; cells past an episode's ends are blank; with Δ below the sampling stride, neighbouring cells reuse the same frame). <b>Reading it:</b> a bright diagonal from top-left to bottom-right means the two episodes pass through the same sequence of states at the same pace; a bright diagonal with another slope means the same sequence at a different speed; a bright row or column means one episode holds still in a state the other passes through; a single bright center cell is a momentary coincidence. The side plot pulls three lines out of the grid against the selected frame's background level: the diagonal (both episodes move together), the center row (selected frame held, the other episode moves) and the center column (aligned frame held, the selected episode moves). Click a cell to select its row frame.</p></section>
+<p class="caption">The anchor and its counterpart sit at the center cell (0, 0). Rows are the anchor's episode at offsets of −Δ·span … +Δ·span seconds from the anchor; columns are the counterpart's episode at the same offsets from the counterpart. Each cell is the current measure between the two sampled frames nearest to those times (hover shows the frames actually used; cells past an episode's ends are blank; with Δ below the sampling stride, neighbouring cells reuse the same frame). <b>Reading it:</b> a bright diagonal from top-left to bottom-right means the two episodes pass through the same sequence of states at the same pace; a bright diagonal with another slope means the same sequence at a different speed; a bright row or column means one episode holds still in a state the other passes through; a single bright center cell is a momentary coincidence. The side plot pulls three lines out of the grid against the anchor's background: the diagonal (both episodes move together), the center row (anchor held, the counterpart's episode moves) and the center column (counterpart held, the anchor's episode moves). Clicking a cell moves the anchor to that row's frame.</p></section>
 <section class="box"><h2>Along the episode</h2><div id="timeline"></div>
-<p class="caption"><b>What is plotted.</b> One point per sampled frame of the selected episode, at its time. Dashed grey, <em>background</em>: that frame's mean value against every frame of every other episode of the same robot, i.e. how similar the frame is to anything else this robot was recorded doing; dotted light grey, the same against other robots (absent when only one robot was captured). Colored lines, <em>best match</em> per category: the single most similar frame found anywhere in other episodes of that category, so each point may come from a different episode and a different moment. <b>How to read it.</b> The background is a mean and the match lines are maxima over hundreds of candidates, so the match lines always sit above the background: their height alone says nothing. What matters is the gap between a match line and the background, and how that gap changes along the episode: a stretch where a match line rises well clear of the background is where this episode has a specific counterpart elsewhere (select a frame there and read the aligned grid to see whether the counterpart persists in time); a stretch where every match line hugs the background is where the representation is generic. A match line for a category that is missing for some frames leaves a gap rather than a zero. Click a point to select that frame.</p></section>
-<p class="muted">Local values exclude the selected frame and stay inside its episode; the radius slider recomputes them from the stored matrix. Gaps mean no valid temporal neighbors or zero-length vectors; no zeros are substituted. Raw norm is always measured before centering; distance and norm ratio use the norms of the chosen geometry. Keyboard: ← → step frames, space plays.</p>
+<p class="caption"><b>What is plotted.</b> One point per sampled frame of the anchor's episode, at its time. Dashed grey, <em>background</em>: that frame's mean value against every frame of every other episode of the same robot, i.e. how similar the frame is to anything else this robot was recorded doing; dotted light grey, the same against other robots (absent when only one robot was captured). Colored lines, <em>best counterpart</em> per candidate set: the single most similar frame found anywhere in other episodes of that set, so each point may come from a different episode and a different moment. <b>How to read it.</b> The background is a mean and the counterpart lines are maxima over hundreds of candidates, so the counterpart lines always sit above the background: their height alone says nothing. What matters is the gap between a counterpart line and the background, and how that gap changes along the episode: a stretch where a line rises well clear of the background is where this episode has a specific counterpart elsewhere (put the anchor there and read the aligned grid to see whether the counterpart persists in time); a stretch where every line hugs the background is where the representation is generic. A set that has no eligible frame leaves a gap rather than a zero. Click a point to make it the anchor.</p></section>
+<p class="muted">Local values exclude the anchor and stay inside its episode; the radius slider recomputes them from the stored matrix. Gaps mean no valid temporal neighbors or zero-length vectors; no zeros are substituted. Raw norm is always measured before centering; distance and norm ratio use the norms of the chosen geometry. Keyboard: ← → step frames, space plays.</p>
 <script id="data" type="application/json">__DATA__</script>
 <script>
 'use strict';
@@ -128,7 +129,8 @@ const cache={}, crossCache={}, pending={};
 window.__trajectoryPanel=(key,data)=>{cache[key]=data;if(pending[key]){pending[key](data);delete pending[key];}};
 window.__trajectoryCross=(key,text)=>{const bytes=Uint8Array.from(atob(text),c=>c.charCodeAt(0));crossCache[key]=new Uint16Array(bytes.buffer);if(pending['cross:'+key]){pending['cross:'+key](crossCache[key]);delete pending['cross:'+key];}};
 function loadScript(id,file,store){return new Promise((resolve,reject)=>{if(store[id.replace(/^cross:/,'')])return resolve(store[id.replace(/^cross:/,'')]);pending[id]=resolve;const s=document.createElement('script');s.src=file;s.onerror=()=>{delete pending[id];reject(new Error(`Could not load ${file}; keep panels/ next to this page`));};document.head.appendChild(s);});}
-let panel=null, localRows=[], selected=0, episode=null, epIds=[], epTimes=[], radius=D.window_s, playing=null, loadToken=0, cross=null, alignedTarget=null;
+// align: what the grid is centered on. {kind:'any'} = best counterpart of any set; {kind:<set>,rank} = that row; {kind:'episode',episode} = best frame of a chosen episode.
+let panel=null, localRows=[], selected=0, episode=null, epIds=[], epTimes=[], radius=D.window_s, playing=null, loadToken=0, cross=null, align={kind:'any'}, alignedTarget=null;
 function options(id,values,all=false){const old=$(id).value;$(id).replaceChildren();if(all)$(id).add(new Option('All',''));values.forEach(v=>$(id).add(new Option(v,v)));if(values.includes(old)||all&&old==='')$(id).value=old;}
 function visible(i){const r=localRows[i];return (!$('robot').value||r.robot===$('robot').value)&&(!$('task').value||r.task===$('task').value);}
 // Ranked matches: panel.matches[kind][key][i] is the list over ranks (best first) for frame i.
@@ -163,12 +165,13 @@ async function updatePanel(){
  $('status').textContent=`Capture: ${D.view} · ${panel.group} · L${panel.layer} · ${localRows.length} frames in ${uniq(localRows.map(r=>r.episode)).length} episodes, ${D.stride_s!=null?`sampling stride ${D.stride_s} s, `:''}median gap ${fmt(gap,2)} s.\n${center}\nBackground cosine to other episodes: same robot ${fmt(bg)}, other robots ${fmt(bgOther)} (mean over frames). Checkpoint: ${D.checkpoint}`;
  updateFilter();
 }
+function episodeLabel(ep){const r=localRows[panel.episodes[ep].ids[0]];return `${r.robot} · ${r.episode_label} · ${r.holdout?'held out':'train'} · ${r.task}`;}
 function updateFilter(){
  const eps=uniq(localRows.filter((r,i)=>visible(i)).map(r=>r.episode));
  const previous=localRows[selected]?.episode;
- $('episode').replaceChildren();eps.forEach(ep=>{const r=localRows.find(r=>r.episode===ep);$('episode').add(new Option(`${r.robot} · ${r.episode_label} · ${r.holdout?'held out':'train'}`,ep));});
+ $('episode').replaceChildren();eps.forEach(ep=>$('episode').add(new Option(episodeLabel(ep),ep)));
  if(eps.includes(previous))$('episode').value=previous;
- if(!eps.length){for(const id of ['matrix','profile','timeline','cross','crossLines'])Plotly.purge(id);$('anchor').replaceChildren();$('matches').replaceChildren();$('matchCards').replaceChildren();$('crossCards').replaceChildren();$('frameStats').textContent='';$('crossInfo').textContent='';$('episodeStats').textContent='No frames match these filters';return;}
+ if(!eps.length){for(const id of ['matrix','profile','timeline','cross','crossLines'])Plotly.purge(id);$('anchor').replaceChildren();$('matches').replaceChildren();$('crossCards').replaceChildren();$('frameStats').textContent='';$('crossInfo').textContent='';$('episodeStats').textContent='No frames match these filters';return;}
  if(!visible(selected))selected=localRows.findIndex((r,i)=>visible(i)&&r.episode===$('episode').value);
  setEpisode($('episode').value);
 }
@@ -176,29 +179,32 @@ function setEpisode(ep){
  episode=ep;const e=panel.episodes[ep];epIds=e.ids;epTimes=e.times;
  if(localRows[selected]?.episode!==ep)selected=epIds[0];
  $('frame').max=epIds.length-1;
- const gaps=epIds.map(i=>panel.temporal.previous_dt_s[i]), r=localRows[epIds[0]];
- $('episodeStats').textContent=`${epIds.length} frames over ${fmt(epTimes[epTimes.length-1]-epTimes[0],1)} s, median gap ${fmt(median(gaps),2)} s · ${esc(r.task)}`;
- const others=Object.keys(panel.episodes).filter(x=>x!==ep).sort();const old=$('crossEpisode').value;$('crossEpisode').replaceChildren();others.forEach(x=>{const rr=localRows[panel.episodes[x].ids[0]];$('crossEpisode').add(new Option(`${rr.robot} · ${rr.episode_label} · ${rr.task}`,x));});if(others.includes(old))$('crossEpisode').value=old;
+ const gaps=epIds.map(i=>panel.temporal.previous_dt_s[i]), r=localRows[epIds[0]], n=$('episode').options.length, k=$('episode').selectedIndex;
+ $('episodeStats').textContent=`episode ${k+1} of ${n} shown · ${epIds.length} frames over ${fmt(epTimes[epTimes.length-1]-epTimes[0],1)} s, median gap ${fmt(median(gaps),2)} s · ${esc(r.task)}`;
+ const others=Object.keys(panel.episodes).filter(x=>x!==ep).sort((a,b)=>episodeLabel(a).localeCompare(episodeLabel(b)));
+ $('crossEpisode').replaceChildren();$('crossEpisode').add(new Option('— choose —',''));others.forEach(x=>$('crossEpisode').add(new Option(episodeLabel(x),x)));
+ if(align.kind==='episode'){if(others.includes(align.episode))$('crossEpisode').value=align.episode;else align={kind:'any'};}
  renderMatrix();renderTimeline();renderFrame();
 }
-function heat(z,x,y,xtitle,ytitle,zrange,extraShapes,hover){
+function stepEpisode(delta){const sel=$('episode'), k=sel.selectedIndex+delta;if(k<0||k>=sel.options.length)return;sel.selectedIndex=k;setEpisode(sel.value);}
+function heat(z,x,y,xtitle,ytitle,zrange,extraShapes,hover,axes){
  const M=MEASURES[measure()];
  return [[{type:'heatmap',x,y,z,colorscale:M.scale,reversescale:M.reverse,zmin:zrange[0],zmax:zrange[1],hoverongaps:false,...(hover||{hovertemplate:'row %{y:.2f} s · col %{x:.2f} s<br>%{z:.4f}<extra></extra>'}),colorbar:{title:{text:M.label.split(' (')[0]},len:.9}}],
-  {margin:{l:60,r:10,t:10,b:55},xaxis:{title:{text:xtitle}},yaxis:{title:{text:ytitle},scaleanchor:'x',autorange:'reversed'},shapes:extraShapes||[]},{responsive:true,displaylogo:false}];
+  {margin:{l:60,r:10,t:10,b:55},xaxis:{title:{text:xtitle},constrain:'domain',...(axes?.x||{})},yaxis:{title:{text:ytitle},scaleanchor:'x',constrain:'domain',autorange:'reversed',...(axes?.y||{})},shapes:extraShapes||[]},{responsive:true,displaylogo:false}];
 }
 function renderMatrix(){
  const matrix=episodeMatrix(episode);
  Plotly.react('matrix',...heat(matrix,epTimes,epTimes,'Episode time (s)','Episode time (s)',zRange(matrix)));
- $('matrixCaption').textContent=`Rows and columns are the ${epIds.length} sampled frames of this episode in time order (median gap ${fmt(median(epIds.map(i=>panel.temporal.previous_dt_s[i])),2)} s); each cell is the ${MEASURES[measure()].label.toLowerCase()} between the two frames' vectors. Blocks along the diagonal are stretches where the representation holds still; patches far from the diagonal are returns to an earlier state. The color range ${$('crange').value==='auto'?'is fitted to this episode, so structure shows even when all values are close':'is shared by all episodes of this panel'}.`;
+ $('matrixCaption').textContent=`Rows and columns are the ${epIds.length} sampled frames of this episode in time order (median gap ${fmt(median(epIds.map(i=>panel.temporal.previous_dt_s[i])),2)} s); each cell is the ${MEASURES[measure()].label.toLowerCase()} between the two frames' vectors. Blocks along the diagonal are stretches where the representation holds still; patches far from the diagonal are returns to an earlier state. The color range ${$('crange').value==='auto'?'is fitted to this episode, so structure shows even when all values are close':'is shared by all episodes of this panel'}. Click a cell to make its row frame the anchor.`;
  $('matrix').removeAllListeners?.('plotly_click');$('matrix').on('plotly_click',event=>{const p=event.points[0];const idx=p?.pointIndex??p?.pointNumber;if(Array.isArray(idx))pick(epIds[idx[0]]);});
 }
 function renderProfile(){
  const pos=epIds.indexOf(selected), t=epTimes[pos], matrix=episodeMatrix(episode), row=matrix[pos], m=temporal(selected), M=MEASURES[measure()];
- const span=[epTimes[0],epTimes[epTimes.length-1]], traces=[{type:'scatter',mode:'lines+markers',name:`${M.label} (selected, frame)`,x:epTimes,y:row,customdata:epIds,line:{color:'#202631'},marker:{size:4},connectgaps:false,hovertemplate:'%{x:.2f} s · %{y:.4f}<extra></extra>'}];
+ const span=[epTimes[0],epTimes[epTimes.length-1]], traces=[{type:'scatter',mode:'lines+markers',name:`${M.label} (anchor, frame)`,x:epTimes,y:row,customdata:epIds,line:{color:'#202631'},marker:{size:4},connectgaps:false,hovertemplate:'%{x:.2f} s · %{y:.4f}<extra></extra>'}];
  const ref=(name,y,color,dash)=>{if(y!=null)traces.push({type:'scatter',mode:'lines',name,x:span,y:[y,y],line:{color,dash,width:1.5},hoverinfo:'name+y'});};
  ref('Background: other episodes, same robot',m[M.bg],'#949daa','dash');
- ref('Best match: same robot · same task',matchValue(selected,match(selected,kinds[0])),colors[0],'dot');
- ref('Best match: same robot · different task',matchValue(selected,match(selected,kinds[1])),colors[1],'dot');
+ ref('Best counterpart: same robot · same task',matchValue(selected,match(selected,kinds[0])),colors[0],'dot');
+ ref('Best counterpart: same robot · different task',matchValue(selected,match(selected,kinds[1])),colors[1],'dot');
  const [lc,n]=localValue(pos,radius,matrix), prev=pos?val(m.previous_cosine,epIds[pos-1],selected):null;
  $('radiusStats').textContent=`local ${M.label.toLowerCase()} ${fmt(lc)} over ${n} neighbors · previous frame ${fmt(prev)} (${fmt(m.previous_dt_s,2)} s)`;
  Plotly.react('profile',traces,{margin:{l:55,r:10,t:10,b:55},xaxis:{title:{text:'Episode time (s)'}},yaxis:{title:{text:M.label}},legend:{orientation:'h',font:{size:10},y:-.18},
@@ -210,7 +216,7 @@ function renderTimeline(){
  const add=(name,values,color,dash,width)=>{if(values.every(v=>v==null))return;traces.push({type:'scatter',mode:'lines+markers',name,x:t,y:values,customdata:ids,line:{color,dash,width:width||2},marker:{size:4},connectgaps:false,hovertemplate:'%{x:.2f} s · %{y:.4f}<extra>%{fullData.name}</extra>'});};
  add('Background: other episodes, same robot (mean)',ids.map(i=>T[M.bg][i]),'#6b7482','dash');
  add('Background: other robots (mean)',ids.map(i=>T[M.bgOther][i]),'#b8c0ce','dot');
- kinds.forEach((kind,k)=>add(`Best match: ${labels[k].toLowerCase()} (max)`,ids.map(i=>matchValue(i,match(i,kind))),colors[k],k%2?'dash':'solid'));
+ kinds.forEach((kind,k)=>add(`Best counterpart: ${labels[k].toLowerCase()} (max)`,ids.map(i=>matchValue(i,match(i,kind))),colors[k],k%2?'dash':'solid'));
  Plotly.react('timeline',traces,{margin:{l:58,r:15,t:12,b:85},uirevision:panel.key+episode,xaxis:{title:{text:'Episode time (seconds)'}},yaxis:{title:{text:M.label.split(' (')[0]}},legend:{orientation:'h',font:{size:10},y:-.2},shapes:[cursor()]},{responsive:true,displaylogo:false});
  $('timeline').removeAllListeners?.('plotly_click');$('timeline').on('plotly_click',event=>{const i=event.points[0]?.customdata;if(Number.isInteger(i))pick(i);});
 }
@@ -218,67 +224,72 @@ function cursor(){return {type:'line',xref:'x',yref:'paper',x0:localRows[selecte
 function crossCos(i,j){const q=cross[i*localRows.length+j];return q?(q-1)/65534*2-1:null;}
 // Position of the sampled frame nearest to time t, or null when t lies more than half a step past either end.
 function nearestPos(times,t,delta){if(t<times[0]-delta/2||t>times[times.length-1]+delta/2)return null;let lo=0,hi=times.length-1;while(hi-lo>1){const mid=(lo+hi)>>1;if(times[mid]<=t)lo=mid;else hi=mid;}return Math.abs(times[hi]-t)<Math.abs(times[lo]-t)?hi:lo;}
-function clearCross(message){$('crossInfo').textContent=message;Plotly.purge('cross');Plotly.purge('crossLines');$('crossCards').replaceChildren();alignedTarget=null;renderMatchRows();}
+function setAlign(next){align=next;if(next.kind!=='episode')$('crossEpisode').value='';renderCross();}
+// The counterpart the grid is centered on, for the current anchor; null with a reason when there is none.
+function resolveAlign(){
+ if(align.kind==='episode'){const e=panel.episodes[align.episode];let best=null;e.ids.forEach(j=>{const v=val(crossCos(selected,j),selected,j);if(v==null)return;const better=measure()==='distance'?v<best?.v:measure()==='lognorm'?Math.abs(v)<Math.abs(best?.v):v>best?.v;if(best==null||better)best={v,j};});
+  return best?{target:best.j,how:`best frame of the chosen episode by ${MEASURES[measure()].label.toLowerCase()}`}:{reason:'No valid frames to align with in that episode.'};}
+ if(align.kind==='any'){const b=bestAny(selected);return b?{target:b.m.target,how:`best counterpart over all sets (${labels[kinds.indexOf(b.kind)].toLowerCase()}, #1)`}:{reason:'No eligible frames in any other episode.'};}
+ const m=match(selected,align.kind,align.rank);
+ return m?{target:m.target,how:`${labels[kinds.indexOf(align.kind)].toLowerCase()}, #${align.rank+1}`}:{reason:`No counterpart #${align.rank+1} for “${labels[kinds.indexOf(align.kind)]}” at this anchor (${match(selected,align.kind,0)?'fewer eligible episodes':'no eligible frames'}).`};
+}
+function clearCross(message){$('crossInfo').textContent=message;Plotly.purge('cross');Plotly.purge('crossLines');$('crossCards').replaceChildren();alignedTarget=null;renderCounterparts();}
 async function renderCross(){
  const token=loadToken;
  if(!panel.cross_file)return clearCross('Cross-episode matrices were not written (repr_cross_matrices=false); re-run in plot mode with it enabled.');
  if(!cross){$('crossInfo').textContent='Loading the every-frame matrix for this panel…';try{cross=await loadScript('cross:'+panel.key,panel.cross_file,crossCache);}catch(e){$('crossInfo').textContent=e.message;return;}if(token!==loadToken)return;}
- const mode=$('crossWith').value, delta=Number($('delta').value), K=Number($('span').value), rank=Number($('rank').value)-1, pos=epIds.indexOf(selected), M=MEASURES[measure()];
- let target, how;
- if(mode==='episode'){const other=$('crossEpisode').value;if(!other)return clearCross('No other episode in this panel.');
-  const e=panel.episodes[other];let best=null;e.ids.forEach(j=>{const v=val(crossCos(selected,j),selected,j);if(v==null)return;const better=measure()==='distance'?v<best?.v:measure()==='lognorm'?Math.abs(v)<Math.abs(best?.v):v>best?.v;if(best==null||better)best={v,j};});
-  if(!best)return clearCross('No valid frames to align with in that episode.');target=best.j;how=`best frame of the chosen episode by ${M.label.toLowerCase()}`;
- }else if(mode==='any'){const b=bestAny(selected);if(!b)return clearCross('No eligible frames in any other episode.');target=b.m.target;how=`best cosine match over all categories (${labels[kinds.indexOf(b.kind)].toLowerCase()})`;
- }else{const m=match(selected,mode,rank);if(!m)return clearCross(`No match of rank ${rank+1} for “${labels[kinds.indexOf(mode)]}” (${match(selected,mode,0)?'fewer eligible episodes':'no eligible frames'}).`);target=m.target;how=`cosine match of rank ${rank+1}, ${labels[kinds.indexOf(mode)].toLowerCase()}`;}
- alignedTarget=target;
+ const delta=Number($('delta').value), K=Number($('span').value), pos=epIds.indexOf(selected), M=MEASURES[measure()];
+ const resolved=resolveAlign();if(resolved.reason)return clearCross(resolved.reason);
+ const target=resolved.target;alignedTarget=target;
  const rA=localRows[selected], rB=localRows[target], A=panel.episodes[episode], B=panel.episodes[rB.episode], posB=B.ids.indexOf(target);
  const tA=A.times[pos], tB=B.times[posB], offs=[];for(let k=-K;k<=K;k++)offs.push(k*delta);
  const cellA=offs.map(o=>nearestPos(A.times,tA+o,delta)), cellB=offs.map(o=>nearestPos(B.times,tB+o,delta));
  const z=cellA.map(a=>cellB.map(b=>a==null||b==null?null:val(crossCos(A.ids[a],B.ids[b]),A.ids[a],B.ids[b])));
- const text=cellA.map((a,i)=>cellB.map((b,j)=>a==null||b==null?'':`selected ${offs[i]>=0?'+':''}${offs[i]} s → frame at ${fmt(A.times[a],2)} s · other ${offs[j]>=0?'+':''}${offs[j]} s → frame at ${fmt(B.times[b],2)} s`));
+ const text=cellA.map((a,i)=>cellB.map((b,j)=>a==null||b==null?'':`anchor ${offs[i]>=0?'+':''}${offs[i]} s → frame at ${fmt(A.times[a],2)} s · counterpart ${offs[j]>=0?'+':''}${offs[j]} s → frame at ${fmt(B.times[b],2)} s`));
  const h=delta/2, shapes=[{type:'rect',xref:'x',yref:'y',x0:-h,x1:h,y0:-h,y1:h,line:{color:'white',width:2}},
   {type:'line',xref:'paper',yref:'y',x0:0,x1:1,y0:0,y1:0,line:{color:'white',width:.7,dash:'dot'}},{type:'line',xref:'x',yref:'paper',y0:0,y1:1,x0:0,x1:0,line:{color:'white',width:.7,dash:'dot'}}];
- const range=$('crange').value==='auto'?colorRange(z.flat()):zRange(episodeMatrix(episode));
- Plotly.react('cross',...heat(z,offs,offs,`${rB.robot} · ${rB.episode_label}: seconds from the aligned frame`,`${rA.robot} · ${rA.episode_label}: seconds from the selected frame`,range,shapes,{text,hovertemplate:'%{text}<br>%{z:.4f}<extra></extra>'}));
+ const range=$('crange').value==='auto'?colorRange(z.flat()):zRange(episodeMatrix(episode)), lim=K*delta+h;
+ Plotly.react('cross',...heat(z,offs,offs,`${rB.robot} · ${rB.episode_label}: seconds from the counterpart`,`${rA.robot} · ${rA.episode_label}: seconds from the anchor`,range,shapes,{text,hovertemplate:'%{text}<br>%{z:.4f}<extra></extra>'},{x:{range:[-lim,lim]},y:{range:[lim,-lim],autorange:false}}));
  $('cross').removeAllListeners?.('plotly_click');$('cross').on('plotly_click',event=>{const p=event.points[0];const idx=p?.pointIndex??p?.pointNumber;if(Array.isArray(idx)&&cellA[idx[0]]!=null)pick(A.ids[cellA[idx[0]]]);});
  const line=(name,y,color,dash)=>({type:'scatter',mode:'lines+markers',name,x:offs,y,line:{color,dash,width:2},marker:{size:5},connectgaps:false,hovertemplate:'%{x} s · %{y:.4f}<extra>%{fullData.name}</extra>'});
- const bg=panel.temporal[M.bg][selected], lines=[line('Diagonal: both move together',offs.map((_,k)=>z[k][k]),'#202631'),line('Center row: selected frame held, other moves',z[K],colors[1],'dash'),line('Center column: aligned frame held, selected moves',z.map(r=>r[K]),colors[0],'dot')];
- if(bg!=null)lines.push({type:'scatter',mode:'lines',name:'Background of the selected frame',x:[offs[0],offs[offs.length-1]],y:[bg,bg],line:{color:'#949daa',dash:'dash',width:1.5},hoverinfo:'name+y'});
+ const bg=panel.temporal[M.bg][selected], lines=[line('Diagonal: both move together',offs.map((_,k)=>z[k][k]),'#202631'),line('Center row: anchor held, counterpart episode moves',z[K],colors[1],'dash'),line('Center column: counterpart held, anchor episode moves',z.map(r=>r[K]),colors[0],'dot')];
+ if(bg!=null)lines.push({type:'scatter',mode:'lines',name:'Background of the anchor',x:[offs[0],offs[offs.length-1]],y:[bg,bg],line:{color:'#949daa',dash:'dash',width:1.5},hoverinfo:'name+y'});
  Plotly.react('crossLines',lines,{margin:{l:55,r:10,t:10,b:50},xaxis:{title:{text:'Offset (s)'},zeroline:true,zerolinecolor:'#c8ced8'},yaxis:{title:{text:M.label.split(' (')[0]}},legend:{orientation:'h',font:{size:10},y:-.3}},{responsive:true,displaylogo:false});
  const aligned=val(crossCos(selected,target),selected,target), gapA=median(A.ids.map(i=>panel.temporal.previous_dt_s[i])), gapB=median(B.ids.map(i=>panel.temporal.previous_dt_s[i]));
  const coarse=Math.max(gapA??0,gapB??0)>delta*1.05?` Δ = ${delta} s is below the sampling gap (${fmt(gapA,1)} s / ${fmt(gapB,1)} s), so neighbouring cells reuse frames.`:'';
- $('crossInfo').textContent=`Rows: ${rA.robot} · ${rA.episode_label}, selected frame at ${fmt(rA.time_s,2)} s. Columns: ${rB.robot} · ${rB.episode_label}, aligned frame at ${fmt(rB.time_s,2)} s (${how}). Aligned pair ${M.label.toLowerCase()}: ${fmt(aligned,4)}; selected frame's background: ${fmt(bg,4)}.${coarse}\nTasks: “${rA.task}” vs “${rB.task}”.`;
- $('crossCards').innerHTML=frameCard(target,'Aligned frame in the other episode');
+ $('crossInfo').textContent=`Centered on: ${resolved.how}. Rows: ${rA.robot} · ${rA.episode_label}, anchor at ${fmt(rA.time_s,2)} s. Columns: ${rB.robot} · ${rB.episode_label}, counterpart at ${fmt(rB.time_s,2)} s. Pair ${M.label.toLowerCase()}: ${fmt(aligned,4)}; anchor's background: ${fmt(bg,4)}.${coarse}\nTasks: “${rA.task}” vs “${rB.task}”.`;
+ $('crossCards').innerHTML=frameCard(target,'Counterpart (grid columns)','counterpart');
  document.querySelectorAll('#crossCards [data-pick]').forEach(el=>el.onclick=()=>pick(Number(el.dataset.pick),true));
- renderMatchRows();
+ renderCounterparts();
 }
-function frameCard(i,title){
+function frameCard(i,title,cls){
  const r=localRows[i];
  const cameras=['external_0','wrist_0'].map(cam=>{const src=thumb(r.sample,cam);return src?`<img src="${src}" alt="${cam}" loading="lazy">`:`<span>${cam}: unavailable</span>`;}).join('');
- return `<div class="card"><strong>${esc(title)}</strong><div class="details">${esc(r.robot)} · ${esc(r.episode_label)} <span class="tag">${r.holdout?'held out':'train'}</span><br>Frame ${r.frame} · ${fmt(r.time_s,2)} s</div><div class="cameras">${cameras}</div><div class="details"><b>Task:</b> ${esc(r.task)}<br><b>Step:</b> ${esc(r.subtask)}</div><button data-pick="${i}" style="margin-top:8px">Follow this frame</button></div>`;
+ const action=cls==='anchor'?'':`<button data-pick="${i}" style="margin-top:8px">Make anchor</button>`;
+ return `<div class="card ${cls||''}"><strong>${esc(title)}</strong><div class="details">${esc(r.robot)} · ${esc(r.episode_label)} <span class="tag">${r.holdout?'held out':'train'}</span><br>Frame ${r.frame} · ${fmt(r.time_s,2)} s</div><div class="cameras">${cameras}</div><div class="details"><b>Task:</b> ${esc(r.task)}<br><b>Step:</b> ${esc(r.subtask)}</div>${action}</div>`;
 }
-function renderMatchRows(){
+function renderCounterparts(){
+ const T=panel.temporal;
+ $('alignBest').classList.toggle('on',align.kind==='any');
  $('matches').innerHTML=kinds.map((kind,k)=>{
-  const first=match(selected,kind,0);
-  if(!first)return `<tr class="kind"><td>${labels[k]}</td><td colspan="8" style="font-weight:normal">No eligible frames</td></tr>`;
-  const rows=[`<tr class="kind"><td>${labels[k]}</td><td colspan="8" style="font-weight:normal" class="muted">${first.candidate_count} candidate frames in ${first.candidate_episodes} episodes; best frame of each of the top ${Math.min(D.match_top_k,first.candidate_episodes)} episodes below</td></tr>`];
-  for(let rank=0;rank<D.match_top_k;rank++){const mm=match(selected,kind,rank);if(!mm)break;const r=localRows[mm.target];
-   rows.push(`<tr class="${mm.target===alignedTarget?'aligned':''}"><td></td><td>${rank+1}</td><td>${fmt(mm.cosine)}</td><td>${fmt(mm.distance)}</td><td>${fmt(mm.raw_norm_ratio)}</td><td>${fmt(mm.target_window_cosine)}</td><td>${mm.target_window_count}</td><td>${esc(r.episode_label)} · ${fmt(r.time_s,2)} s<br><span class="muted">${esc(r.task)}</span></td><td><button class="small" data-align="${kind}" data-rank="${rank+1}">Align grid</button> <button class="small" data-pick="${mm.target}">Follow</button></td></tr>`);}
+  const first=match(selected,kind,0), bgKey=k<2?'background_same_robot':'background_other_robot', bg=T[bgKey][selected];
+  if(!first)return `<tr class="kind"><td>${labels[k]}</td><td colspan="7" style="font-weight:normal" class="muted">no eligible frames</td></tr>`;
+  const rows=[`<tr class="kind"><td>${labels[k]}</td><td colspan="7" style="font-weight:normal" class="muted">${first.candidate_count} candidate frames in ${first.candidate_episodes} episodes · anchor's background in this group ${fmt(bg)}</td></tr>`];
+  for(let rank=0;rank<D.match_top_k;rank++){const mm=match(selected,kind,rank);if(!mm)break;const r=localRows[mm.target], on=mm.target===alignedTarget;
+   rows.push(`<tr class="pick ${on?'aligned':''}" data-kind="${kind}" data-rank="${rank}" title="Center the aligned grid on this counterpart"><td class="muted">${on?'◀ grid':''}</td><td>${rank+1}</td><td>${esc(r.robot)} · ${esc(r.episode_label)} · ${fmt(r.time_s,2)} s <span class="tag">${r.holdout?'held out':'train'}</span></td><td>${esc(r.task)}<br><span class="muted">${esc(r.subtask)}</span></td><td>${fmt(mm.cosine)}</td><td>${bg==null?'—':(mm.cosine-bg>=0?'+':'')+fmt(mm.cosine-bg)}</td><td>${fmt(mm.target_window_cosine)} <span class="muted">(n=${mm.target_window_count})</span></td><td><button class="small" data-pick="${mm.target}" title="Jump to this frame in its own episode">Make anchor</button></td></tr>`);}
   return rows.join('');
  }).join('');
- document.querySelectorAll('#matches [data-pick]').forEach(el=>el.onclick=()=>pick(Number(el.dataset.pick),true));
- document.querySelectorAll('#matches [data-align]').forEach(el=>el.onclick=()=>{$('crossWith').value=el.dataset.align;$('rank').value=el.dataset.rank;renderCross();});
+ document.querySelectorAll('#matches tr.pick').forEach(el=>el.onclick=()=>setAlign({kind:el.dataset.kind,rank:Number(el.dataset.rank)}));
+ document.querySelectorAll('#matches [data-pick]').forEach(el=>el.onclick=e=>{e.stopPropagation();pick(Number(el.dataset.pick),true);});
 }
 function renderFrame(){
  const pos=epIds.indexOf(selected), m=temporal(selected), t=epTimes[pos];
  $('frame').value=pos;
  $('frameStats').textContent=`frame ${pos+1}/${epIds.length} · ${fmt(t,2)} s · raw norm ${fmt(m.raw_norm)} · ${panel.geometry==='raw'?'':`centered norm ${fmt(m.geometry_norm)} · `}step distance ${fmt(m.step_l2)}`;
- $('anchor').innerHTML=frameCard(selected,'Selected frame');
+ $('anchor').innerHTML=frameCard(selected,'Anchor frame (grid rows)','anchor');
  Plotly.relayout('matrix',{shapes:[{type:'line',xref:'paper',yref:'y',x0:0,x1:1,y0:t,y1:t,line:{color:'white',width:1}},{type:'line',xref:'x',yref:'paper',x0:t,x1:t,y0:0,y1:1,line:{color:'white',width:1}}]});
  Plotly.relayout('timeline',{shapes:[cursor()]});
- renderProfile();renderMatchRows();renderCross();
- $('matchCards').innerHTML=kinds.map((kind,k)=>{const mm=match(selected,kind,0);return mm?frameCard(mm.target,`Best: ${labels[k]}`):'';}).join('');
- document.querySelectorAll('#matchCards [data-pick], #anchor [data-pick]').forEach(el=>el.onclick=()=>pick(Number(el.dataset.pick),true));
+ renderProfile();renderCounterparts();renderCross();
 }
 function pick(i,reveal=false){
  selected=i;const r=localRows[i];
@@ -289,13 +300,14 @@ function pick(i,reveal=false){
 function step(delta){const pos=epIds.indexOf(selected);pick(epIds[Math.max(0,Math.min(epIds.length-1,pos+delta))]);}
 function stopPlaying(){if(playing){clearInterval(playing);playing=null;$('play').textContent='▶ Play';}}
 function setRadius(r){radius=r;$('radius').value=r;$('radiusLabel').textContent=r;if(panel)renderProfile();}
-options('group',uniq(D.panels.map(p=>p.group)));$('windowLabel').textContent=D.window_s;$('radius').value=radius;$('radiusLabel').textContent=radius;
-for(let k=1;k<=D.match_top_k;k++)$('rank').add(new Option(String(k),String(k)));
+options('group',uniq(D.panels.map(p=>p.group)));$('windowLabel').textContent=D.window_s;$('topkLabel').textContent=D.match_top_k;$('radius').value=radius;$('radiusLabel').textContent=radius;
 ['group','layer','text','geometry'].forEach(id=>$(id).onchange=updatePanel);
 ['robot','task'].forEach(id=>$(id).onchange=updateFilter);
 ['measure','crange'].forEach(id=>$(id).onchange=()=>{if(panel)setEpisode(episode);});
-['crossWith','rank','crossEpisode','delta','span'].forEach(id=>$(id).onchange=()=>{if(panel)renderCross();});
-$('episode').onchange=()=>setEpisode($('episode').value);
+['delta','span'].forEach(id=>$(id).onchange=()=>{if(panel)renderCross();});
+$('alignBest').onclick=()=>{if(panel)setAlign({kind:'any'});};
+$('crossEpisode').onchange=()=>{if(!panel)return;const ep=$('crossEpisode').value;setAlign(ep?{kind:'episode',episode:ep}:{kind:'any'});};
+$('episode').onchange=()=>setEpisode($('episode').value);$('epPrev').onclick=()=>{if(panel)stepEpisode(-1);};$('epNext').onclick=()=>{if(panel)stepEpisode(1);};
 $('frame').oninput=()=>{if(panel)pick(epIds[Number($('frame').value)]);};
 $('radius').oninput=()=>setRadius(Number($('radius').value));
 $('previous').onclick=()=>step(-1);$('next').onclick=()=>step(1);

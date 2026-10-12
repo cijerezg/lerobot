@@ -205,7 +205,7 @@ def test_model_free_replot_writes_linked_report_metrics_basis_and_manifest(tmp_p
     summary = rep.run(None, None, cfg, tmp_path)
     assert summary['frames'] == 4 and summary['episodes'] == 2
     html = (tmp_path / 'trajectories.html').read_text()
-    assert 'plotly' in html and 'Target-window cosine' in html
+    assert 'plotly' in html and 'Counterparts of the anchor frame' in html
     assert '<script id="data"' in html
     assert 'umap' not in html.lower()
     # The page stays light: per-panel data and previews are loaded from disk on demand.
