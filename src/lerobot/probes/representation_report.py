@@ -66,21 +66,25 @@ _HTML = r'''<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Representation trajectories</title>
 <style>
-*{box-sizing:border-box}body{margin:0;padding:20px;background:#f6f7f9;color:#202631;font:14px system-ui,sans-serif}
-h1{font-size:23px;margin:0 0 8px}h2{font-size:17px;margin:14px 0 8px}h3{font-size:14px;margin:12px 0 6px}p{line-height:1.5;margin:8px 0}.muted{color:#5e6878}.caption{font-size:12px;color:#5e6878;line-height:1.45;margin:6px 0 0}
-.controls{display:flex;flex-wrap:wrap;gap:12px;background:white;padding:12px;border-radius:8px;margin:14px 0}
-label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#505b6e}select,button{font:inherit;border:1px solid #b8c0ce;border-radius:4px;padding:7px;background:white;color:#202631;max-width:560px}
-button{cursor:pointer}button:hover{background:#e9f1ff}button.small{padding:3px 7px;font-size:12px}button.on{background:#e37525;border-color:#e37525;color:white}.grid{display:grid;grid-template-columns:minmax(400px,1fr) minmax(400px,1fr);gap:14px;margin-top:14px}.box{background:white;border:1px solid #e0e4eb;border-radius:8px;padding:12px;min-width:0;margin-top:14px}
-#matrix,#profile{height:520px}#timeline{height:420px}#cross{height:600px}#crossLines{height:320px}.cards{display:flex;flex-wrap:wrap;gap:10px}.card{border:1px solid #d8dfeb;border-radius:6px;padding:10px;flex:1;min-width:270px;max-width:580px}.card.anchor{border-color:#202631}.card.counterpart{border-color:#e37525}.cameras{display:flex;gap:4px;margin:7px 0}.cameras img{width:49%;object-fit:contain;max-height:190px;background:#edf0f5}.cameras span{display:block;font-size:11px}.details{font-size:12px;overflow-wrap:anywhere}.tag{font-size:11px;background:#edf0f5;border-radius:3px;padding:2px 5px}
-table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:6px 8px;border-bottom:1px solid #e1e6ee;text-align:left;vertical-align:top}th{color:#505b6e;font-weight:600}tr.kind td{background:#f3f5f8;font-weight:600;padding-top:9px}tr.pick{cursor:pointer}tr.pick:hover td{background:#edf5ff}tr.pick.aligned td{background:#fff0e3;box-shadow:inset 3px 0 0 #e37525}.scroll{overflow:auto}.note{padding:9px 12px;background:#edf2f8;border-radius:5px}#status,#episodeStats,#crossInfo{white-space:pre-wrap}
+*{box-sizing:border-box}body{margin:0;padding:0 20px 20px;background:#f6f7f9;color:#202631;font:14px system-ui,sans-serif}
+h1{font-size:21px;margin:14px 0 4px}h2{font-size:16px;margin:0 0 8px}h3{font-size:14px;margin:12px 0 6px}p{line-height:1.5;margin:8px 0}.muted{color:#5e6878}.caption{font-size:12px;color:#5e6878;line-height:1.45;margin:6px 0 0}
+details.help{font-size:12px;color:#5e6878;line-height:1.45;margin:6px 0 0}details.help summary{cursor:pointer;color:#3366cc;font-weight:600;list-style:none}details.help summary::before{content:'▸ '}details.help[open] summary::before{content:'▾ '}details.help p{margin:4px 0}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;background:white;padding:8px 12px;border-radius:8px;margin:8px 0}
+label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#505b6e}select,button{font:inherit;font-size:13px;border:1px solid #b8c0ce;border-radius:4px;padding:5px 7px;background:white;color:#202631;max-width:560px}
+button{cursor:pointer}button:hover{background:#e9f1ff}button.small{padding:2px 7px;font-size:12px}button.on{background:#e37525;border-color:#e37525;color:white}
+.box{background:white;border:1px solid #e0e4eb;border-radius:8px;padding:12px;min-width:0;margin-top:14px}.grid{display:grid;grid-template-columns:minmax(400px,1fr) minmax(400px,1fr);gap:14px}
+#matrix,#profile{height:460px}#timeline{height:380px}#cross{height:560px}#crossLines{height:300px}
+.sticky{position:sticky;top:0;z-index:5;background:#f6f7f9;padding:8px 0 6px;border-bottom:1px solid #dfe3ea;margin-bottom:4px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.pane{background:white;border:2px solid #202631;border-radius:8px;padding:8px 10px;min-width:0}.pane.counterpart{border-color:#e37525}.pane h2{display:flex;align-items:center;gap:8px;font-size:14px;margin:0 0 4px}.pane h2 .role{font-size:11px;font-weight:600;padding:2px 6px;border-radius:3px;color:white;background:#202631}.pane.counterpart h2 .role{background:#e37525}
+.pane .cameras{display:flex;gap:4px;margin:5px 0}.pane .cameras img{width:49%;object-fit:contain;max-height:150px;background:#edf0f5}.pane .cameras span{display:block;font-size:11px;color:#5e6878}.pane .details{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.pane .nav{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}.pane .nav input[type=range]{flex:1;min-width:120px}.tag{font-size:11px;background:#edf0f5;border-radius:3px;padding:1px 5px}.num{font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:5px 8px;border-bottom:1px solid #e1e6ee;text-align:left;vertical-align:top}th{color:#505b6e;font-weight:600}tr.kind td{background:#f3f5f8;font-weight:600;padding-top:8px}tr.pick{cursor:pointer}tr.pick:hover td{background:#edf5ff}tr.pick.aligned td{background:#fff0e3;box-shadow:inset 3px 0 0 #e37525}.scroll{overflow:auto}#status,#crossInfo{white-space:pre-wrap}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0}.row input[type=range]{flex:1;min-width:160px}.row label.inline{flex-direction:row;align-items:center;gap:8px;flex:1}.row.toolbar{gap:14px}
-.crossgrid{display:grid;grid-template-columns:minmax(400px,3fr) minmax(300px,2fr);gap:14px;margin-top:10px}
-@media(max-width:950px){.grid,.crossgrid{grid-template-columns:1fr}body{padding:10px}#matrix,#profile{height:420px}}
+.crossgrid{display:grid;grid-template-columns:minmax(400px,3fr) minmax(300px,2fr);gap:14px;margin-top:6px}
+@media(max-width:950px){.grid,.crossgrid,.pair{grid-template-columns:1fr}body{padding:0 10px 10px}.sticky{position:static}}
 </style>
 <script>__PLOTLY__</script>
 <h1>Representation trajectories</h1>
-<p class="muted">Pick an <b>anchor frame</b>; every panel is about it. Pairwise views compare two frames' pooled vectors in the original dimensions of the chosen geometry, under the chosen measure: cosine (direction only), L2 distance (direction and magnitude), or log2 norm ratio (magnitude only). Next to each value sits the level it reaches against <em>other</em> episodes, so a high similarity can be read as trivial or not.</p>
-<p class="note">Raw cosines between model states sit near 1 because all states share a large common direction. “Subtract robot mean” removes the per-robot part; “subtract episode mean” also removes the scene so only motion within the episode remains. The <em>background</em> of a frame is its mean value against all frames of other episodes of a robot group: a similarity is only informative where it clears that level. Dataset replays at the first flow step with fixed noise.</p>
+<p class="muted" style="margin:0 0 6px">Three steps: pick an <b>anchor frame</b> (left pane), pick one of its <b>counterparts</b> in other episodes (table), read the <b>aligned grid</b> for whether the two episodes stay similar around that pair. Both frames stay pinned at the top while you scroll.</p>
 <div class="controls">
 <label>Token group<select id="group"></select></label><label>Layer<select id="layer"></select></label>
 <label>Prompt<select id="text"><option value="real">Real task / subtask</option><option value="neutral">Constant task / subtask</option></select></label>
@@ -88,32 +92,33 @@ table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:6px 8px;b
 <label>Measure<select id="measure"><option value="cosine">Cosine</option><option value="distance">L2 distance</option><option value="lognorm">log2 norm ratio (column / row)</option></select></label>
 <label>Show robot<select id="robot"></select></label><label>Show task<select id="task"></select></label>
 <label>Color range<select id="crange"><option value="auto">Fit to this episode</option><option value="panel">Same for all episodes</option></select></label>
+<details class="help" style="flex-basis:100%"><summary>What these mean</summary><p>Raw cosines between model states sit near 1 because all states share a large common direction. <b>Subtract robot mean</b> removes the per-robot part; <b>subtract episode mean</b> also removes the scene so only motion within the episode remains. <b>Measure</b>: cosine compares directions, L2 distance direction and magnitude, log2 norm ratio magnitude only; counterparts are always found by cosine, the plots use the chosen measure. <b>Show robot / task</b> filter which episodes can be the anchor; the counterpart search always covers every captured episode. The <em>background</em> of a frame is its mean value against all frames of other episodes of a robot group: a similarity is only informative where it clears that level. Dataset replays at the first flow step with fixed noise.</p><p id="status"></p></details>
 </div>
-<p id="status" class="muted"></p>
-<section class="box"><h2>Anchor frame</h2>
-<div class="row"><button id="epPrev" title="Previous episode">◀ episode</button><label>Anchor episode<select id="episode"></select></label><button id="epNext" title="Next episode">episode ▶</button><p id="episodeStats" class="muted" style="margin:0"></p></div>
-<div class="row"><button id="play">▶ Play</button><button id="previous">←</button><input type="range" id="frame" min="0" max="0" value="0"><button id="next">→</button><span id="frameStats" class="muted"></span></div>
-<div id="anchor" class="cards"></div>
-<p class="caption">Change the anchor here (episode arrows, the frame slider, ← → keys), by clicking any point or cell in the plots below, or with <b>Make anchor</b> on a counterpart, which jumps to that frame in its own episode.</p></section>
-<div class="grid"><section class="box" style="margin-top:0"><h2>Within-episode matrix</h2><div id="matrix"></div>
-<p class="caption" id="matrixCaption"></p></section>
-<section class="box" style="margin-top:0"><h2>Anchor frame against its episode</h2>
-<div class="row"><label class="inline"><span>Local radius: ±<span id="radiusLabel"></span> s</span><input type="range" id="radius" min="0.25" max="30" step="0.25"></label><span id="radiusStats" class="muted"></span></div><div id="profile"></div>
-<p class="caption">Black: the anchor against every other frame of its episode, by time; the shaded band is the local radius and the vertical line the anchor. Dashed grey: the anchor's background against other episodes of the same robot. Dotted: its best counterpart (found by cosine), same task and different task, under the current measure. The episode's structure is informative only where the black line is clearly on the similar side of the dashed line.</p></section></div>
+<div class="sticky"><div class="pair">
+<div class="pane"><h2><span class="role">ANCHOR</span><span>grid rows · what everything is about</span></h2>
+<div class="nav"><button id="epPrev" class="small" title="Previous episode">◀ ep</button><select id="episode" style="flex:1;min-width:200px"></select><button id="epNext" class="small" title="Next episode">ep ▶</button></div>
+<div class="nav"><button id="play" class="small">▶ Play</button><button id="previous" class="small">←</button><input type="range" id="frame" min="0" max="0" value="0"><button id="next" class="small">→</button></div>
+<div id="anchor"></div></div>
+<div class="pane counterpart"><h2><span class="role">COUNTERPART</span><span>grid columns · the frame the grid is centered on</span></h2><div id="crossCards"></div></div>
+</div></div>
 <section class="box"><h2>Counterparts of the anchor frame</h2>
-<p class="muted">Frames in <em>other</em> episodes whose vector is closest to the anchor's, found by cosine over every captured episode of this group, layer and prompt (display filters do not restrict the search). Four candidate sets, by robot and by exact recorded task text (different wording may describe the same behavior); each lists the best frame of its top <span id="topkLabel"></span> episodes. <b>Click a row</b> to center the aligned grid below on that counterpart. <b>Make anchor</b> jumps to that frame in its own episode, so its counterparts are listed instead.</p>
-<div class="row toolbar"><button id="alignBest" class="small">Best overall (any set)</button><label style="flex-direction:row;align-items:center;gap:6px">or the best frame of a chosen episode:<select id="crossEpisode"></select></label></div>
+<p class="muted" style="margin:0 0 6px">Frames in <em>other</em> episodes closest to the anchor by cosine, in four candidate sets (robot × exact task text), best frame of the top <span id="topkLabel"></span> episodes each. <b>Click a row</b> to make it the counterpart; the set and rank are kept while you step frames. <b>Make anchor</b> jumps to that frame in its own episode.</p>
+<div class="row toolbar" style="margin:4px 0"><button id="alignBest" class="small">Best overall (any set)</button><label style="flex-direction:row;align-items:center;gap:6px">or the best frame of a chosen episode:<select id="crossEpisode"></select></label></div>
 <div class="scroll"><table><thead><tr><th>Candidate set</th><th>#</th><th>Episode · time</th><th>Task · step</th><th>Cosine</th><th>Above background</th><th>Holds over ±<span id="windowLabel"></span> s</th><th></th></tr></thead><tbody id="matches"></tbody></table></div>
-<p class="caption"><b>Cosine:</b> between the anchor's vector and that frame's, in the chosen geometry. <b>Above background:</b> that cosine minus the anchor's mean cosine to <em>all</em> frames of other episodes of that candidate set's robot group (same robot for the first two sets, other robots for the last two): near zero means the frame is no closer than a typical frame of that group, however high the cosine. <b>Holds over ±W s:</b> the anchor's mean cosine to the n frames within ±W s of the counterpart in its episode (n in brackets); close to the cosine means the match is not a single-frame coincidence. The table is always cosine; the grid below uses the chosen measure.</p>
-<h3>Aligned grid: the anchor's episode against the counterpart's episode</h3>
-<div class="row"><label>Offset step Δ<select id="delta"><option value="1">1 s</option><option value="2" selected>2 s</option><option value="4">4 s</option><option value="8">8 s</option></select></label>
-<label>Span<select id="span"><option value="5" selected>±5 steps (11 × 11)</option><option value="7">±7 steps (15 × 15)</option></select></label></div>
-<p id="crossInfo" class="muted"></p>
-<div class="crossgrid"><div><div id="cross"></div></div><div><div id="crossLines"></div><div id="crossCards" class="cards"></div></div></div>
-<p class="caption">The anchor and its counterpart sit at the center cell (0, 0). Rows are the anchor's episode at offsets of −Δ·span … +Δ·span seconds from the anchor; columns are the counterpart's episode at the same offsets from the counterpart. Each cell is the current measure between the two sampled frames nearest to those times (hover shows the frames actually used; cells past an episode's ends are blank; with Δ below the sampling stride, neighbouring cells reuse the same frame). <b>Reading it:</b> a bright diagonal from top-left to bottom-right means the two episodes pass through the same sequence of states at the same pace; a bright diagonal with another slope means the same sequence at a different speed; a bright row or column means one episode holds still in a state the other passes through; a single bright center cell is a momentary coincidence. The side plot pulls three lines out of the grid against the anchor's background: the diagonal (both episodes move together), the center row (anchor held, the counterpart's episode moves) and the center column (counterpart held, the anchor's episode moves). Clicking a cell moves the anchor to that row's frame.</p></section>
-<section class="box"><h2>Along the episode</h2><div id="timeline"></div>
-<p class="caption"><b>What is plotted.</b> One point per sampled frame of the anchor's episode, at its time. Dashed grey, <em>background</em>: that frame's mean value against every frame of every other episode of the same robot, i.e. how similar the frame is to anything else this robot was recorded doing; dotted light grey, the same against other robots (absent when only one robot was captured). Colored lines, <em>best counterpart</em> per candidate set: the single most similar frame found anywhere in other episodes of that set, so each point may come from a different episode and a different moment. <b>How to read it.</b> The background is a mean and the counterpart lines are maxima over hundreds of candidates, so the counterpart lines always sit above the background: their height alone says nothing. What matters is the gap between a counterpart line and the background, and how that gap changes along the episode: a stretch where a line rises well clear of the background is where this episode has a specific counterpart elsewhere (put the anchor there and read the aligned grid to see whether the counterpart persists in time); a stretch where every line hugs the background is where the representation is generic. A set that has no eligible frame leaves a gap rather than a zero. Click a point to make it the anchor.</p></section>
-<p class="muted">Local values exclude the anchor and stay inside its episode; the radius slider recomputes them from the stored matrix. Gaps mean no valid temporal neighbors or zero-length vectors; no zeros are substituted. Raw norm is always measured before centering; distance and norm ratio use the norms of the chosen geometry. Keyboard: ← → step frames, space plays.</p>
+<details class="help"><summary>How to read the columns</summary><p><b>Cosine:</b> between the anchor's vector and that frame's, in the chosen geometry. <b>Above background:</b> that cosine minus the anchor's mean cosine to <em>all</em> frames of other episodes of that set's robot group (same robot for the first two sets, other robots for the last two; the level is printed on the set's header row): near zero means the frame is no closer than a typical frame of that group, however high the cosine. <b>Holds over ±W s:</b> the anchor's mean cosine to the n frames within ±W s of the counterpart in its episode; close to the cosine means the match is not a single-frame coincidence. Search covers every captured episode of this group, layer and prompt, including episodes hidden by the display filters; “same task” is the exact recorded string, so different wording may describe the same behavior.</p></details>
+<h3>Aligned grid: anchor's episode (rows) against counterpart's episode (columns)</h3>
+<div class="row" style="margin:4px 0"><label>Offset step Δ<select id="delta"><option value="1">1 s</option><option value="2" selected>2 s</option><option value="4">4 s</option><option value="8">8 s</option></select></label>
+<label>Span<select id="span"><option value="5" selected>±5 steps (11 × 11)</option><option value="7">±7 steps (15 × 15)</option></select></label><span id="crossInfo" class="muted" style="font-size:12px"></span></div>
+<div class="crossgrid"><div><div id="cross"></div></div><div><div id="crossLines"></div></div></div>
+<details class="help"><summary>How to read the grid</summary><p>The anchor and its counterpart sit at the center cell (0, 0). Rows are the anchor's episode at offsets of −Δ·span … +Δ·span seconds from the anchor; columns are the counterpart's episode at the same offsets from the counterpart. Each cell is the current measure between the two sampled frames nearest to those times (hover shows the frames actually used; cells past an episode's ends are blank; with Δ below the sampling stride, neighbouring cells reuse the same frame). A bright diagonal from top-left to bottom-right means the two episodes pass through the same sequence of states at the same pace; a bright diagonal with another slope means the same sequence at a different speed; a bright row or column means one episode holds still in a state the other passes through; a single bright center cell is a momentary coincidence. The side plot pulls three lines out of the grid against the anchor's background: the diagonal (both episodes move together), the center row (anchor held, the counterpart's episode moves) and the center column (counterpart held, the anchor's episode moves). Clicking a cell moves the anchor to that row's frame.</p></details></section>
+<section class="box"><h2>Along the anchor's episode</h2><div id="timeline"></div>
+<details class="help"><summary>How to read it</summary><p>One point per sampled frame of the anchor's episode, at its time. Dashed grey, <em>background</em>: that frame's mean value against every frame of every other episode of the same robot, i.e. how similar the frame is to anything else this robot was recorded doing; dotted light grey, the same against other robots (absent when only one robot was captured). Colored lines, <em>best counterpart</em> per candidate set: the single most similar frame found anywhere in other episodes of that set, so each point may come from a different episode and a different moment. The background is a mean and the counterpart lines are maxima over hundreds of candidates, so the counterpart lines always sit above the background: their height alone says nothing. What matters is the gap between a counterpart line and the background, and how that gap changes along the episode: a stretch where a line rises well clear of the background is where this episode has a specific counterpart elsewhere (put the anchor there and read the aligned grid to see whether the counterpart persists in time); a stretch where every line hugs the background is where the representation is generic. A set with no eligible frame leaves a gap rather than a zero. Click a point to make it the anchor.</p></details></section>
+<div class="grid"><section class="box"><h2>Within the anchor's episode: every frame against every frame</h2><div id="matrix"></div>
+<details class="help"><summary>How to read it</summary><p id="matrixCaption"></p></details></section>
+<section class="box"><h2>Anchor against its own episode</h2>
+<div class="row" style="margin:4px 0"><label class="inline"><span>Local radius: ±<span id="radiusLabel"></span> s</span><input type="range" id="radius" min="0.25" max="30" step="0.25"></label><span id="radiusStats" class="muted" style="font-size:12px"></span></div><div id="profile"></div>
+<details class="help"><summary>How to read it</summary><p>Black: the anchor against every other frame of its episode, by time; the shaded band is the local radius and the vertical line the anchor. Dashed grey: the anchor's background against other episodes of the same robot. Dotted: its best counterpart (found by cosine), same task and different task, under the current measure. The episode's structure is informative only where the black line is clearly on the similar side of the dashed line. Local values exclude the anchor and stay inside its episode; the radius slider recomputes them from the stored matrix. Gaps mean no valid temporal neighbors or zero-length vectors; no zeros are substituted. Raw norm is always measured before centering; distance and norm ratio use the norms of the chosen geometry.</p></details></section></div>
+<p class="caption">Keyboard: ← → step frames, space plays.</p>
 <script id="data" type="application/json">__DATA__</script>
 <script>
 'use strict';
@@ -171,7 +176,7 @@ function updateFilter(){
  const previous=localRows[selected]?.episode;
  $('episode').replaceChildren();eps.forEach(ep=>$('episode').add(new Option(episodeLabel(ep),ep)));
  if(eps.includes(previous))$('episode').value=previous;
- if(!eps.length){for(const id of ['matrix','profile','timeline','cross','crossLines'])Plotly.purge(id);$('anchor').replaceChildren();$('matches').replaceChildren();$('crossCards').replaceChildren();$('frameStats').textContent='';$('crossInfo').textContent='';$('episodeStats').textContent='No frames match these filters';return;}
+ if(!eps.length){for(const id of ['matrix','profile','timeline','cross','crossLines'])Plotly.purge(id);$('anchor').innerHTML='<p class="muted">No frames match these filters</p>';$('matches').replaceChildren();$('crossCards').replaceChildren();$('crossInfo').textContent='';return;}
  if(!visible(selected))selected=localRows.findIndex((r,i)=>visible(i)&&r.episode===$('episode').value);
  setEpisode($('episode').value);
 }
@@ -179,8 +184,6 @@ function setEpisode(ep){
  episode=ep;const e=panel.episodes[ep];epIds=e.ids;epTimes=e.times;
  if(localRows[selected]?.episode!==ep)selected=epIds[0];
  $('frame').max=epIds.length-1;
- const gaps=epIds.map(i=>panel.temporal.previous_dt_s[i]), r=localRows[epIds[0]], n=$('episode').options.length, k=$('episode').selectedIndex;
- $('episodeStats').textContent=`episode ${k+1} of ${n} shown · ${epIds.length} frames over ${fmt(epTimes[epTimes.length-1]-epTimes[0],1)} s, median gap ${fmt(median(gaps),2)} s · ${esc(r.task)}`;
  const others=Object.keys(panel.episodes).filter(x=>x!==ep).sort((a,b)=>episodeLabel(a).localeCompare(episodeLabel(b)));
  $('crossEpisode').replaceChildren();$('crossEpisode').add(new Option('— choose —',''));others.forEach(x=>$('crossEpisode').add(new Option(episodeLabel(x),x)));
  if(align.kind==='episode'){if(others.includes(align.episode))$('crossEpisode').value=align.episode;else align={kind:'any'};}
@@ -233,7 +236,7 @@ function resolveAlign(){
  const m=match(selected,align.kind,align.rank);
  return m?{target:m.target,how:`${labels[kinds.indexOf(align.kind)].toLowerCase()}, #${align.rank+1}`}:{reason:`No counterpart #${align.rank+1} for “${labels[kinds.indexOf(align.kind)]}” at this anchor (${match(selected,align.kind,0)?'fewer eligible episodes':'no eligible frames'}).`};
 }
-function clearCross(message){$('crossInfo').textContent=message;Plotly.purge('cross');Plotly.purge('crossLines');$('crossCards').replaceChildren();alignedTarget=null;renderCounterparts();}
+function clearCross(message){$('crossInfo').textContent='';Plotly.purge('cross');Plotly.purge('crossLines');alignedTarget=null;renderCounterpartPane(null,message);renderCounterparts();}
 async function renderCross(){
  const token=loadToken;
  if(!panel.cross_file)return clearCross('Cross-episode matrices were not written (repr_cross_matrices=false); re-run in plot mode with it enabled.');
@@ -256,17 +259,25 @@ async function renderCross(){
  if(bg!=null)lines.push({type:'scatter',mode:'lines',name:'Background of the anchor',x:[offs[0],offs[offs.length-1]],y:[bg,bg],line:{color:'#949daa',dash:'dash',width:1.5},hoverinfo:'name+y'});
  Plotly.react('crossLines',lines,{margin:{l:55,r:10,t:10,b:50},xaxis:{title:{text:'Offset (s)'},zeroline:true,zerolinecolor:'#c8ced8'},yaxis:{title:{text:M.label.split(' (')[0]}},legend:{orientation:'h',font:{size:10},y:-.3}},{responsive:true,displaylogo:false});
  const aligned=val(crossCos(selected,target),selected,target), gapA=median(A.ids.map(i=>panel.temporal.previous_dt_s[i])), gapB=median(B.ids.map(i=>panel.temporal.previous_dt_s[i]));
- const coarse=Math.max(gapA??0,gapB??0)>delta*1.05?` Δ = ${delta} s is below the sampling gap (${fmt(gapA,1)} s / ${fmt(gapB,1)} s), so neighbouring cells reuse frames.`:'';
- $('crossInfo').textContent=`Centered on: ${resolved.how}. Rows: ${rA.robot} · ${rA.episode_label}, anchor at ${fmt(rA.time_s,2)} s. Columns: ${rB.robot} · ${rB.episode_label}, counterpart at ${fmt(rB.time_s,2)} s. Pair ${M.label.toLowerCase()}: ${fmt(aligned,4)}; anchor's background: ${fmt(bg,4)}.${coarse}\nTasks: “${rA.task}” vs “${rB.task}”.`;
- $('crossCards').innerHTML=frameCard(target,'Counterpart (grid columns)','counterpart');
- document.querySelectorAll('#crossCards [data-pick]').forEach(el=>el.onclick=()=>pick(Number(el.dataset.pick),true));
+ const coarse=Math.max(gapA??0,gapB??0)>delta*1.05?` Δ = ${delta} s is below the sampling gap (${fmt(gapA,1)} s / ${fmt(gapB,1)} s): neighbouring cells reuse frames.`:'';
+ $('crossInfo').textContent=`Center cell ${M.label.toLowerCase()} ${fmt(aligned,4)}, anchor's background ${fmt(bg,4)}.${coarse}`;
+ renderCounterpartPane(target,`centered on: ${resolved.how}`,measure()==='cosine'?'':` · ${M.label.toLowerCase()} <b class="num">${fmt(aligned)}</b>`);
  renderCounterparts();
 }
-function frameCard(i,title,cls){
- const r=localRows[i];
- const cameras=['external_0','wrist_0'].map(cam=>{const src=thumb(r.sample,cam);return src?`<img src="${src}" alt="${cam}" loading="lazy">`:`<span>${cam}: unavailable</span>`;}).join('');
- const action=cls==='anchor'?'':`<button data-pick="${i}" style="margin-top:8px">Make anchor</button>`;
- return `<div class="card ${cls||''}"><strong>${esc(title)}</strong><div class="details">${esc(r.robot)} · ${esc(r.episode_label)} <span class="tag">${r.holdout?'held out':'train'}</span><br>Frame ${r.frame} · ${fmt(r.time_s,2)} s</div><div class="cameras">${cameras}</div><div class="details"><b>Task:</b> ${esc(r.task)}<br><b>Step:</b> ${esc(r.subtask)}</div>${action}</div>`;
+function paneHead(i){const r=localRows[i];return `${esc(r.robot)} · ${esc(r.episode_label)} <span class="tag">${r.holdout?'held out':'train'}</span> · frame ${r.frame} · <b class="num">${fmt(r.time_s,2)} s</b>`;}
+function cameras(i){const r=localRows[i];return '<div class="cameras">'+['external_0','wrist_0'].map(cam=>{const src=thumb(r.sample,cam);return src?`<img src="${src}" alt="${cam}" loading="lazy">`:`<span>${cam}: unavailable</span>`;}).join('')+'</div>';}
+function taskLine(i){const r=localRows[i];return `<b>Task:</b> ${esc(r.task)} · <b>Step:</b> ${esc(r.subtask)}`;}
+function renderAnchorPane(){
+ const pos=epIds.indexOf(selected), m=temporal(selected), n=$('episode').options.length, k=$('episode').selectedIndex, gaps=epIds.map(i=>panel.temporal.previous_dt_s[i]);
+ $('frame').value=pos;
+ $('anchor').innerHTML=`<div class="details">${paneHead(selected)} · frame ${pos+1}/${epIds.length} of episode ${k+1}/${n} shown</div>${cameras(selected)}<div class="details">${taskLine(selected)}<br><span class="muted">episode: ${epIds.length} frames over ${fmt(epTimes[epTimes.length-1]-epTimes[0],1)} s, gap ${fmt(median(gaps),2)} s · raw norm ${fmt(m.raw_norm)}${panel.geometry==='raw'?'':` · centered norm ${fmt(m.geometry_norm)}`} · background (same robot) ${fmt(m.background_same_robot)}, (other robots) ${fmt(m.background_other_robot)}</span></div>`;
+}
+function renderCounterpartPane(target,how,extra){
+ if(target==null){$('crossCards').innerHTML=`<div class="details muted" style="padding:20px 0">${esc(how)}</div>`;return;}
+ const rA=localRows[selected], rB=localRows[target], c=crossCos(selected,target), bg=panel.temporal[rB.robot===rA.robot?'background_same_robot':'background_other_robot'][selected];
+ const numbers=`cosine to anchor <b class="num">${fmt(c)}</b>${bg==null?'':` · above background <b class="num">${c-bg>=0?'+':''}${fmt(c-bg)}</b>`}${extra||''}`;
+ $('crossCards').innerHTML=`<div class="details">${paneHead(target)} · <span class="muted">${esc(how)}</span></div>${cameras(target)}<div class="details">${taskLine(target)}<br>${numbers} <button class="small" data-pick="${target}" style="margin-left:8px" title="Jump to this frame in its own episode; its counterparts are listed instead">Make anchor</button></div>`;
+ document.querySelectorAll('#crossCards [data-pick]').forEach(el=>el.onclick=()=>pick(Number(el.dataset.pick),true));
 }
 function renderCounterparts(){
  const T=panel.temporal;
@@ -283,10 +294,8 @@ function renderCounterparts(){
  document.querySelectorAll('#matches [data-pick]').forEach(el=>el.onclick=e=>{e.stopPropagation();pick(Number(el.dataset.pick),true);});
 }
 function renderFrame(){
- const pos=epIds.indexOf(selected), m=temporal(selected), t=epTimes[pos];
- $('frame').value=pos;
- $('frameStats').textContent=`frame ${pos+1}/${epIds.length} · ${fmt(t,2)} s · raw norm ${fmt(m.raw_norm)} · ${panel.geometry==='raw'?'':`centered norm ${fmt(m.geometry_norm)} · `}step distance ${fmt(m.step_l2)}`;
- $('anchor').innerHTML=frameCard(selected,'Anchor frame (grid rows)','anchor');
+ const t=epTimes[epIds.indexOf(selected)];
+ renderAnchorPane();
  Plotly.relayout('matrix',{shapes:[{type:'line',xref:'paper',yref:'y',x0:0,x1:1,y0:t,y1:t,line:{color:'white',width:1}},{type:'line',xref:'x',yref:'paper',x0:t,x1:t,y0:0,y1:1,line:{color:'white',width:1}}]});
  Plotly.relayout('timeline',{shapes:[cursor()]});
  renderProfile();renderCounterparts();renderCross();
