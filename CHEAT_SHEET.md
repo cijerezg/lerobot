@@ -102,7 +102,7 @@ Uses `policy.pretrained_path` in `config_rl.yaml`. Captures separate image/state
     --probe_parameters.mode=plot --probe_parameters.repr_local_window_s=2.0
 ```
 
-Pick a geometry (raw cosines are ~1 everywhere; robot- or episode-centered shows the structure) and a measure (cosine, L2 distance, norm ratio), an episode, then slide through frames: cameras, the within-episode matrix, the frame's profile against the background level, the aligned cross-episode grid, the lag curve and cross-episode matches follow. `repr_max_frames` caps physical frames and `repr_min_frames_per_episode` caps episodes so matrices stay dense (1600 / 40 → at most 40 episodes of ≥ 40 frames); constant text doubles captures. `max_episodes` is per robot; the report shows the median sampling gap. Changing the frame budget needs recollection.
+Pick a geometry (raw cosines are ~1 everywhere; robot- or episode-centered shows the structure) and a measure (cosine, L2 distance, norm ratio), an episode, then slide through frames: cameras, the within-episode matrix, the frame's profile against the background level, the ranked matches in other episodes (top 5 episodes per category) and the aligned cross-episode grid follow. The grid centers the selected frame and its match and compares the two episodes at offsets of ±Δ·span seconds (Δ 1–8 s, 11×11 or 15×15). Sampling is one frame every `repr_stride_s` (2 s); whole episodes are kept while they fit `repr_max_frames` (1600 → about 18 three-minute episodes); constant text doubles captures. `max_episodes` is per robot; the report shows the stride and median gap. Changing the stride or frame budget needs recollection.
 
 ## Probe compare
 

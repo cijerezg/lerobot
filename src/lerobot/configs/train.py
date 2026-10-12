@@ -378,17 +378,18 @@ class ProbeConfig:
     action_manifold_cache: str | None = None
     repr_pca_dims: int = 100  # legacy; temporal representations always project to 3-D
     # Temporal representations: selected native token groups at the first flow step.
-    # Common max_episodes is per robot. Keep enough frames for local time windows;
-    # the total cap thins whole episodes evenly, never truncates their endings.
+    # Common max_episodes is per robot. One frame every repr_stride_s seconds of every
+    # episode; whole episodes are kept in balanced order while they fit repr_max_frames,
+    # never thinned below the stride (the aligned grid needs a frame near every offset).
     repr_view: str = "attention_input"
     repr_layers: str = "14,28,32"
     repr_groups: str = "action,img_external_0,img_wrist_0,state"
     repr_constant_text: bool = True
-    repr_n_frames_per_episode: int | None = None  # inherits n_frames_per_episode
+    repr_n_frames_per_episode: int | None = None  # legacy; sampling is by repr_stride_s
+    repr_stride_s: float = 2.0  # seconds between sampled frames within an episode
     repr_max_frames: int = 1600  # physical frames; constant-text control doubles forwards
-    # Episodes share repr_max_frames; this caps their number so each keeps a dense
-    # within-episode matrix (max_frames // min_frames episodes at most).
-    repr_min_frames_per_episode: int = 40
+    # Episodes with fewer frames than this at the stride are left out of the sample.
+    repr_min_frames_per_episode: int = 5
     repr_local_window_s: float = 2.0  # radius in seconds, self excluded
     # Store every frame against every frame (uint16, per panel) for the report's anchored
     # cross-episode grid; a few MB per panel at 1600 frames.

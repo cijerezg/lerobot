@@ -405,16 +405,17 @@ probe_parameters:
   ref_n_frames_per_episode: 256
   action_pca_dims: 50
   action_nn_state_k: 256
-  # Temporal representation probe: PCA only, 3D; native attention input.
+  # Temporal representation probe: native attention input, one frame every 2 s.
   repr_view: attention_input
   repr_layers: 14,28,32
   repr_groups: action,img_external_0,img_wrist_0,state
   repr_constant_text: true
-  # Denser than the common 32-frame budget to support local temporal comparisons.
-  repr_n_frames_per_episode: 128
-  # 1600 frames shared by at most 1600 // 40 = 40 episodes: >= 40 x 40 within-episode matrices.
+  # One frame every repr_stride_s seconds; whole episodes are kept while they fit the
+  # 1600-frame budget (about 18 three-minute episodes at 2 s). Episodes with fewer than
+  # repr_min_frames_per_episode frames at the stride are skipped.
+  repr_stride_s: 2.0
   repr_max_frames: 1600
-  repr_min_frames_per_episode: 40
+  repr_min_frames_per_episode: 5
   repr_local_window_s: 2.0
   repr_cross_matrices: true
   umap_n_neighbors: 15

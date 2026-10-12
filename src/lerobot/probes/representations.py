@@ -9,37 +9,35 @@ pooling. Real and constant task/subtask prompts are captured separately.
 ``trajectories.html`` follows one episode frame by frame: a slider over its sampled
 frames drives both camera previews, a crosshair on the episode's full cosine matrix
 (every frame against every other, in the original dimensions), the selected frame's
-cosine profile along the episode, and a highlight in a shared 3-D PCA. Everything
-heavy is loaded per panel from ``panels/<key>.js`` on demand; frame previews are
-read from ``cache/thumbs``. Keep the directory together when moving the report.
+cosine profile along the episode, its best matches in other episodes and the aligned
+cross-episode grid around one of those matches. Everything heavy is loaded per panel
+from ``panels/<key>.js`` on demand; frame previews are read from ``cache/thumbs``.
+Keep the directory together when moving the report.
 
 Raw cosines between model states sit near 1 because all states share a common
 direction, so three geometries are measured: raw, robot-centered (per-robot training
 mean) and episode-centered (each episode's own sampled mean, leaving only motion
-within the episode). To tell a trivially high local cosine from structure, every
-frame also records its *background*: the mean cosine to all frames of other
-episodes, same and other robot, and its best cross-episode matches. The local
-radius is a slider in the report, recomputed from the matrix; the ``lags.csv``
-profile gives mean cosine by time gap per episode, which says at what separation
-frames stop being closer than other episodes are. PCA is fitted once per
-group/layer/text/geometry across robots on training rows, then held fixed while
-filtering; a robot with only held-out rows uses those rows descriptively, recorded
-in the report. No UMAP, whitening, or similarity measured in the projection. Bases
-are refitted across checkpoints.
+within the episode). To tell a trivially high similarity from structure, every frame
+also records its *background*: the mean cosine to all frames of other episodes, same
+and other robot. No PCA, UMAP, whitening, or similarity measured in a projection.
 
 Matches exclude the entire source episode, and split by same / different robot and
-task (exact task text). Target-window cosine averages the anchor's similarity to
-frames near its best match; this is not trajectory alignment. Crossings are
-candidates for inspection, not a confusion score or causal evidence. These are
-dataset replays, not closed-loop rollouts; text controls do not remove scene/state
-confounding. Native action queries are pooled over future positions.
+task (exact task text). Each category keeps the best frame of each of the top
+``MATCH_TOP_K`` episodes, so the report can browse alternatives. Target-window cosine
+averages the anchor's similarity to frames near its match; the aligned grid in the
+report is what shows whether a match persists in time. Crossings are candidates for
+inspection, not a confusion score or causal evidence. These are dataset replays, not
+closed-loop rollouts; text controls do not remove scene/state confounding. Native
+action queries are pooled over future positions.
 
-Sampling balances episodes over robot, task and split before distributing the frame
-budget. LeRobot rows follow the stored image grid; diverse rows use available corpus
-anchors. Sparse neighborhoods remain missing, with time gaps and counts recorded.
-``cache/`` saves float32 selected layers and frame previews for model-free replotting;
-old whole-sequence caches are deliberately rejected. ``sampling_plan.json``,
-``temporal.csv``, ``matches.csv``, ``lags.csv`` and ``pca/`` retain the measurements.
+Sampling takes one frame every ``repr_stride_s`` seconds of every episode (the stored
+image frame or corpus anchor nearest to each multiple of the stride), balances
+episodes over robot, task and split, then keeps whole episodes in that order while
+they fit under ``repr_max_frames``; episodes are never thinned below the stride, so
+the aligned grid always has a frame near every offset it asks for. ``cache/`` saves
+float32 selected layers and frame previews for model-free replotting; old
+whole-sequence caches are deliberately rejected. ``sampling_plan.json``,
+``temporal.csv`` and ``matches.csv`` retain the measurements.
 """
 from __future__ import annotations
 
@@ -89,13 +87,35 @@ def _options(cfg):
         raise ValueError(f"Unknown repr_view {p.repr_view!r}")
     if not np.isfinite(p.repr_local_window_s) or p.repr_local_window_s <= 0 or p.repr_max_frames < 2:
         raise ValueError("repr_local_window_s must be positive; repr_max_frames must be >= 2")
+    if not np.isfinite(p.repr_stride_s) or p.repr_stride_s <= 0:
+        raise ValueError("repr_stride_s must be a positive number of seconds")
     if p.repr_min_frames_per_episode < 2 or p.repr_min_frames_per_episode > p.repr_max_frames:
         raise ValueError("repr_min_frames_per_episode must be >= 2 and <= repr_max_frames")
     return layers, groups
 
 
+def stride_picks(times, stride_s):
+    """Positions of the frame nearest to each multiple of the stride from the first frame.
+
+    Targets run from the first time to the last in steps of ``stride_s``; each takes
+    the nearest available frame, duplicates collapse, order is chronological. Nothing
+    is interpolated: where the data is sparser than the stride, fewer frames come back.
+    """
+    t = np.asarray(times, dtype=np.float64)
+    if len(t) == 0:
+        return []
+    order = np.argsort(t, kind="stable")
+    sorted_t = t[order]
+    targets = np.arange(sorted_t[0], sorted_t[-1] + stride_s / 2, stride_s)
+    right = np.searchsorted(sorted_t, targets)
+    left = np.clip(right - 1, 0, len(t) - 1)
+    right = np.clip(right, 0, len(t) - 1)
+    nearest = np.where(np.abs(sorted_t[right] - targets) < np.abs(sorted_t[left] - targets), right, left)
+    return [int(order[k]) for k in dict.fromkeys(nearest.tolist())]
+
+
 def _lerobot_candidates(dataset, cfg, key, holdout):
-    """Read labels/times without decoding video; no subtask-window restriction."""
+    """Read labels/times without decoding video; one frame per stride, no subtask-window restriction."""
     from lerobot.datasets.embodiment import embodiment_name
 
     identity = dataset_identity_columns(dataset, cfg)
@@ -104,13 +124,11 @@ def _lerobot_candidates(dataset, cfg, key, holdout):
     columns = dataset.hf_dataset.select_columns(["frame_index", "timestamp", "task_index"]).with_format(None)[:]
     root = str(Path(dataset.root).resolve())
     candidates = []
-    p = cfg.probe_parameters
-    budget = p.repr_n_frames_per_episode if p.repr_n_frames_per_episode is not None else p.n_frames_per_episode
+    stride_s = cfg.probe_parameters.repr_stride_s
     for ep, indices in build_episode_index(dataset).items():
         frames = []
         available = [i for i in indices if i % stride == 0]
-        picks = np.linspace(0, len(available) - 1, min(len(available), budget), dtype=int)
-        for position in picks:
+        for position in stride_picks([float(columns["timestamp"][i]) for i in available], stride_s):
             index = available[position]
             task = str(dataset.meta.tasks.iloc[int(columns["task_index"][index])].name)
             frames.append({**identity, "kind": "lerobot", "source_key": key,
@@ -124,7 +142,7 @@ def _lerobot_candidates(dataset, cfg, key, holdout):
     return candidates
 
 
-def _diverse_candidates(buffer, key, holdout, frames_per_episode):
+def _diverse_candidates(buffer, key, holdout, stride_s):
     from lerobot.datasets.diverse_prompt import episode_task
 
     by_episode = defaultdict(list)
@@ -136,40 +154,35 @@ def _diverse_candidates(buffer, key, holdout, frames_per_episode):
         task = episode_task(buffer.selection.episode_records[ep], first["source"])[0]
         ordered = sorted(items, key=lambda item: float(item[1]["anchor_s"]))
         ordered = list({float(row["anchor_s"]): (index, row) for index, row in ordered}.values())
-        picks = np.linspace(0, len(ordered) - 1, min(len(ordered), frames_per_episode), dtype=int)
-        frames, seen = [], set()
-        for position in picks:
+        frames = []
+        for position in stride_picks([float(row["anchor_s"]) for _, row in ordered], stride_s):
             index, row = ordered[position]
-            t = float(row["anchor_s"])
-            if t in seen:
-                continue
-            seen.add(t)
             frames.append({"kind": "diverse", "source_key": key, "source": row["source"],
                            "robot": str(row["embodiment"]), "episode": f"{corpus}::{ep}",
                            "episode_label": f"{row['source']}/{ep}", "index": index,
-                           "frame": int(row["anchor_frame"]), "time_s": t, "task": task,
+                           "frame": int(row["anchor_frame"]), "time_s": float(row["anchor_s"]), "task": task,
                            "holdout": holdout})
         if frames:
             candidates.append(frames)
     return candidates
 
 
-def select_sequences(candidates, max_episodes, frames_per_episode, max_frames, seed, min_frames_per_episode=2):
-    """Balance robot/task/split, then thin whole trajectories including both ends.
+def select_sequences(candidates, max_episodes, max_frames, seed, min_frames_per_episode=2):
+    """Balance robot/task/split, then keep whole episodes while they fit the frame budget.
 
     max_episodes is per robot. Source episode identity excludes duplicate copies and
-    train/holdout overlap. A hard budget never truncates just an episode's tail.
-    min_frames_per_episode caps how many episodes share the frame budget, so that a
-    dense within-episode matrix is not traded away for more episodes: episodes are
-    taken from the balanced round-robin until ``max_frames // min_frames_per_episode``.
+    train/holdout overlap. Episodes shorter than ``min_frames_per_episode`` frames are
+    left out; the others are taken in balanced round-robin order and an episode that
+    no longer fits under ``max_frames`` is skipped, never thinned or cut short, so the
+    frames of every kept episode stay at the sampling stride.
     """
-    if frames_per_episode < 2 or max_frames < 2 or (max_episodes is not None and max_episodes < 1):
+    if max_frames < 2 or min_frames_per_episode < 2 or (max_episodes is not None and max_episodes < 1):
         raise ValueError("Need >= 2 frames per episode and positive episode/frame budgets")
     rng = np.random.default_rng(seed)
     buckets = defaultdict(lambda: defaultdict(list))
     seen = set()
     for frames in candidates:
-        if len(frames) < 2:
+        if len(frames) < min_frames_per_episode:
             continue
         frames = sorted(frames, key=lambda r: r["time_s"])
         first = frames[0]
@@ -189,35 +202,21 @@ def select_sequences(candidates, max_episodes, frames_per_episode, max_frames, s
                 if i < len(cells[key]):
                     queue.append(cells[key][i])
         queues[robot] = queue if max_episodes is None else queue[:max_episodes]
-    chosen, episode_cap = [], max_frames // max(2, min_frames_per_episode)
+    chosen, used = [], 0
     for i in range(max((len(q) for q in queues.values()), default=0)):
         for queue in queues.values():
-            if i < len(queue) and len(chosen) < episode_cap:
+            if i < len(queue) and used + len(queue[i]) <= max_frames:
                 chosen.append(queue[i])
+                used += len(queue[i])
     if not chosen:
-        raise ValueError("No episodes with at least two available frames")
-    counts = np.full(len(chosen), 2)
-    limits = np.array([min(len(ep), frames_per_episode) for ep in chosen])
-    remaining = max_frames - int(counts.sum())
-    while remaining and np.any(counts < limits):
-        for i in np.flatnonzero(counts < limits):
-            if not remaining:
-                break
-            counts[i] += 1
-            remaining -= 1
-    samples = []
-    for frames, count in zip(chosen, counts, strict=True):
-        picks = np.linspace(0, len(frames) - 1, int(count), dtype=int)
-        samples.extend(frames[i] for i in picks)
+        raise ValueError(f"No episode with at least {min_frames_per_episode} frames fits under {max_frames} frames")
+    samples = [frame for frames in chosen for frame in frames]
     return sorted(samples, key=lambda s: (s["kind"], s["source_key"], s["episode"], s["time_s"]))
 
 
 def sampling_plan(dataset, cfg):
     p = cfg.probe_parameters
     datasets, buffers, candidates = {}, {}, []
-    n_frames = p.repr_n_frames_per_episode if p.repr_n_frames_per_episode is not None else p.n_frames_per_episode
-    if n_frames < 2:
-        raise ValueError("Need >= 2 representation frames per episode")
     roots = [str(s.root) for s in (getattr(cfg.dataset, "sources", None) or []) if s.root]
     roots += list(getattr(cfg.dataset, "additional_offline_dataset_paths", None) or [])
     if getattr(cfg.dataset, "root", None):
@@ -235,8 +234,8 @@ def sampling_plan(dataset, cfg):
     if getattr(cfg, "diverse", None) is not None and cfg.diverse.enabled:
         buffers = _open_diverse_buffers(cfg)
         for key, buffer in buffers.items():
-            candidates += _diverse_candidates(buffer, key, key.endswith("holdout"), n_frames)
-    samples = select_sequences(candidates, p.max_episodes, n_frames, p.repr_max_frames, p.random_seed,
+            candidates += _diverse_candidates(buffer, key, key.endswith("holdout"), p.repr_stride_s)
+    samples = select_sequences(candidates, p.max_episodes, p.repr_max_frames, p.random_seed,
                                p.repr_min_frames_per_episode)
     return samples, datasets, buffers
 
@@ -299,7 +298,7 @@ def collect(adapter, cfg, samples, datasets, buffers, cache_dir):
         array.flush()
     for group, mask in present.items():
         np.save(cache_dir / f"{group}.present.npy", mask)
-    meta = {"protocol": PROTOCOL, "view": p.repr_view, "layers": layers,
+    meta = {"protocol": PROTOCOL, "view": p.repr_view, "layers": layers, "stride_s": p.repr_stride_s,
             "groups": list(arrays), "requested_groups": groups, "rows": rows, "noise_seed": p.random_seed,
             "checkpoint": str(getattr(cfg.policy, "pretrained_path", "")), "flow_time": 0}
     (cache_dir / "meta.json").write_text(json.dumps(meta, indent=2))
@@ -332,7 +331,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
         if adapter is None:
             raise ValueError("Representation collection requires a policy adapter")
         samples, datasets, buffers = sampling_plan(primary_dataset, cfg)
-        plan = {"protocol": PROTOCOL, "samples": samples,
+        plan = {"protocol": PROTOCOL, "stride_s": p.repr_stride_s, "samples": samples,
                 "episodes": len({r['episode'] for r in samples}), "frames": len(samples)}
         (root / "sampling_plan.json").write_text(json.dumps(plan, indent=2))
         collect(adapter, cfg, samples, datasets, buffers, root / "cache")
@@ -355,12 +354,11 @@ def run(adapter, primary_dataset, cfg, output_dir):
                 summary=summary, status="info",
                 metrics=[Metric("frames", "Frames", fmt=0), Metric("episodes", "Episodes", fmt=0),
                          Metric("robots", "Robots", fmt=0)],
-                panels=[Panel("trajectories.html", "Frame slider over an episode: cameras, within-episode cosine matrix, frame profile against background, shared 3-D PCA and cross-episode matches",
-                              how="Pick a geometry (robot- or episode-centered removes the shared direction that makes raw cosines ~1), then slide through the episode. Read the profile against the background and best-match lines; the aligned cross-episode grid shows whether a match persists around its anchor. PCA crossings alone do not establish confusion.", primary=True),
+                panels=[Panel("trajectories.html", "Frame slider over an episode: cameras, within-episode cosine matrix, frame profile against background, top matches in other episodes and the aligned cross-episode grid around a match",
+                              how="Pick a geometry (robot- or episode-centered removes the shared direction that makes raw cosines ~1), then slide through the episode. Read the match lines against the background; pick a match and read the aligned grid: a bright diagonal through the center means the two episodes move through the same states at the same pace, a single bright cell means a momentary coincidence.", primary=True),
                         Panel("temporal.csv", "Original-space local cosine, background cosine, raw norms and sampling gaps"),
-                        Panel("matches.csv", "Cross-episode matches and neighborhood support"),
-                        Panel("lags.csv", "Mean within-episode cosine by time gap between frames, per episode"),
-                        Panel("sampling_plan.json", "Exact sampled episodes and frames")],
+                        Panel("matches.csv", "Top cross-episode matches per category and neighborhood support"),
+                        Panel("sampling_plan.json", "Exact sampled episodes and frames, and the sampling stride")],
                 see_also=["conditions_matrix", "subspace_spans", "action_trace"])
     return summary
 

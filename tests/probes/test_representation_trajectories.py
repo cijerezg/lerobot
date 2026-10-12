@@ -10,8 +10,8 @@ import torch
 from lerobot.configs.train import ProbeConfig
 from lerobot.probes import representations as rep
 from lerobot.probes.representation_trajectories import (
-    LAG_EDGES_S, compact, cross_episode_matches, episode_center, episode_cosine_matrices,
-    full_cosine, lag_profile, pack_cosine, project_pca, robot_center, temporal_metrics, unpack_cosine,
+    MATCH_TOP_K, compact, cross_episode_matches, episode_center, episode_cosine_matrices,
+    full_cosine, pack_cosine, robot_center, temporal_metrics, unpack_cosine,
 )
 
 
@@ -43,7 +43,7 @@ def test_matches_exclude_source_episode_and_split_robot_task_in_original_space()
     x = np.array([[1., 0, 0, 0], [1., 0, 0, 0], [2., 0, 0, 0],
                   [1., 0, 0, 10], [0., 1, 0, 0], [-1., 0, 0, 0], [0., 0, 0, 0]])
     matches, background = cross_episode_matches(x, rows, 1, block_size=2)
-    m = matches[0]
+    m = {kind: ranked[0] for kind, ranked in matches[0].items()}
     assert m['same_robot_same_task']['target'] == 2
     assert m['same_robot_same_task']['raw_norm_ratio'] == 2
     # Same first 3 coordinates do not imply similarity in the original space.
@@ -51,7 +51,7 @@ def test_matches_exclude_source_episode_and_split_robot_task_in_original_space()
     assert m['different_robot_same_task']['target'] == 4
     assert m['different_robot_different_task']['target'] == 5
     assert m['different_robot_different_task']['cosine'] == -1
-    assert all(v is None for v in matches[6].values())
+    assert all(v == [] for v in matches[6].values())
     # Background is the mean over every valid frame of other episodes, not just the best.
     assert background[0]['background_same_robot'] == pytest.approx((1 + 1 / np.sqrt(101)) / 2)
     assert background[0]['background_other_robot'] == pytest.approx(-0.5)
@@ -65,14 +65,26 @@ def test_target_neighborhood_support_uses_matched_episode_time_and_task():
     rows = rows_for(['a', 'b', 'b', 'b', 'b'], [0, 0, .5, 9, .8],
                     tasks=['one', 'two', 'two', 'two', 'three'])
     x = np.array([[1., 0], [1., 0], [0., 1], [1., 0], [-1., 0]])
-    match = cross_episode_matches(x, rows, 1)[0][0]['same_robot_different_task']
+    match = cross_episode_matches(x, rows, 1)[0][0]['same_robot_different_task'][0]
     assert match['target'] == 1
     assert match['target_window_count'] == 2
     assert match['target_window_cosine'] == .5
     assert match['candidate_count'] == 4 and match['candidate_episodes'] == 1
 
 
-def test_training_fits_centering_and_pca_without_holdout_leakage():
+def test_ranked_matches_keep_one_frame_per_episode_best_first():
+    # Episode b has two frames close to the anchor; c, d, e one each; z is a zero vector.
+    rows = rows_for(['a', 'b', 'b', 'c', 'd', 'e', 'z'], [0] * 7)
+    x = np.array([[1., 0], [.9, .1], [.95, .05], [.5, .5], [.8, .2], [0., 1], [0., 0]])
+    ranked = cross_episode_matches(x, rows, 1, top_k=3)[0][0]['same_robot_same_task']
+    assert [rows[m['target']]['episode'] for m in ranked] == ['b', 'd', 'c']
+    assert ranked[0]['target'] == 2  # the better of episode b's two frames
+    assert [m['cosine'] for m in ranked] == sorted((m['cosine'] for m in ranked), reverse=True)
+    assert all(m['candidate_count'] == 5 and m['candidate_episodes'] == 4 for m in ranked)
+    assert len(cross_episode_matches(x, rows, 1)[0][0]['same_robot_same_task']) == min(MATCH_TOP_K, 4)
+
+
+def test_training_fits_centering_without_holdout_leakage():
     rows = rows_for(['a']*4 + ['b']*2, robots=['A']*4 + ['B']*2)
     rows[3]['holdout'] = True
     rows[4]['holdout'] = rows[5]['holdout'] = True
@@ -81,26 +93,15 @@ def test_training_fits_centering_and_pca_without_holdout_leakage():
     np.testing.assert_allclose(means['A'], [3, 0])
     assert y[3, 0] == 997
     assert provenance['B']['fit'].startswith('all')
-    coords, pca = project_pca(x, rows)
-    assert coords.shape == (6, 3) and not pca['fallback']
-    np.testing.assert_allclose(pca['mean'], [3, 0])
-    np.testing.assert_allclose(pca['variance'], [1, 0])
-    assert set(pca['fit_rows']) == {0, 1, 2}
-    changed = x.copy(); changed[3:] *= 100
-    np.testing.assert_allclose(project_pca(changed, rows)[1]['components'], pca['components'])
 
 
-def test_degenerate_pca_is_finite_and_zero_cosines_are_missing():
+def test_zero_cosines_are_missing():
     rows = rows_for(['a', 'b'])
-    x = np.ones((2, 1))
-    coords, pca = project_pca(x, rows)
-    assert coords.shape == (2, 3) and not coords.any()
-    assert not pca['variance'].any()
-    y = robot_center(x, rows)[0]
-    assert all(v is None for v in cross_episode_matches(y, rows, 1)[0][0].values())
+    y = robot_center(np.ones((2, 1)), rows)[0]
+    assert all(v == [] for v in cross_episode_matches(y, rows, 1)[0][0].values())
 
 
-def test_episode_centering_matrices_and_lag_profile_follow_time_not_input_order():
+def test_episode_centering_and_matrices_follow_time_not_input_order():
     rows = rows_for(['a', 'a', 'b', 'a', 'a'], [2, 0, 5, 1, 3.5])
     x = np.array([[1., 0], [0., 1], [1., 1], [1., 0], [0., 0]])
     y = episode_center(x, rows)
@@ -111,11 +112,6 @@ def test_episode_centering_matrices_and_lag_profile_follow_time_not_input_order(
     assert a['ids'].tolist() == [1, 3, 0, 4] and a['times'].tolist() == [0, 1, 2, 3.5]
     np.testing.assert_allclose(a['cosine'][:3, :3], [[1, 0, 0], [0, 1, 1], [0, 1, 1]])
     assert np.isnan(a['cosine'][3]).all() and np.isnan(a['cosine'][:, 3]).all()  # zero vector
-    profile = lag_profile(a['cosine'], a['times'], edges=(0, 1, 2))
-    # Pairs (0,1)->gap 1 bin 0, (0,2)->2 bin 1, (1,2)->1 bin 0; frame 3 pairs are invalid.
-    assert [(p['lag_lo_s'], p['lag_hi_s'], p['pairs']) for p in profile] == [(0, 1, 2), (1, 2, 1), (2, None, 0)]
-    assert profile[0]['mean_cosine'] == .5 and profile[1]['mean_cosine'] == 0 and profile[2]['mean_cosine'] is None
-    assert lag_profile(a['cosine'], a['times'])[-1]['lag_lo_s'] == LAG_EDGES_S[-1]
     assert compact(np.array([[1.23456, np.nan], [np.inf, -0.00004]])) == [[1.2346, None], [None, -0.0]]
     full = full_cosine(x)
     np.testing.assert_allclose(full[np.ix_(a['ids'], a['ids'])], a['cosine'])
@@ -127,28 +123,46 @@ def test_episode_centering_matrices_and_lag_profile_follow_time_not_input_order(
     np.testing.assert_allclose(unpack_cosine(pack_cosine([[1.]]), 1), [[1.]])
 
 
-def test_sampling_balances_tasks_robots_and_preserves_episode_ends():
+def test_stride_picks_nearest_frame_per_step_without_interpolation():
+    assert rep.stride_picks([0, .4, 1.1, 2.2, 2.9, 4.3], 1.0) == [0, 2, 3, 4, 5]  # 0, 1.1, 2.2, 2.9, 4.3
+    assert rep.stride_picks([0, .4, 1.1, 2.2, 2.9, 4.3], 2.0) == [0, 3, 5]
+    assert rep.stride_picks([0, 10], 2.0) == [0, 1]  # sparse data gives fewer frames, never invented ones
+    assert rep.stride_picks([3, 1, 2], 1.0) == [1, 2, 0]  # positions in the given list, chronological
+    assert rep.stride_picks([], 1.0) == [] and rep.stride_picks([5.], 1.0) == [0]
+
+
+def test_sampling_balances_tasks_robots_and_keeps_whole_episodes_at_the_stride():
     candidates = []
     for robot in ('A', 'B'):
         for task in ('pick', 'place'):
             for ep in range(4):
                 rows = rows_for([f'{robot}/{task}/{ep}']*10, list(range(10)), [robot]*10, [task]*10)
                 candidates.append(rows)
-    selected = rep.select_sequences(candidates, 2, 8, 20, 42)
-    assert selected == rep.select_sequences(candidates, 2, 8, 20, 42)
-    assert len(selected) == 20
-    assert Counter(r['robot'] for r in selected) == {'A': 10, 'B': 10}
-    assert Counter(r['task'] for r in selected) == {'pick': 10, 'place': 10}
+    selected = rep.select_sequences(candidates, 2, 45, 42)
+    assert selected == rep.select_sequences(candidates, 2, 45, 42)
+    assert len(selected) == 40  # whole episodes only: a fifth would not fit under 45
+    assert Counter(r['robot'] for r in selected) == {'A': 20, 'B': 20}
+    assert Counter(r['task'] for r in selected) == {'pick': 20, 'place': 20}
     for episode in {r['episode'] for r in selected}:
         times = [r['time_s'] for r in selected if r['episode'] == episode]
-        assert times == sorted(set(times)) and times[0] == 0 and times[-1] == 9
-    # A minimum per episode caps how many episodes share the budget instead of thinning them.
-    dense = rep.select_sequences(candidates, 2, 8, 20, 42, min_frames_per_episode=10)
-    assert len({r['episode'] for r in dense}) == 2 and len(dense) == 16
+        assert times == list(range(10))  # never thinned
+    # Robots are visited in sorted order: an episode that does not fit is skipped, never
+    # thinned, and a later shorter one that fits is still taken.
+    long_a, long_b = candidates[0], candidates[8]
+    short = rows_for(['C/pick/short']*3, [0, 1, 2], ['C']*3, ['pick']*3)
+    def pick(budget, **kw):
+        return {r['episode'] for r in rep.select_sequences([long_a, long_b, short], None, budget, 42, **kw)}
+    assert pick(12, min_frames_per_episode=2) == {long_a[0]['episode']}
+    assert pick(14, min_frames_per_episode=2) == {long_a[0]['episode'], 'C/pick/short'}
+    assert pick(23, min_frames_per_episode=2) == {long_a[0]['episode'], long_b[0]['episode'], 'C/pick/short'}
+    # Episodes below the minimum are left out before balancing.
+    assert pick(23, min_frames_per_episode=5) == {long_a[0]['episode'], long_b[0]['episode']}
     with pytest.raises(ValueError, match='multiple sources'):
-        rep.select_sequences(candidates + candidates[:1], 2, 8, 20, 42)
+        rep.select_sequences(candidates + candidates[:1], 2, 45, 42)
     with pytest.raises(ValueError, match='>= 2'):
-        rep.select_sequences(candidates, 2, 1, 20, 42)
+        rep.select_sequences(candidates, 2, 1, 42)
+    with pytest.raises(ValueError, match='fits under'):
+        rep.select_sequences(candidates, 2, 5, 42)
 
 
 def fake_capture(tmp_path, monkeypatch):
@@ -198,7 +212,9 @@ def test_model_free_replot_writes_linked_report_metrics_basis_and_manifest(tmp_p
     assert 'data:image/jpeg' not in html and '"cosine":[' not in html
     light = json.loads(html.split('<script id="data" type="application/json">')[1].split('</script>')[0])
     assert len(light['panels']) == 24 and light['panels'][0]['file'].startswith('panels/')
-    assert light['thumb_dir'] == 'cache/thumbs' and light['lag_edges_s'] == list(LAG_EDGES_S)
+    assert light['thumb_dir'] == 'cache/thumbs' and light['match_top_k'] == MATCH_TOP_K
+    assert light['stride_s'] == cfg.probe_parameters.repr_stride_s
+    assert 'variance' not in light['panels'][0] and 'PCA' not in html and 'How local is local' not in html
     sidecars = sorted((tmp_path / 'panels').glob('*.js'))
     assert len(sidecars) == 48 and len(list((tmp_path / 'panels').glob('*.cross.js'))) == 24
     assert light['panels'][0]['cross_file'].endswith('.cross.js')
@@ -212,17 +228,17 @@ def test_model_free_replot_writes_linked_report_metrics_basis_and_manifest(tmp_p
     data = json.loads(text[text.index(',') + 1:-2])
     episode = data['episodes']['a']
     assert episode['ids'] == [0, 1] and [row[i] for i, row in enumerate(episode['cosine'])] == [1, 1]
-    assert len(episode['lags']) == len(LAG_EDGES_S)
+    assert 'lags' not in episode and 'xyz' not in data
     assert set(data['temporal']) >= {'local_cosine', 'background_same_robot', 'raw_norm'}
-    assert data['matches']['same_robot_different_task']['target'][0] in (2, 3)
-    assert data['matches']['same_robot_same_task']['target'] == [None] * 4
+    # Ranked matches: one list per frame, best first, one frame per other episode.
+    assert data['matches']['same_robot_different_task']['target'][0] in ([2], [3])
+    assert data['matches']['same_robot_same_task']['target'] == [[]] * 4
     assert (tmp_path / 'temporal.csv').stat().st_size > 100
-    assert (tmp_path / 'matches.csv').stat().st_size > 100
-    assert 'lag_lo_s' in (tmp_path / 'lags.csv').read_text()
-    assert len(list((tmp_path / 'pca').glob('*.npz'))) == 24
+    assert ',rank,' in (tmp_path / 'matches.csv').read_text()
+    assert not (tmp_path / 'lags.csv').exists() and not (tmp_path / 'pca').exists()
     index = json.loads((tmp_path / 'index.json').read_text())
     assert index['panels'][0]['file'] == 'trajectories.html'
-    assert any(p['file'] == 'lags.csv' for p in index['panels'])
+    assert not any(p['file'] == 'lags.csv' for p in index['panels'])
     cfg.probe_parameters.repr_cross_matrices = False
     rep.run(None, None, cfg, tmp_path)
     assert not list((tmp_path / 'panels').glob('*.cross.js'))
