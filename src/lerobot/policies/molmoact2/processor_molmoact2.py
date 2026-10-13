@@ -2309,6 +2309,16 @@ def make_molmoact2_pre_post_processors(
             encoding=action_encoding,
             chunk_size=int(hf_metadata.get("action_horizon") or config.chunk_size),
         )
+        if artifact.get("hand_block") is not None and not config.hand_block:
+            # Reuse the mixture run's exact joint normalization for a joints-only
+            # baseline. Trim masks as well as quantiles; the file stays untouched.
+            artifact.pop("hand_block")
+            artifact["action_width"] = artifact["state_width"] = JOINT_SLOTS
+            for key in (ACTION, OBS_STATE):
+                artifact["stats"][key] = {
+                    name: torch.as_tensor(value)[..., :JOINT_SLOTS].clone()
+                    for name, value in artifact["stats"][key].items()
+                }
         embodiment_names = list(artifact["row_names"])
         hand_block = artifact.get("hand_block") is not None
         stats_index_key = str(artifact["stats_index_key"])

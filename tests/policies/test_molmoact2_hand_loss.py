@@ -558,3 +558,97 @@ def test_hand_width_survives_factory_feature_replacement():
     assert cfg.output_features[ACTION].shape == (HAND_ACTION_WIDTH,)
     assert cfg.hand_joint_action_dim == 8
     assert MolmoAct2Policy._output_action_dim(SimpleNamespace(config=cfg), {}) == HAND_ACTION_WIDTH
+
+
+def test_joint_only_pipeline_reuses_hand_stats_without_changing_normalization(tmp_path, monkeypatch):
+    from copy import deepcopy
+
+    from lerobot.policies.molmoact2 import processor_molmoact2 as processors
+
+    # Keep the test independent of model/tokenizer downloads.
+    monkeypatch.setattr(processors.MolmoAct2PackInputsProcessorStep, "__post_init__", lambda self: None)
+    stats = {}
+    for key, width, shape in (
+        (ACTION, HAND_ACTION_WIDTH, (9, HORIZON, HAND_ACTION_WIDTH)),
+        (OBS_STATE, HAND_STATE_WIDTH, (9, HAND_STATE_WIDTH)),
+    ):
+        low = -torch.arange(1, width + 1, dtype=torch.float32).expand(shape).clone()
+        mask = torch.ones(9, width, dtype=torch.bool)
+        mask[REBOT, 7] = False
+        stats[key] = {"q01": low, "q99": -low, "mask": mask}
+    artifact = {
+        "format": processors.EMBODIMENT_STATS_FORMAT,
+        "layout": processors.EMBODIMENT_STATS_LAYOUT,
+        "encoding": "anchor",
+        "chunk_size": HORIZON,
+        "action_width": HAND_ACTION_WIDTH,
+        "state_width": HAND_STATE_WIDTH,
+        "stats_index_key": "action_layout_id",
+        "row_names": [str(i) for i in range(9)],
+        "native_action_dims": [8, 8, 8, 7, 7, 7, 7, 7, 7],
+        "hand_block": {"layout_has_hand": [True, True, True, False, False, False, True, False, False]},
+        "stats": stats,
+    }
+    shared_path = tmp_path / "hand.pt"
+    torch.save(artifact, shared_path)
+    original_bytes = shared_path.read_bytes()
+    joint_artifact = deepcopy(artifact)
+    joint_artifact.pop("hand_block")
+    joint_artifact["action_width"] = joint_artifact["state_width"] = JOINT_SLOTS
+    joint_artifact["stats"] = {
+        key: {name: value[..., :JOINT_SLOTS].clone() for name, value in entries.items()}
+        for key, entries in stats.items()
+    }
+    joint_path = tmp_path / "joint.pt"
+    torch.save(joint_artifact, joint_path)
+
+    def build(path, hand=False):
+        cfg = _config(
+            chunk_size=HORIZON,
+            n_action_steps=HORIZON,
+            norm_tag=None,
+            device="cpu",
+            hand_block=hand,
+            hand=HandBlockConfig(fk_weight=0.0) if hand else HandBlockConfig(),
+        )
+        cfg.action_encoding = "anchor"
+        cfg.embodiment_stats_path = str(path)
+        return processors.make_molmoact2_pre_post_processors(cfg)
+
+    shared_pre, shared_post = build(shared_path)
+    joint_pre, joint_post = build(joint_path)
+    for actual, expected in ((shared_pre, joint_pre), (shared_post, joint_post)):
+        assert [type(step) for step in actual.steps] == [type(step) for step in expected.steps]
+        for step in actual.steps:
+            assert not isinstance(step, (MolmoAct2HandBlockProcessorStep, MolmoAct2HandMonitorProcessorStep))
+            if isinstance(step, processors.MolmoAct2PackInputsProcessorStep):
+                assert step.hand_fast_layout == "joints"
+
+    def preprocess(pipeline):
+        transition = _two_row_transition()
+        for step in pipeline.steps:
+            if isinstance(step, processors.MolmoAct2PackInputsProcessorStep):
+                break
+            transition = step(transition)
+        return transition
+
+    actual, expected = preprocess(shared_pre), preprocess(joint_pre)
+    assert actual[TransitionKey.ACTION].shape[-1] == JOINT_SLOTS
+    assert actual[TransitionKey.OBSERVATION][OBS_STATE].shape[-1] == JOINT_SLOTS
+    assert torch.equal(actual[TransitionKey.ACTION], expected[TransitionKey.ACTION])
+    assert torch.equal(
+        actual[TransitionKey.OBSERVATION][OBS_STATE], expected[TransitionKey.OBSERVATION][OBS_STATE]
+    )
+    normalizer_types = (
+        processors.MolmoAct2MaskedNormalizerProcessorStep,
+        processors.MolmoAct2MaskedUnnormalizerProcessorStep,
+    )
+    for actual_pipeline, expected_pipeline in ((shared_pre, joint_pre), (shared_post, joint_post)):
+        actual_norm = next(step for step in actual_pipeline.steps if isinstance(step, normalizer_types))
+        expected_norm = next(step for step in expected_pipeline.steps if isinstance(step, normalizer_types))
+        for key, entries in expected_norm.stats.items():
+            for name, value in entries.items():
+                assert torch.equal(actual_norm.stats[key][name], value)
+    hand_pre, _ = build(shared_path, hand=True)
+    assert any(isinstance(step, MolmoAct2HandBlockProcessorStep) for step in hand_pre.steps)
+    assert shared_path.read_bytes() == original_bytes
