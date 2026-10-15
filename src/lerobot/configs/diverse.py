@@ -41,7 +41,12 @@ class DiverseCollectionConfig:
     weight: float = 1.0
     rebot_weight: float = 1.0
     # Optional named ReBot buckets; activates sampling without a per-source floor.
+    # A weight of 0 keeps the group's episodes in the cache but never samples them.
     rebot_group_weights: dict[str, float] = field(default_factory=dict)
+    # Stratified start coverage inside each ReBot group view: eligible starts (every
+    # image_stride-th frame) are cut into cells of this many starts; every pass draws one
+    # start per cell. 1 = plain iid draws.
+    rebot_start_cell: int = 1
     # Inner rule across the five corpus sources: sqrt_episodes | episodes | anchors | uniform.
     group_weight: str = "sqrt_episodes"
     group_weight_overrides: dict[str, float] = field(default_factory=dict)
@@ -59,8 +64,10 @@ class DiverseCollectionConfig:
     def validate(self) -> None:
         if self.weight <= 0 or self.rebot_weight <= 0:
             raise ValueError("diverse.weight and diverse.rebot_weight must be positive.")
-        if any(not name or weight <= 0 for name, weight in self.rebot_group_weights.items()):
-            raise ValueError("ReBot group names and weights must be nonempty and positive.")
+        if any(not name or weight < 0 for name, weight in self.rebot_group_weights.items()):
+            raise ValueError("ReBot group names must be nonempty and weights nonnegative (0 excludes the group).")
+        if self.rebot_start_cell < 1:
+            raise ValueError("diverse.rebot_start_cell must be >= 1.")
         allowed = ("sqrt_episodes", "episodes", "anchors", "uniform")
         if self.group_weight not in allowed:
             raise ValueError(f"diverse.group_weight must be one of {allowed}, got {self.group_weight!r}.")

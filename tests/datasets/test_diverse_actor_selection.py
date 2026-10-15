@@ -137,6 +137,16 @@ def test_selection_is_the_whole_accepted_corpus() -> None:
     assert {name: audit.anchors for name, audit in per_source.items()} == EXPECTED_ANCHORS_BY_SOURCE
 
 
+def test_excluded_episode_file_joins_the_holdout_without_entering_it(tmp_path) -> None:
+    from lerobot.datasets.diverse_actor_selection import excluded_episode_ids, training_exclusions
+
+    (tmp_path / "holdout_episodes.json").write_text('{"episode_ids": ["a"]}')
+    assert excluded_episode_ids(tmp_path) == set() and training_exclusions(tmp_path) == {"a"}
+    (tmp_path / "excluded_episodes.json").write_text('{"episode_ids": ["b"]}')
+    assert excluded_episode_ids(tmp_path) == {"b"}
+    assert training_exclusions(tmp_path) == {"a", "b"} and holdout_episode_ids(tmp_path) == {"a"}
+
+
 def test_holdout_episodes_are_absent_and_accounted_for() -> None:
     selection = _selection()
     holdout = holdout_episode_ids(DATA_ROOT)

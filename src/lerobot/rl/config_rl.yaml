@@ -415,6 +415,7 @@ probe_parameters:
   # repr_min_frames_per_episode frames at the stride are skipped.
   repr_stride_s: 2.0
   repr_max_frames: 1600
+  repr_holdout_episodes: null  # per robot; null = every held-out (val) episode, ahead of training ones
   repr_min_frames_per_episode: 5
   repr_local_window_s: 2.0
   repr_cross_matrices: true

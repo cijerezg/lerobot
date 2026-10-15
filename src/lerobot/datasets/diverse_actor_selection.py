@@ -83,6 +83,7 @@ from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 # Training: 891 episodes / 87,306 anchors.
 # Split provenance: migration/probe_bounded_2026-09-19/holdout_planned.json.
 HOLDOUT_FILE = "holdout_episodes.json"
+EXCLUDED_FILE = "excluded_episodes.json"
 EXPECTED_EPISODES = 891
 EXPECTED_ANCHORS = 87_306
 EXPECTED_EPISODES_BY_SOURCE = {
@@ -107,7 +108,20 @@ EXPECTED_ANCHORS_BY_SOURCE = {
 
 def holdout_episode_ids(root: str | Path) -> set[str]:
     """Episode ids listed in ``<root>/holdout_episodes.json``; empty when the file is absent."""
-    path = Path(root) / HOLDOUT_FILE
+    return _episode_id_file(Path(root) / HOLDOUT_FILE)
+
+
+def excluded_episode_ids(root: str | Path) -> set[str]:
+    """Episode ids listed in ``<root>/excluded_episodes.json``: dropped from training like the
+    holdout, but not part of the probe holdout (``holdout_actor_selection`` ignores them)."""
+    return _episode_id_file(Path(root) / EXCLUDED_FILE)
+
+
+def training_exclusions(root: str | Path) -> set[str]:
+    return holdout_episode_ids(root) | excluded_episode_ids(root)
+
+
+def _episode_id_file(path: Path) -> set[str]:
     if not path.is_file():
         return set()
     return {str(episode_id) for episode_id in json.loads(path.read_text(encoding="utf-8"))["episode_ids"]}
@@ -452,18 +466,18 @@ def select_actor_anchors(
     verify_counts: bool = True,
 ) -> DiverseActorSelection:
     """The training selection: ``actor_anchors(split=None, retained_only=True)`` minus
-    the episodes listed in ``<root>/holdout_episodes.json``.
+    the episodes listed in ``<root>/holdout_episodes.json`` and ``<root>/excluded_episodes.json``.
 
     ``split`` is never passed. It stays on every row as provenance and is reported by
-    the audit, but no code path may filter on it. The holdout file is the only exclusion:
-    every id in it must exist in the corpus, and the removed anchors are reported per
+    the audit, but no code path may filter on it. The two id files are the only exclusion:
+    every id in them must exist in the corpus, and the removed anchors are reported per
     episode (``held_out``) and fold into the cache fingerprint through the counts.
     """
     rows = corpus.actor_anchors(split=None, retained_only=True)
-    holdout = holdout_episode_ids(corpus.common.root.parent)
+    holdout = training_exclusions(corpus.common.root.parent)
     held_out = Counter(str(row["episode_id"]) for row in rows if str(row["episode_id"]) in holdout)
     if holdout - set(held_out):
-        raise ValueError(f"holdout episodes not in the corpus: {sorted(holdout - set(held_out))}")
+        raise ValueError(f"holdout/excluded episodes not in the corpus: {sorted(holdout - set(held_out))}")
     rows = [row for row in rows if str(row["episode_id"]) not in holdout]
     prepared, records, corrected = _prepare_rows(corpus, rows)
     selection = DiverseActorSelection(
@@ -598,7 +612,7 @@ def _prepare_rows(
 
 
 def _assert_corrected_selection(selection: DiverseActorSelection, manifest_path: Path) -> None:
-    """Check corrected views against their build manifest, then apply the current holdout.
+    """Check corrected views against their build manifest, then apply the current holdout and exclusions.
 
     Corrections may remove anchors or all retained anchors of an episode. The legacy
     ledger is therefore not applicable. Hashes keep incomplete or edited views from
@@ -607,7 +621,7 @@ def _assert_corrected_selection(selection: DiverseActorSelection, manifest_path:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     tables = {entry["path"]: entry for entry in manifest["output_semantic_tables"]}
     root = manifest_path.parent
-    holdout = holdout_episode_ids(root)
+    holdout = training_exclusions(root)
     expected: Counter[tuple[str, str, float]] = Counter()
     held_out: Counter[str] = Counter()
     for store in (selection.corpus.common, selection.corpus.fmb):

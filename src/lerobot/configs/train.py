@@ -378,9 +378,11 @@ class ProbeConfig:
     action_manifold_cache: str | None = None
     repr_pca_dims: int = 100  # legacy; temporal representations always project to 3-D
     # Temporal representations: selected native token groups at the first flow step.
-    # Common max_episodes is per robot. One frame every repr_stride_s seconds of every
-    # episode; whole episodes are kept in balanced order while they fit repr_max_frames,
-    # never thinned below the stride (the aligned grid needs a frame near every offset).
+    # Common max_episodes is per robot and counts training episodes only; held-out
+    # episodes (val root, diverse holdout ledger) have their own per-robot cap below and go
+    # first. One frame every repr_stride_s seconds of every episode; whole episodes are
+    # kept in balanced order while they fit repr_max_frames, never thinned below the
+    # stride (the aligned grid needs a frame near every offset).
     repr_view: str = "attention_input"
     repr_layers: str = "14,28,32"
     repr_groups: str = "action,img_external_0,img_wrist_0,state"
@@ -388,6 +390,7 @@ class ProbeConfig:
     repr_n_frames_per_episode: int | None = None  # legacy; sampling is by repr_stride_s
     repr_stride_s: float = 2.0  # seconds between sampled frames within an episode
     repr_max_frames: int = 1600  # physical frames; constant-text control doubles forwards
+    repr_holdout_episodes: int | None = None  # per robot; None = every held-out episode
     # Episodes with fewer frames than this at the stride are left out of the sample.
     repr_min_frames_per_episode: int = 5
     repr_local_window_s: float = 2.0  # radius in seconds, self excluded

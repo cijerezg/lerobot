@@ -76,12 +76,21 @@ episodes; the rules below come from it.
 - A stretch of more than 3 s inside the range where the arm sits still or makes no progress is reported in `flags` with
   its frames, not cut.
 
-**Task string.** What was actually done, in the order done, sentence case: "Put the cup in the basket and the bit in
-the component box". Name a step that was attempted even if it went badly; leave out a step never attempted. Name each
-object and container as the segment texts do: a colour or position word only on a kind of object some segment text
-tells apart, and then on every one of that kind (audit 2026-10-07: 57 tasks kept "brown basket", "navy shirt" after
-the segment texts dropped them). A plural only for several objects: one shirt grasped twice is "the shirt" (audit
-round 3: template tasks such as "Put sock in basket and shirts in bin" got order and counts wrong).
+**Task string.** A short, high-level description of the goal of the episode, sentence case, the way a person would ask
+for it: "Tidy up the table", "Stand the bottle upright", "Put the nail clippers in the clipper case". It is not a list
+of the steps; the segment texts carry the steps (user 2026-10-14: "the task is a high level description, not a list of
+everything that happens"). One goal: name it with its object and destination ("Put the cup in the basket"). Two or
+three goals of different kinds: join them with "and" ("Close the bit kit and the headphone case"). More than that, or a
+scene cleaned up object by object: "Tidy up the table". Objects and containers get the words the segment texts use; a
+colour, size or position word only when the task itself must tell two apart, otherwise the plural ("the nail
+clippers"; audit 2026-10-07: 57 tasks kept "brown basket", "navy shirt" after the segment texts dropped them). A goal
+that was attempted and failed still counts; a goal never attempted does not.
+
+| rejected | accepted |
+|---|---|
+| Put the large nail clipper in the clipper case, move the yellow pill bottle aside, pick up the water bottle, close the bit kit, move the orange pill bottle aside and put the small nail clipper in the clipper case | Tidy up the table |
+| Put the large nail clipper and then the nail clipper in the clipper case, and move the orange pill bottle next to the water bottle | Put the nail clippers in the clipper case and move the pill bottle aside |
+| Stand the orange bottle and the purple bottle upright | Stand the bottles upright |
 
 **Segments.** Gapless, half-open `[from_index, to_index)`, covering the kept range exactly.
 
@@ -136,6 +145,17 @@ within about 3 s is a candidate. Not mistakes: hovering, regrasping where the ob
 text names what was done). A released cloth left draped over the container rim and carried in again is not a `drop`
 (rubric 4.5): `drop` when it rests wholly outside the container, or mostly outside and is not carried in again.
 
+**Validation candidates** (only when the pass asks for them). The user holds out a small validation set, about 8
+episodes, that should cover many different tasks rather than many copies of one; a stretch of an episode is enough, and
+it may be messy (retries, mistakes, operator frames) as long as some candidates of the set are clean. After the segments
+are set, list 0 to 3 stretches of your episode that could be held out, in `val_candidates` of the entry. A candidate is a
+run of whole segments (its edges are segment boundaries or the keep edges), 10 to 90 s, holding at least one complete step
+with its commit (a grasp through the lift, a release through the settle, a fold or pour through the end of its motion).
+Per candidate: `from_index`, `to_index`, `kind` (`clean`: direct motion, no mistake row inside; `messy`: anything else),
+`steps` (the segment texts it holds), and `why`: what it shows that the training data may not (a new object or
+scene, clutter, an operator takeover, a mistake and its recovery). If the episode has a clean stretch and a messy one,
+propose both. Do not change the keep range or the split for this: the coordinator applies the user's choice.
+
 ### Output
 
 ```
@@ -146,6 +166,7 @@ text names what was done). A released cloth left draped over the container rim a
                   "precision": 1-5, "orientation_pin": false, "contact": "...", "note": ""}, ...],
     "mistakes": [{"type": "...", "from_index": int, "to_index": int, "what_happens": "...", "confidence": "sure|unsure",
                   "looked_at": "coarse|dense|video", "note": ""}],
+    "val_candidates": [{"from_index": int, "to_index": int, "kind": "clean|messy", "steps": ["..."], "why": "..."}],
     "flags": ["NEW_SUBTASK: ..."], "cuts": []}],
  "flags": []}
 ```
@@ -329,8 +350,8 @@ merged, split or moved keeps its spans by frames; nothing else is needed for it.
 Every segment text against principles section 2, on the frames: an overview sheet of the episode and the frame where
 each grasp starts. Tell apart every look-alike visible at that frame (same-colour socks, two shirts, several bits); drop
 a colour or position word on an object with no look-alike; name the receiver of every move, release, push and fold; the
-same object keeps the same text. Change the task string when it leaves out a step that was done or names one never
-attempted, lists the steps out of order, or breaks the colour rule of "Task string" above. Old
+same object keeps the same text. Change the task string when it is a list of steps instead of a goal, names a goal never
+attempted, or breaks the word rule of "Task string" above. Old
 text in the segment `note` as `text a: <old>`; one `NEW_SUBTASK: <string>` flag per new string.
 
 `uv run python -m lerobot.annotation.rebot.validate_labels <work> <idx> ...` must print PASS. Final message, under 200

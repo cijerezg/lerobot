@@ -1,8 +1,9 @@
 """Append or replace validation episodes, preserving source labels and media under index remapping.
 
 Usage: python -m lerobot.annotation.rebot.replace_validation_episode --base BASE
-    --extra EXTRA --exclude 2 --out DEST
-Omit --exclude to append all extra episodes.
+    --extra EXTRA --exclude 2 [--extra-episodes 3 5] [--split train|val] --out DEST
+--exclude drops base episodes; --extra-episodes keeps only those extra episodes (default all);
+--split names the split written to provenance, split_status and info (default val).
 The sources are read-only. RGB/depth files are hardlinked; tabular indices are rebuilt.
 """
 from __future__ import annotations
@@ -61,6 +62,8 @@ def main():
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--extra", type=Path, required=True)
     parser.add_argument("--exclude", type=int, nargs="*", default=[])
+    parser.add_argument("--extra-episodes", type=int, nargs="*", default=None)
+    parser.add_argument("--split", default="val", choices=["train", "val"])
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     roots = [args.base.resolve(), args.extra.resolve()]
@@ -70,6 +73,7 @@ def main():
     infos = {r: read(r / "meta/info.json") for r in roots}
     eps = {r: table(r, "meta/episodes") for r in roots}
     assert set(args.exclude) <= set(eps[roots[0]].episode_index)
+    assert args.extra_episodes is None or set(args.extra_episodes) <= set(eps[roots[1]].episode_index)
     assert infos[roots[0]]["fps"] == infos[roots[1]]["fps"]
     assert infos[roots[0]]["robot_type"] == infos[roots[1]]["robot_type"]
     features = {r: {canonical(k): v for k, v in infos[r]["features"].items()} for r in roots}
@@ -77,7 +81,8 @@ def main():
     for k, v in features[roots[0]].items():
         assert (v["dtype"], v["shape"]) == (features[roots[1]][k]["dtype"], features[roots[1]][k]["shape"]), k
     selections = [(r, row) for r in roots for _, row in eps[r].iterrows()
-                  if r != roots[0] or int(row.episode_index) not in args.exclude]
+                  if (r != roots[0] or int(row.episode_index) not in args.exclude)
+                  and (r != roots[1] or args.extra_episodes is None or int(row.episode_index) in args.extra_episodes)]
     work.mkdir(parents=True)
     (work / "meta").mkdir()
     vocab = {}
@@ -164,6 +169,8 @@ def main():
                 if col in t:
                     t[col] = t[col].map(mapping).astype(t[col].dtype)
             parts.append(t)
+        if not parts:  # the table exists in a source but none of the chosen episodes has rows (online labels of a teleop root)
+            parts = [pd.read_parquet(next(r / "meta" / filename for r in roots if (r / "meta" / filename).exists())).iloc[:0]]
         result = pd.concat(parts, ignore_index=True, sort=False)
         result.to_parquet(work / "meta" / filename, index=False)
         row_counts[filename] = len(result)
@@ -176,7 +183,7 @@ def main():
         windows["episodes"][str(m["episode_index"])] = [dict(w, from_index=w["from_index"] + m["new_from_index"] - m["old_from_index"], to_index=w["to_index"] + m["new_from_index"] - m["old_from_index"])
             for w in read(r / "meta/subtask_windows.json")["episodes"][str(m["source_episode"])]]
         p = next(copy.deepcopy(p) for p in read(r / "meta/provenance.json") if p["episode_index"] == m["source_episode"])
-        p.update(episode_index=m["episode_index"], split="val", immediate_source=str(r), immediate_source_episode=m["source_episode"])
+        p.update(episode_index=m["episode_index"], split=args.split, immediate_source=str(r), immediate_source_episode=m["source_episode"])
         provenance.append(p)
     write(work / "meta/subtask_windows.json", windows)
     write(work / "meta/provenance.json", provenance)
@@ -222,15 +229,15 @@ def main():
     for key, feature in info["features"].items():
         if feature["dtype"] == "video" and features[roots[0]][key]["info"].get("video.codec") != features[roots[1]][key]["info"].get("video.codec"):
             feature["info"]["video.codec"] = None
-    info.update(total_episodes=len(manifest), total_frames=offset, total_tasks=len(vocab["tasks"]), total_subtasks=len(vocab["subtasks"]), splits={"val": f"0:{len(manifest)}"})
+    info.update(total_episodes=len(manifest), total_frames=offset, total_tasks=len(vocab["tasks"]), total_subtasks=len(vocab["subtasks"]), splits={args.split: f"0:{len(manifest)}"})
     write(work / "meta/info.json", info)
     full = pd.concat(datasets, ignore_index=True)
     low = {k: np.stack(full[k]) if v["shape"] != [1] else full[k].to_numpy() for k, v in info["features"].items() if v["dtype"] not in ("video", "image")}
     stats = aggregate_stats(video_stats)
     stats.update(compute_episode_stats(low, {k: info["features"][k] for k in low}))
     write(work / "meta/stats.json", stats)
-    write(work / "meta/split_status.json", {"status": "assigned", "split": "val"})
-    write(work / "REPLACEMENT.json", dict(base=str(roots[0]), extra=str(roots[1]), excluded_base_episodes=args.exclude,
+    write(work / "meta/split_status.json", {"status": "assigned", "split": args.split})
+    write(work / "REPLACEMENT.json", dict(base=str(roots[0]), extra=str(roots[1]), excluded_base_episodes=args.exclude, extra_episodes=args.extra_episodes, split=args.split,
           episodes=manifest, total_episodes=len(manifest), total_frames=offset, annotation_row_counts=row_counts,
           note="Original sources unchanged; preserved annotations remapped. Source row_id and uid remain unchanged as provenance identifiers."))
     assert full["index"].tolist() == list(range(offset))

@@ -157,6 +157,20 @@ def test_sampling_balances_tasks_robots_and_keeps_whole_episodes_at_the_stride()
     assert pick(23, min_frames_per_episode=2) == {long_a[0]['episode'], long_b[0]['episode'], 'C/pick/short'}
     # Episodes below the minimum are left out before balancing.
     assert pick(23, min_frames_per_episode=5) == {long_a[0]['episode'], long_b[0]['episode']}
+    # Held-out episodes have their own cap and go first in the robot's queue, so
+    # max_episodes counts training episodes only.
+    held = []
+    for ep in range(3):
+        rows = rows_for([f'A/val/{ep}']*10, list(range(10)), ['A']*10, ['pick']*10)
+        for r in rows:
+            r['holdout'] = True
+        held.append(rows)
+    chosen = rep.select_sequences(candidates + held, 2, 1000, 42)
+    assert Counter((r['robot'], r['holdout']) for r in chosen) == {('A', True): 30, ('A', False): 20, ('B', False): 20}
+    chosen = rep.select_sequences(candidates + held, 2, 1000, 42, max_holdout_episodes=1)
+    assert Counter((r['robot'], r['holdout']) for r in chosen) == {('A', True): 10, ('A', False): 20, ('B', False): 20}
+    tight = {r['episode'] for r in rep.select_sequences(candidates + held, 2, 30, 42) if r['robot'] == 'A'}
+    assert tight <= {f'A/val/{ep}' for ep in range(3)}  # val first when the budget is tight
     with pytest.raises(ValueError, match='multiple sources'):
         rep.select_sequences(candidates + candidates[:1], 2, 45, 42)
     with pytest.raises(ValueError, match='>= 2'):

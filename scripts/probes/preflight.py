@@ -24,7 +24,15 @@ assert stats['chunk_size']==cfg['policy']['chunk_size']
 assert stats['encoding']==cfg['policy']['action_encoding']
 if cfg['policy'].get('hand_block'):
     assert stats.get('hand_block'), 'Configured hand block needs hand normalization statistics'
-for i,count in Counter(int(row['action_layout_id']) for row in selection.rows).items():
+# The artifact records the diverse corpus it was built from. A re-keyed corpus (task renames,
+# excluded_episodes.json) is a different selection; as for ReBot roots below, that is listed, not
+# fatal: with a pretrained_path that carries processors the artifact is not read. The counts are
+# then checked against the recorded corpus, so the artifact is at least self-consistent.
+stats_diverse={r.split(':',1)[1] for rows in stats['roots'].values() for r in rows if r.startswith('diverse:')}
+assert len(stats_diverse)==1,stats_diverse
+stats_root=Path(next(iter(stats_diverse)));diverse_outside_pool=stats_root.resolve()!=root.resolve()
+stats_selection=select_actor_anchors(open_federated_corpus(stats_root)) if diverse_outside_pool else selection
+for i,count in Counter(int(row['action_layout_id']) for row in stats_selection.rows).items():
     assert tuple(stats['counts'][i].tolist())==(count,count),(i,stats['counts'][i],count)
 cache=find_cache(root,cfg['diverse']['cache_dir'],DiverseSampleSpec(),anchors=anchors,episodes=episodes)
 assert cache is not None,'Configured diverse cache is missing'
@@ -66,4 +74,4 @@ if parameters.get('enable_subtask_scene_sweep'):
         assert labels==[frame['gt_subtask']], (frame,labels)
         assert frame['gt_subtask'] in ['grasp '+name for name in frame['present']]+['return to home'],frame
 
-print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), {vi["total_episodes"]} validation episodes; {episodes} diverse training episodes / {anchors} anchors; configured stats and caches agree.')
+print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), diverse root {"outside the stats pool: "+str(stats_root) if diverse_outside_pool else "in the stats pool"}, {vi["total_episodes"]} validation episodes; {episodes} diverse training episodes / {anchors} anchors; configured stats and caches agree.')

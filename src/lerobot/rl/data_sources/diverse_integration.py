@@ -255,7 +255,7 @@ def build_mixture_groups(
 
                 # Uniform over eligible starts across all roots in the same task
                 # pool. Physical-root sizes must not override the task's outer share.
-                views = episode_group_views(buffer, partition, action_chunk_size)
+                views = episode_group_views(buffer, partition, action_chunk_size, diverse_cfg.rebot_start_cell)
             else:
                 views = [(buffer.offline_source.sampling_group, buffer,
                           rebot_weights[index] if rebot_weights else 1.0)]
@@ -264,9 +264,13 @@ def build_mixture_groups(
                     raise ValueError(f"Unconfigured ReBot sampling group {name!r}")
                 by_group[name].append(view)
                 weights[name].append(weight)
+        excluded = [name for name, weight in diverse_cfg.rebot_group_weights.items() if weight == 0]
+        if excluded:
+            logger.info("[DiverseMixture] Excluded ReBot groups (weight 0): %s", excluded)
         groups = [
             MixtureGroup(name, buffers, weight=diverse_cfg.rebot_group_weights[name], inner_weights=weights[name])
             for name, buffers in by_group.items()
+            if name not in excluded
         ] + [MixtureGroup("diverse", [diverse_buffer], weight=diverse_cfg.weight)]
         total = sum(group.weight for group in groups)
         logger.info("[DiverseMixture] Target sampling shares: %s",

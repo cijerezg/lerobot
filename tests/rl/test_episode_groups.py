@@ -119,6 +119,17 @@ def test_real_iterator_matches_shares_and_weights_roots_by_eligible_starts(tmp_p
         assert observed[key]/64000 == pytest.approx(probability, abs=.008)
 
 
+def test_zero_weight_group_is_excluded_from_sampling(tmp_path):
+    external = FakeBuffer(tmp_path/'ext', [90, 60], {'external_rebot':[0], 'excluded':[1]})
+    diverse = FakeBuffer(tmp_path/'div', [90])
+    cfg = DiverseCollectionConfig(weight=.30, rebot_weight=.70, rebot_group_weights={'external_rebot':.70, 'excluded':0})
+    groups = build_mixture_groups(cfg, [external], diverse, action_chunk_size=30)
+    assert [g.name for g in groups] == ['external_rebot', 'diverse']
+    assert int(groups[0].buffers[0].sampling_indices.max()) < 90
+    with pytest.raises(ValueError):
+        DiverseCollectionConfig(rebot_group_weights={'a': -1}).validate()
+
+
 def test_checked_in_training_and_validation_splits_cover_every_internal_episode():
     import yaml
     from lerobot.rl.data_sources.episode_groups import read_episode_ranges
@@ -130,10 +141,10 @@ def test_checked_in_training_and_validation_splits_cover_every_internal_episode(
                     pills_caps=.132, cases_kit_box_push=.159)
     cfg = configs[0]
     assert cfg['val_freq'] == 0 and not cfg['val_on_start']
-    assert cfg['diverse']['weight'] == .30
+    assert cfg['diverse']['weight'] == .25 and cfg['diverse']['rebot_start_cell'] == 5  # 2026-10-14 mix 50/25/25
     shares = cfg['diverse']['rebot_group_weights']
-    assert shares['external_rebot'] == .35
-    assert sum(shares.values()) == pytest.approx(.70)
+    assert shares['external_rebot'] == .25
+    assert sum(shares.values()) == pytest.approx(.75)
     totals = Counter()
     for source in cfg['dataset']['sources']:
         if not source.get('episode_groups'):
@@ -143,7 +154,8 @@ def test_checked_in_training_and_validation_splits_cover_every_internal_episode(
         assert sorted(assigned) == sorted(ranges)
         for group, eps in source['episode_groups'].items():
             totals[group] += len(eps)
-    assert sum(totals.values()) == 174
+    assert sum(totals.values()) == 189 + 241  # internal 174 (10-14 task review) + 2 oldval_train + 13 oct14
+    assert totals['external_rebot'] == 231 and totals['excluded'] == 13 and shares['excluded'] == 0  # 10 shake-hand + 3 clipper (oct07 3,4; oct08 9)
     for group, share in expected.items():
         assert totals[group] > 0
-        assert shares[group] == pytest.approx(.35*share)
+        assert shares[group] == pytest.approx(.50*share)

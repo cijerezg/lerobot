@@ -33,7 +33,9 @@ action queries are pooled over future positions.
 Sampling takes one frame every ``repr_stride_s`` seconds of every episode (the stored
 image frame or corpus anchor nearest to each multiple of the stride), balances
 episodes over robot, task and split, then keeps whole episodes in that order while
-they fit under ``repr_max_frames``; episodes are never thinned below the stride, so
+they fit under ``repr_max_frames``; per robot, held-out episodes come first under their own
+cap ``repr_holdout_episodes`` (default all), training episodes under ``max_episodes``.
+Episodes are never thinned below the stride, so
 the aligned grid always has a frame near every offset it asks for. ``cache/`` saves
 float32 selected layers and frame previews for model-free replotting; old
 whole-sequence caches are deliberately rejected. ``sampling_plan.json``,
@@ -167,16 +169,20 @@ def _diverse_candidates(buffer, key, holdout, stride_s):
     return candidates
 
 
-def select_sequences(candidates, max_episodes, max_frames, seed, min_frames_per_episode=2):
+def select_sequences(candidates, max_episodes, max_frames, seed, min_frames_per_episode=2,
+                     max_holdout_episodes=None):
     """Balance robot/task/split, then keep whole episodes while they fit the frame budget.
 
-    max_episodes is per robot. Source episode identity excludes duplicate copies and
+    max_episodes is per robot and counts training episodes only; held-out episodes have
+    their own per-robot cap ``max_holdout_episodes`` (None = all of them) and go first in
+    each robot's queue. Source episode identity excludes duplicate copies and
     train/holdout overlap. Episodes shorter than ``min_frames_per_episode`` frames are
     left out; the others are taken in balanced round-robin order and an episode that
     no longer fits under ``max_frames`` is skipped, never thinned or cut short, so the
     frames of every kept episode stay at the sampling stride.
     """
-    if max_frames < 2 or min_frames_per_episode < 2 or (max_episodes is not None and max_episodes < 1):
+    if max_frames < 2 or min_frames_per_episode < 2 or (max_episodes is not None and max_episodes < 1) \
+            or (max_holdout_episodes is not None and max_holdout_episodes < 1):
         raise ValueError("Need >= 2 frames per episode and positive episode/frame budgets")
     rng = np.random.default_rng(seed)
     buckets = defaultdict(lambda: defaultdict(list))
@@ -195,13 +201,17 @@ def select_sequences(candidates, max_episodes, max_frames, seed, min_frames_per_
     for robot, cells in sorted(buckets.items()):
         for cell in cells.values():
             rng.shuffle(cell)
-        queue, keys = [], sorted(cells)
+        keys = sorted(cells)
         rng.shuffle(keys)
-        for i in range(max(map(len, cells.values()))):
-            for key in keys:
-                if i < len(cells[key]):
-                    queue.append(cells[key][i])
-        queues[robot] = queue if max_episodes is None else queue[:max_episodes]
+        queues[robot] = []
+        for held, cap in ((True, max_holdout_episodes), (False, max_episodes)):
+            split = [k for k in keys if k[0] == held]
+            queue = []
+            for i in range(max((len(cells[k]) for k in split), default=0)):
+                for key in split:
+                    if i < len(cells[key]):
+                        queue.append(cells[key][i])
+            queues[robot] += queue if cap is None else queue[:cap]
     chosen, used = [], 0
     for i in range(max((len(q) for q in queues.values()), default=0)):
         for queue in queues.values():
@@ -236,7 +246,7 @@ def sampling_plan(dataset, cfg):
         for key, buffer in buffers.items():
             candidates += _diverse_candidates(buffer, key, key.endswith("holdout"), p.repr_stride_s)
     samples = select_sequences(candidates, p.max_episodes, p.repr_max_frames, p.random_seed,
-                               p.repr_min_frames_per_episode)
+                               p.repr_min_frames_per_episode, p.repr_holdout_episodes)
     return samples, datasets, buffers
 
 

@@ -32,10 +32,13 @@ RUBRICS = "lerobot/src/lerobot/annotation/rubrics"
 
 
 def episode_map(staging, root, work):
-    """staging episode -> (final episode, frame map, final [from, to)). The map takes a staging-root frame to the
-    final root through the source frame; idle cuts (spliced or trimmed) collapse onto the splice point. A pass that
-    re-annotates an annotated root may name that root as its staging root: its episodes are then the inventory's
-    source episodes, uncut."""
+    """staging episode -> [(final episode, frame map, final [from, to), inside), ...]. The map takes a staging-root
+    frame to the final root through the source frame; idle cuts (spliced or trimmed) collapse onto the splice point,
+    frames outside the final episode's kept range clip to its edges, and ``inside(g)`` says whether a staging frame
+    falls in that range. A staging entry may feed several final episodes when its label entry was split after the
+    staging build (a validation piece carved out of a train entry, 2026-10-14): a final entry matches the staging
+    entry of the same source whose kept range contains it. A pass that re-annotates an annotated root may name that
+    root as its staging root: its episodes are then the inventory's source episodes, uncut."""
 
     def prov(r):
         eps = pd.read_parquet(r / "meta/episodes/chunk-000/file-000.parquet").set_index("episode_index")
@@ -59,13 +62,26 @@ def episode_map(staging, root, work):
             start = int(eps.loc[r["episode"]].dataset_from_index)
             s.update({(r["key"], j): (r["episode"], start, None, dict(keep=[0, r["frames"]])) for j in range(8)})
     out = {}
-    for key, (ef, f0, f1, p) in f.items():
-        es, s0, _, sp = s[key]
+    for (source_key, _part), (ef, f0, f1, p) in f.items():
+        es, s0, _, sp = next(
+            v for (sk, _j), v in s.items() if sk == source_key and v[3]["keep"][0] <= p["keep"][0] and p["keep"][1] <= v[3]["keep"][1]
+        )
         # staging frame -> source frame through the staging root's own kept frames (a staging root built with the
         # cuts already applied), then source frame -> final frame; the frame after the last maps past the end
         ks = np.append(kept(sp["keep"], sp.get("cuts") or []), sp["keep"][1])
         k = kept(p["keep"], p["cuts"])
-        out[es] = (ef, lambda g, s0=s0, ks=ks, k=k, f0=f0: f0 + remap(k, ks[min(g - s0, len(ks) - 1)]), f0, f1)
+        ka, kb = p["keep"]
+
+        def src(g, s0=s0, ks=ks):
+            return int(ks[min(g - s0, len(ks) - 1)])
+
+        def fm(g, k=k, f0=f0, ka=ka, kb=kb, src=src):
+            return f0 + remap(k, min(max(src(g), ka), kb))
+
+        def inside(g, ka=ka, kb=kb, src=src):
+            return ka <= src(g) < kb
+
+        out.setdefault(es, []).append((ef, fm, f0, f1, inside))
     return out
 
 
@@ -86,62 +102,71 @@ def main(work, root):
         es, seg = map(int, m.groups())
         if es not in emap:
             continue
-        ef, fm, e0, e1 = emap[es]
-        for s in r.get("spans", []):
-            a, b = fm(s["raw_from"]), fm(s["raw_to"])
-            if a == b:
-                continue  # wholly inside an idle cut
-            crit = s["grade"] <= 3
-            spans.append(
-                dict(
-                    episode_index=ef,
-                    raw_from_index=a,
-                    raw_to_index=b,
-                    from_index=max(e0, a - PRE) if crit else a,
-                    to_index=min(e1, b + POST) if crit else b,
-                    quality=int(s["grade"]),
-                    cause=s["cause"],
-                    confidence=s["confidence"],
-                    looked_at=s["looked_at"],
-                    note=s.get("note", "") or s.get("what_happens", ""),
-                    uid=r["uid"],
-                )
+        for ef, fm, e0, e1, inside in emap[es]:
+            _unit(r, ef, fm, e0, e1, inside, em, spans, mistakes, windows)
+    _tables(work, root, meta, name, pool, em, spans, mistakes, windows)
+
+
+def _unit(r, ef, fm, e0, e1, inside, em, spans, mistakes, windows):
+    """Rows of one graded unit for one final episode (frames clipped to it; a window needs its commit inside)."""
+    for s in r.get("spans", []):
+        a, b = fm(s["raw_from"]), fm(s["raw_to"])
+        if a == b:
+            continue  # wholly inside an idle cut
+        crit = s["grade"] <= 3
+        spans.append(
+            dict(
+                episode_index=ef,
+                raw_from_index=a,
+                raw_to_index=b,
+                from_index=max(e0, a - PRE) if crit else a,
+                to_index=min(e1, b + POST) if crit else b,
+                quality=int(s["grade"]),
+                cause=s["cause"],
+                confidence=s["confidence"],
+                looked_at=s["looked_at"],
+                note=s.get("note", "") or s.get("what_happens", ""),
+                uid=r["uid"],
             )
-        for m in r.get("mistakes", []):
-            if fm(m["from_index"]) == fm(m["to_index"]):
-                continue
-            mistakes.append(
-                dict(
-                    episode_index=ef,
-                    from_index=fm(m["from_index"]),
-                    to_index=fm(m["to_index"]),
-                    mistake=True,
-                    mistake_type=m["type"],
-                    confidence=m["confidence"],
-                    note=m.get("what_happens", ""),
-                    uid=r["uid"],
-                )
+        )
+    for m in r.get("mistakes", []):
+        if fm(m["from_index"]) == fm(m["to_index"]):
+            continue
+        mistakes.append(
+            dict(
+                episode_index=ef,
+                from_index=fm(m["from_index"]),
+                to_index=fm(m["to_index"]),
+                mistake=True,
+                mistake_type=m["type"],
+                confidence=m["confidence"],
+                note=m.get("what_happens", ""),
+                uid=r["uid"],
             )
-        for k in sorted(x for x in r if x.startswith("precision")):  # precision, precision_2, ... (a unit with several commits)
-            p = r[k]
-            if not (p and fm(p["w_a"]) < fm(p["w_b"])):
-                continue
-            c = min(fm(p["commit_index"]), e1 - 1)  # a clip may end on its commit
-            host = em[(em.episode_index == ef) & (em.from_index <= c) & (em.to_index > c)]
-            assert len(host) == 1, r["uid"]  # final segment index (staging indices shift after reconcile merges)
-            windows.append(
-                dict(
-                    episode_index=ef,
-                    segment_index=int(host.segment_index.iloc[0]),
-                    commit_index=fm(p["commit_index"]),
-                    raw_from_index=fm(p["w_a"]),
-                    from_index=max(e0, fm(p["w_a"]) - PRE),
-                    to_index=fm(p["w_b"]),
-                    precision=int(p["level"]),
-                    confidence=p["confidence"],
-                    uid=r["uid"],
-                )
+        )
+    for k in sorted(x for x in r if x.startswith("precision")):  # precision, precision_2, ... (a unit with several commits)
+        p = r[k]
+        if not (p and fm(p["w_a"]) < fm(p["w_b"]) and inside(p["commit_index"])):
+            continue
+        c = min(fm(p["commit_index"]), e1 - 1)  # a clip may end on its commit
+        host = em[(em.episode_index == ef) & (em.from_index <= c) & (em.to_index > c)]
+        assert len(host) == 1, r["uid"]  # final segment index (staging indices shift after reconcile merges)
+        windows.append(
+            dict(
+                episode_index=ef,
+                segment_index=int(host.segment_index.iloc[0]),
+                commit_index=fm(p["commit_index"]),
+                raw_from_index=fm(p["w_a"]),
+                from_index=max(e0, fm(p["w_a"]) - PRE),
+                to_index=fm(p["w_b"]),
+                precision=int(p["level"]),
+                confidence=p["confidence"],
+                uid=r["uid"],
             )
+        )
+
+
+def _tables(work, root, meta, name, pool, em, spans, mistakes, windows):
     # columns named so a root without any span, mistake or window still has readable tables for the loader
     scols = ["episode_index", "raw_from_index", "raw_to_index", "from_index", "to_index", "quality", "cause", "confidence", "looked_at", "note", "uid"]
     mcols = ["episode_index", "from_index", "to_index", "mistake", "mistake_type", "confidence", "note", "uid"]

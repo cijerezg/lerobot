@@ -27,8 +27,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/lift-up-shaker-bottle-v1 \
-    --dataset.single_task="lift up and put the lid on the shake bottle" \
+    --dataset.repo_id=cijerezg/nail-clipper-cluttered-v1 \
+    --dataset.single_task="Put nail clippers in the nail clipper case" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \
@@ -102,7 +102,7 @@ Uses `policy.pretrained_path` in `config_rl.yaml`. Captures separate image/state
     --probe_parameters.mode=plot --probe_parameters.repr_local_window_s=2.0
 ```
 
-Pick a geometry (raw cosines are ~1 everywhere; robot- or episode-centered shows the structure) and a measure (cosine, L2 distance, norm ratio), an episode, then slide through frames: cameras, the within-episode matrix, the frame's profile against the background level, the ranked matches in other episodes (top 5 episodes per category) and the aligned cross-episode grid follow. The grid centers the selected frame and its match and compares the two episodes at offsets of ±Δ·span seconds (Δ 1–8 s, 11×11 or 15×15). Sampling is one frame every `repr_stride_s` (2 s); whole episodes are kept while they fit `repr_max_frames` (1600 → about 18 three-minute episodes); constant text doubles captures. `max_episodes` is per robot; the report shows the stride and median gap. Changing the stride or frame budget needs recollection.
+Pick a geometry (raw cosines are ~1 everywhere; robot- or episode-centered shows the structure) and a measure (cosine, L2 distance, norm ratio), an episode, then slide through frames: cameras, the within-episode matrix, the frame's profile against the background level, the ranked matches in other episodes (top 5 episodes per category) and the aligned cross-episode grid follow. The grid centers the selected frame and its match and compares the two episodes at offsets of ±Δ·span seconds (Δ 1–8 s, 11×11 or 15×15). Sampling is one frame every `repr_stride_s` (2 s); whole episodes are kept while they fit `repr_max_frames` (1600 → about 18 three-minute episodes); constant text doubles captures. `max_episodes` is per robot and counts training episodes; held-out (val) episodes go first under `repr_holdout_episodes` (default all). The report shows the stride and median gap. Changing the stride or frame budget needs recollection.
 
 ## Probe compare
 

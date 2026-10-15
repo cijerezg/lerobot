@@ -33,6 +33,13 @@ def fixture(tmp_path):
     return root,spec,source,rows,selection
 
 
+def test_excluded_file_changes_cache_identity(fixture):
+    root,spec,source,rows,selection=fixture
+    before=cache.cache_fingerprint(root,spec,anchors=2,episodes=2)
+    (root/'excluded_episodes.json').write_text('{"episode_ids":["c"]}')
+    assert cache.cache_fingerprint(root,spec,anchors=2,episodes=2)!=before
+
+
 def test_subset_preserves_all_payloads_and_remaps_only_episode_position(fixture,tmp_path):
     root,spec,source,rows,selection=fixture
     target=cache.subset_cache(source,root,tmp_path/'cache',selection,rows,spec)

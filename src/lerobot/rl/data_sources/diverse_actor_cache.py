@@ -162,6 +162,9 @@ def cache_fingerprint(root: str | Path, spec: DiverseSampleSpec, *, anchors: int
             "base_size": list(D405_BASE_SIZE),
         },
     }
+    # Only present when the file exists, so caches built before exclusions keep their fingerprint.
+    if (Path(root) / "excluded_episodes.json").is_file():
+        payload["excluded_sha256"] = _sha256_file(Path(root) / "excluded_episodes.json")
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 

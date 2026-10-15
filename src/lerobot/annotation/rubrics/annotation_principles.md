@@ -57,6 +57,10 @@ reference and flag the segment `ambiguous` in the note, so the gap is known rath
 
 The text describes what the arm actually does in the kept frames, never the prompt (unchanged rule).
 
+The **task string** is the opposite kind of text: a short, high-level goal the way a person would ask for it ("Tidy up the
+table", "Put the cup in the basket"), never a list of the steps; the steps are the subtasks (user 2026-10-14; rule and
+examples in `rebot/AGENT_BRIEF.md`, "Task string").
+
 ## 3. Per-step channels: precision, contact
 
 Read from the wrist view and top view at the commit frame, never from a text rule on the subtask noun. A clause that is a function of
