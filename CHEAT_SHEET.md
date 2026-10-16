@@ -87,15 +87,9 @@ uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 
 ## Rollout review (cut recorded inference episodes into a training root)
 
-Work folder = `migration/rollout_review_<date>` (videos/, plan.json). Review video = top | wrist, 2x, burned-in t = REAL episode seconds, red INTERVENTION tag. Spans are episode seconds (`1:23` ok, `50-` = to the end); boundaries snap to multiples of 3 frames; kept spans of an episode are spliced into one episode.
+One command: renders a review video per episode (missing ones only) into `migration/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
 
-# 1. render one review mp4 per episode (several runs at once is fine)
-uv run python -m lerobot.annotation.rebot.rollout_review render outputs/train/<date>/<run>
-# 2. mark what to remove (or what to keep); one call per episode, re-running replaces that entry
-uv run python -m lerobot.annotation.rebot.rollout_review mark outputs/train/<date>/<run> --remove 15-31,36-43,50-
-uv run python -m lerobot.annotation.rebot.rollout_review mark outputs/train/<date>/<run> --keep 0-25,42-1:23,1:30-1:45 --episode 1 --why "..."
-# 3. build the root (build_root --plan + verify_root), then annotate it
-uv run python -m lerobot.annotation.rebot.rollout_review build migration/rollout_review_<date> --out outputs/rebot_rollouts_<date>-cut-v1
+uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/<root>]
 
 ## Probe viewer
 

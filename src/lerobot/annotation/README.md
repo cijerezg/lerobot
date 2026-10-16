@@ -84,8 +84,8 @@ uv run python -m $M.rebot.traces <work>
 uv run python -m $M.rebot.sheets <root> <work>/review/<IDX> <episode> --step 60 --tag overview
 # 2. cut only (no labels yet): <work>/plan.json -> root
 uv run python -m $M.rebot.build_root <work> --out outputs/<root> --plan
-#    rollouts: review videos + user spans (episode seconds) -> plan.json -> build_root --plan + verify_root (CHEAT_SHEET "Rollout review")
-uv run python -m $M.rebot.rollout_review render|mark|build ...
+#    rollouts: browser review page (video + remove spans) -> plan.json -> build_root --plan + verify_root (CHEAT_SHEET "Rollout review")
+uv run python -m $M.rebot.rollout_review outputs/train/<date>/<run> ...
 # 3. labelled pass: check the label files, build the staging root, class the segments, render the class material
 uv run python -m $M.rebot.validate_labels <work> 0 1 2 ...
 uv run python -m $M.rebot.build_root <work> --out outputs/<staging> --split all
