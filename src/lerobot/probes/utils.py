@@ -874,6 +874,14 @@ def sample_action_inspector_frames(dataset, probe_cfg, stride: int = 1) -> list[
     frame_stride = max(frame_stride, stride)
 
     samples: list[tuple[int, int, int]] = []
+    explicit = getattr(probe_cfg, "trace_frames", None)
+    if explicit:
+        for pair in explicit.split(","):
+            episode_idx, frame = (int(value) for value in pair.strip().split(":"))
+            indices = ep_to_indices[episode_idx]
+            _, frame_idx, global_idx = _snap_position(dataset, indices, min(frame, len(indices) - 1), stride)
+            samples.append((episode_idx, frame_idx, global_idx))
+        return samples
     for episode_idx in sorted(ep_to_indices):
         if wanted and episode_idx not in wanted:
             continue

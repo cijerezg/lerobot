@@ -68,6 +68,7 @@ from lerobot.probes.utils import (
     TRAJECTORY_ERROR_KEYS,
     TRAJECTORY_RELATIVE_KEYS,
     action_inspector_sample_seed,
+    as_image,
     joint_names_for_dim,
     load_probe_dataset,
     makedirs,
@@ -1531,6 +1532,83 @@ def _camera_context(obs: dict) -> list[dict[str, str]]:
     return cameras
 
 
+def _camera_frames(obs: dict) -> dict[str, np.ndarray]:
+    """Anchor camera frames as HWC uint8, halved when taller than 300 px, for the records file."""
+    frames = {}
+    for key in sorted(k for k in obs if k.startswith("observation.images.")):
+        image = np.clip(as_image(obs[key]), 0, 255).astype(np.uint8)
+        if image.shape[0] > 300:
+            image = image[::2, ::2]
+        frames[key.rsplit(".", 1)[-1]] = np.ascontiguousarray(image)
+    return frames
+
+
+def _measured_states(dataset, global_idx: int, episode_idx: int, horizon: int) -> np.ndarray:
+    """Follower states over the chunk window, read from the parquet columns.
+
+    This is what the real arm did under the demonstrated command, the reference the
+    simulated execution is compared against. Stops at the episode end, so the result
+    is shorter than ``horizon`` there.
+    """
+    states = []
+    for offset in range(horizon):
+        idx = global_idx + offset
+        if idx >= len(dataset):
+            break
+        row = dataset.hf_dataset[idx]
+        if int(row["episode_index"]) != episode_idx:
+            break
+        states.append(np.asarray(row[OBS_STATE], dtype=np.float64).reshape(-1))
+    return np.stack(states)
+
+
+def _write_records_npz(
+    records: list[dict], output_dir: str, *, fps: float, table_z: float, dataset_repo_id: str = "", dataset_root: str = ""
+) -> None:
+    """Raw per-anchor chunks for ``lerobot.probes.action_trace_sim``.
+
+    Measured state, the demonstrated chunk, every filtered flow sample, the FAST decode
+    when present, the follower states the demonstration actually produced, and the
+    anchor camera frames. Horizons are NaN-padded to the longest so the arrays stack.
+    """
+    horizon = max(len(record["gt_chunk"]) for record in records)
+
+    def padded(chunk: np.ndarray | None, width: int) -> np.ndarray:
+        # Predictions arrive right-padded to the policy's canonical action width; the
+        # native dims are the first ``width``, as everywhere else in this probe.
+        out = np.full((horizon, width), np.nan)
+        if chunk is not None:
+            out[: len(chunk)] = chunk[:, :width]
+        return out
+
+    action_dim = int(records[0]["gt_chunk"].shape[-1])
+    arrays = {
+        "episode": np.array([record["episode"] for record in records]),
+        "frame": np.array([record["frame"] for record in records]),
+        "global_idx": np.array([record["global_idx"] for record in records]),
+        "subtask": np.array([str(record.get("subtask") or "") for record in records]),
+        "state": np.stack([record["state"] for record in records]),
+        "gt_chunk": np.stack([padded(record["gt_chunk"], action_dim) for record in records]),
+        "sample_chunks": np.stack(
+            [np.stack([padded(chunk, action_dim) for chunk in record["sample_chunks"]]) for record in records]
+        ),
+        "measured_states": np.stack(
+            [padded(record["measured_states"], record["measured_states"].shape[-1]) for record in records]
+        ),
+        "sample_clearance": np.stack([record["sample_clearance"] for record in records]),
+        "fps": np.float64(fps),
+        "table_z": np.float64(table_z),
+        "joint_names": np.array(joint_names_for_dim(action_dim)),
+        "dataset_repo_id": np.array(dataset_repo_id),
+        "dataset_root": np.array(dataset_root),
+    }
+    if any(record.get("fast_chunk") is not None for record in records):
+        arrays["fast_chunk"] = np.stack([padded(record.get("fast_chunk"), action_dim) for record in records])
+    for label in records[0]["camera_frames"]:
+        arrays[f"image_{label}"] = np.stack([record["camera_frames"][label] for record in records])
+    np.savez_compressed(os.path.join(output_dir, "action_trace_records.npz"), **arrays)
+
+
 def _dashboard_context(record: dict) -> dict:
     return {
         "episode": int(record["episode"]),
@@ -2057,6 +2135,8 @@ def run(adapter, dataset, cfg, output_dir):
                 global_idx=int(global_idx),
                 subtask=subtask,
                 cameras=_camera_context(obs),
+                camera_frames=_camera_frames(obs),
+                measured_states=_measured_states(dataset, int(global_idx), int(episode_idx), int(gt_actions.shape[0])),
                 norm=_normalized_chunks(adapter, pred_norm, gt_actions, state_tensor),
             )
             record["metrics"].update(_trajectory_metrics(record["norm"]))
@@ -2102,6 +2182,14 @@ def run(adapter, dataset, cfg, output_dir):
         json.dump(fit, handle, indent=2)
 
     _write_manifest(records, output_dir, fit, has_decoder_comparison=has_decoder_comparison)
+    _write_records_npz(
+        records,
+        output_dir,
+        fps=fps,
+        table_z=float(p.trace_table_z),
+        dataset_repo_id=str(getattr(dataset, "repo_id", "")),
+        dataset_root=str(getattr(dataset, "root", "")),
+    )
 
     logging.info(
         f"[action_trace] mse_norm={fit['mse_norm']:.4f}  hold={fit['baseline_hold']:.4f}  "

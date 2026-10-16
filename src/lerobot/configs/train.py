@@ -557,6 +557,7 @@ class ProbeConfig:
 
     # Action trace (URDF forward kinematics; open-loop pre-flight)
     trace_episodes: str | None = None  # comma-separated episode indices; None = all
+    trace_frames: str | None = None  # explicit "ep:frame,ep:frame" anchors (snapped to the image stride); overrides the stride sampler
     trace_anchor_stride_s: float = 2.0  # seconds between anchor frames
     trace_max_anchors_per_episode: int = 30
     trace_n_samples: int = 4  # independent flow draws per anchor — the fan
