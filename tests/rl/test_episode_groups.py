@@ -141,7 +141,8 @@ def test_checked_in_training_and_validation_splits_cover_every_internal_episode(
                     pills_caps=.132, cases_kit_box_push=.159)
     cfg = configs[0]
     assert cfg['val_freq'] == 0 and not cfg['val_on_start']
-    assert cfg['diverse']['weight'] == .25 and cfg['diverse']['rebot_start_cell'] == 5  # 2026-10-14 mix 50/25/25
+    assert cfg['diverse']['weight'] == .25 and cfg['diverse']['rebot_start_cell'] == 1  # 2026-10-14 mix 50/25/25
+    assert cfg['diverse']['rebot_start_weights']['enabled'] and cfg['diverse']['rebot_start_weights']['peak_ratio'] == 5  # 2026-10-16
     shares = cfg['diverse']['rebot_group_weights']
     assert shares['external_rebot'] == .25
     assert sum(shares.values()) == pytest.approx(.75)
@@ -159,3 +160,111 @@ def test_checked_in_training_and_validation_splits_cover_every_internal_episode(
     for group, share in expected.items():
         assert totals[group] > 0
         assert shares[group] == pytest.approx(.50*share)
+
+
+def _exclusion_manifest(tmp_path, buffer, exclusions, boundaries=()):
+    import json
+    from lerobot.rl.data_sources.frame_exclusions import FrameExclusions
+    path = tmp_path / 'exclusions.json'
+    def entry(ep, **kw):
+        return dict(source_root=buffer.offline_source.root, episode_index=ep, **kw)
+    path.write_text(json.dumps(dict(version=1,
+        exclusions=[entry(ep, from_frame=a, to_frame=b) for ep, a, b in exclusions],
+        boundaries=[entry(ep, frame=f) for ep, f in boundaries])))
+    return path, FrameExclusions(str(path))
+
+
+def test_frame_exclusions_block_entire_action_horizon_but_preserve_recovery_history(tmp_path):
+    b = FakeBuffer(tmp_path/'data', [120, 150], {'a':[0,1]})
+    b.history_offsets = {'observation.state': [180, 60]}
+    path, exclusions = _exclusion_manifest(tmp_path, b, [(1,30,60)])
+    baseline = list(episode_group_views(b, {'a':[0,1]}, 30))[0][1]
+    view = list(episode_group_views(b, {'a':[0,1]}, 30, exclusions=exclusions))[0][1]
+    # Global [150,180) is excluded. s=120 ends exactly before it; s=180
+    # starts immediately after it and may condition on the failed attempt.
+    assert 120 in view.sampling_indices and 180 in view.sampling_indices
+    assert not ((view.sampling_indices < 180) & (view.sampling_indices+30 > 150)).any()
+    assert len(view) == len(baseline)-19
+    for _ in range(10):
+        sampled = view.sample(100)['complementary_info']['sample_index']
+        assert not ((sampled < 180) & (sampled+30 > 150)).any()
+    with pytest.raises(ValueError, match='outside'):
+        view.sample(1, indices=[150])
+    assert b.dones.sum() == 2 and b.size == 270  # cache remains intact
+    restored = list(episode_group_views(b, {'a':[0,1]}, 30))[0][1]
+    assert torch.equal(restored.sampling_indices, baseline.sampling_indices)
+
+
+def test_whole_episode_exclusion_and_splice_history_do_not_join_frames(tmp_path):
+    b = FakeBuffer(tmp_path/'data', [90, 180], {'a':[0,1]})
+    b.history_offsets = {'observation.state': [30]}
+    _, exclusions = _exclusion_manifest(tmp_path, b, [(0,0,90)], [(1,90)])
+    view = list(episode_group_views(b, {'a':[0,1]}, 30, exclusions=exclusions))[0][1]
+    starts = view.sampling_indices
+    assert (starts >= 90).all()
+    assert 150 in starts  # action ends exactly at global splice180
+    assert 180 not in starts and 207 not in starts  # history crosses splice
+    assert 210 in starts  # history entirely after splice
+    assert not ((starts < 180) & (starts+30 > 180)).any()
+
+
+@pytest.mark.parametrize('ranges', [[(8,0,30)], [(0,0,91)]])
+def test_invalid_exclusion_episode_or_bounds_fail_closed(tmp_path, ranges):
+    b = FakeBuffer(tmp_path/'data', [90])
+    _, exclusions = _exclusion_manifest(tmp_path, b, ranges)
+    with pytest.raises(ValueError):
+        list(episode_group_views(b, {'a':[0]}, 30, exclusions=exclusions))
+
+
+def test_manifest_applied_in_real_mixture_and_fails_on_unsupported_sources(tmp_path):
+    b = FakeBuffer(tmp_path/'data', [120], {'a':[0]})
+    diverse = FakeBuffer(tmp_path/'div', [90])
+    path, _ = _exclusion_manifest(tmp_path, b, [(0,30,60)])
+    cfg = DiverseCollectionConfig(rebot_group_weights={'a':1}, rebot_exclusions_manifest=str(path))
+    groups = build_mixture_groups(cfg, [b], diverse, action_chunk_size=30)
+    assert groups[0].buffers[0].sampling_indices.tolist() == [0,60,63,66,69,72,75,78,81,84,87,90]
+    b.offline_source.episode_groups = {}
+    with pytest.raises(ValueError, match='require episode_groups'):
+        build_mixture_groups(cfg, [b], diverse)
+    b.offline_source.episode_groups = {'a':[0]}
+    b.actions = torch.zeros(120,30,2)
+    with pytest.raises(ValueError, match='dense per-frame'):
+        build_mixture_groups(cfg, [b], diverse)
+
+
+def test_fully_excluded_positive_group_fails_instead_of_bypassing_filter(tmp_path):
+    b = FakeBuffer(tmp_path/'data', [90], {'a':[0]})
+    diverse = FakeBuffer(tmp_path/'div', [90])
+    path, _ = _exclusion_manifest(tmp_path, b, [(0,0,90)])
+    cfg = DiverseCollectionConfig(rebot_group_weights={'a':1}, rebot_exclusions_manifest=str(path))
+    with pytest.raises(ValueError, match='No eligible buffers'):
+        build_mixture_groups(cfg, [b], diverse)
+
+
+def test_manifest_validates_inactive_roots_and_missing_roots(tmp_path):
+    dormant = FakeBuffer(tmp_path/'validation', [90])
+    _, exclusions = _exclusion_manifest(tmp_path, dormant, [(0,30,60)])
+    with pytest.raises(ValueError, match='inactive_roots'):
+        exclusions.validate_sources([])
+    exclusions.inactive_roots.add(str((tmp_path/'validation').resolve()))
+    exclusions.validate_sources([])  # only explicitly allowlisted dormant roots
+    dormant.offline_source.root = str(tmp_path/'misspelled')
+    _, exclusions = _exclusion_manifest(tmp_path, dormant, [(0,30,60)])
+    with pytest.raises(FileNotFoundError, match='No episode metadata'):
+        exclusions.validate_sources([])
+
+
+@pytest.mark.parametrize('changed', [dict(skip_critic=False), dict(val_split=.1),
+    dict(val_freq=1), dict(val_on_start=True), dict(disabled=True)])
+def test_frame_exclusions_refuse_unsupported_training_modes(changed):
+    from lerobot.rl.data_sources.frame_exclusions import validate_exclusion_training_mode
+    cfg = SimpleNamespace(diverse=SimpleNamespace(enabled=True, rebot_exclusions_manifest='manifest.json'),
+                          skip_critic=True, val_split=0, val_freq=0, val_on_start=False)
+    validate_exclusion_training_mode(cfg)
+    if changed.get('disabled'):
+        cfg.diverse.enabled = False
+    else:
+        for key, value in changed.items():
+            setattr(cfg, key, value)
+    with pytest.raises(ValueError, match='Frame exclusions'):
+        validate_exclusion_training_mode(cfg)

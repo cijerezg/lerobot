@@ -17,6 +17,10 @@ subtask window (meta/subtask_windows.json), segment quality (episode_metadata.pa
 
 2026-10-06: --rebot-root <annotated ReBot root> --out <dir> [--episodes E ...] renders those episodes of any ReBot root.
 
+2026-10-16: --density <json> (one episode, from migration/sampling_density_2026-10-16/density.py) adds a strip of
+expected draws per start under each sampling scheme (log scale, shared ymax), gripper closes as ticks, and a line
+with the value of every scheme at the cursor.
+
 2026-09-25: --diverse-root <corpus root> --robots <group ...> [--n N] --out <dir> renders N random training
 episodes, each from a different robot group (droid, droid_success, molmoact, rc_arx5, rc_ur5, ur7e, yam, fmb),
 and adds the precision / contact atom (precision_atoms.jsonl, contact_atoms.jsonl) and the anchor's
@@ -30,6 +34,7 @@ from lerobot.datasets.diverse_actor_selection import open_federated_corpus, sele
 from lerobot.annotation.vocab import phrase_for
 from lerobot.rl.offline_dataset_utils import load_metadata_rows
 
+DENSITY = None  # 2026-10-16: sampling-density record (density.py JSON) burned into ReBot videos
 PC = {"precision": {}, "contact": {}}  # episode_id -> precision / contact atoms (empty when the sidecars are absent)
 QUALITY_SPANS = {}  # episode_id -> trainer-effective v2 quality spans
 
@@ -94,6 +99,29 @@ def compose(tiles, lines, timeline, tile_h=TILE_H):
     x = int(cursor * (w - 1)); band[y0 - 2:y0 + 14, max(x - 1, 0):x + 2] = (255, 255, 255)
     padded = np.zeros((body.shape[0], w, 3), np.uint8); padded[:, :body.shape[1]] = body
     return np.concatenate([band, padded], axis=0)
+
+
+def hex_rgb(h): return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def density_strip(w, i, n, h=150):
+    """Curves of DENSITY["density"] over the episode, log scale from 0.02 to ymax; cursor at frame i. Base image cached."""
+    xs = (np.arange(n) * (w - 1) / max(n - 1, 1)).astype(int)
+    if DENSITY.get("_base") is None or DENSITY["_base"].shape[1] != w:
+        img = np.full((h, w, 3), 20, np.uint8); lo, hi = np.log10(0.02), np.log10(DENSITY["ymax"] * 1.3)
+        y_of = lambda v: int((h - 1) * (1 - (np.log10(max(v, 0.02)) - lo) / (hi - lo)))  # noqa: E731
+        for v in (0.1, 1.0, 10.0):
+            if v < DENSITY["ymax"] * 1.3: img[y_of(v), :] = (70, 70, 70); put(img, f"{v:g}", y_of(v) - 2, (150, 150, 150), 0.4)
+        for f in DENSITY["closes"]: img[:, xs[min(f, n - 1)]] = (90, 90, 90)
+        for f in DENSITY.get("opens", []): img[::3, xs[min(f, n - 1)]] = (90, 90, 90)  # dotted = gripper open
+        for name, arr in DENSITY["density"].items():
+            c = hex_rgb(DENSITY["colors"][name]); ys = np.array([y_of(v) for v in arr])
+            edges = np.flatnonzero(np.diff(ys)) + 1; starts = np.concatenate([[0], edges]); ends = np.concatenate([edges, [n]])
+            for a, b in zip(starts, ends): cv2.line(img, (int(xs[a]), int(ys[a])), (int(xs[b - 1]), int(ys[a])), c, 2)
+            for e in edges: cv2.line(img, (int(xs[e]), int(ys[e - 1])), (int(xs[e]), int(ys[e])), c, 2)
+        DENSITY["_base"] = img
+    img = DENSITY["_base"].copy(); x = int(xs[min(i, n - 1)]); img[:, max(x - 1, 0):x + 2] = (255, 255, 255)
+    return img
 
 
 def video_frames(path):
@@ -253,7 +281,12 @@ def render_rebot(ep, step=2):
             for _, q in qs.iterrows(): lines.append((f"SPAN q{int(q.quality)} {q.cause} ({q.confidence}): {q.note}"[:220], YELLOW if q.quality == 5 else ORANGE))
         for _, m in mm.iterrows(): lines.append((f"MISTAKE {m.mistake_type}: {m.note}"[:220], RED))
         if iv[i]: lines.append(("TELEOP INTERVENTION (is_intervention)", ORANGE))
-        w.write(compose([a, b], lines, (tl, i / n), tile_h=480))
+        frame = compose([a, b], lines, (tl, i / n), tile_h=480)
+        if DENSITY is not None:
+            band_h = LINE * MAX_LINES + 10 + 14; strip = density_strip(frame.shape[1], i, n)
+            put(strip, "draws per start / run:  " + "   ".join(f"{k} {v[i]:.2f}" for k, v in DENSITY["density"].items()), 16, WHITE, 0.5)
+            frame = np.concatenate([frame[:band_h], strip, frame[band_h:]], axis=0)
+        w.write(frame)
     w.close(); print("wrote", w.path, n, "frames")
 
 
@@ -262,7 +295,10 @@ def main():
     ap.add_argument("--diverse-root", type=Path); ap.add_argument("--robots", nargs="*"); ap.add_argument("--n", type=int, default=5); ap.add_argument("--out", type=Path)
     ap.add_argument("--episode-ids", nargs="*", help="exact diverse episode ids to render")
     ap.add_argument("--rebot-root", type=Path); ap.add_argument("--episodes", type=int, nargs="*")
+    ap.add_argument("--density", type=Path, help="density.py JSON of the one episode being rendered")
     args = ap.parse_args()
+    global DENSITY
+    if args.density is not None: DENSITY = json.load(open(args.density))
     rng = random.Random(args.seed)
     if args.rebot_root is not None: return render_rebot_root(args)
     if args.diverse_root is not None: return render_diverse_groups(args, rng)

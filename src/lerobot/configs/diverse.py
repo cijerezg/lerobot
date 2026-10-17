@@ -26,6 +26,41 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class StartWeightsConfig:
+    """Per-start draw weights inside the ReBot pool (2026-10-16, migration/sampling_density_2026-10-16).
+
+    Every eligible start has weight 1 (move, return, the transit to the object). Around a commit moment
+    the weight rises to a peak and the start is drawn that many times more often than a move start:
+    grasp = peak_ratio * precision_scale[precision - 1] at every gripper close, release = the same at the
+    gripper open, every other skill (push, pour, close, stand, ...) = skill_ratio over the whole segment.
+    Group shares stay the config's rebot_group_weights; inside a group the views split by their
+    start-weight mass. The per-start rule only decides which starts of a group are drawn.
+    """
+
+    enabled: bool = False
+    # Draws of the peak frame of a precision-5 grasp per draw of a move frame.
+    peak_ratio: float = 5.0
+    # Fraction of peak_ratio by precision label 1..5, for grasps and releases.
+    precision_scale: tuple[float, float, float, float, float] = (0.3, 0.4, 0.6, 0.8, 1.0)
+    # Flat ratio over push / pour / close / stand / plug / fold ... segments (their precision labels
+    # score slack at the commit, not how precise the motion is).
+    skill_ratio: float = 3.0
+    # Seconds before / after the commit over which the peak rises / decays.
+    grasp_window: tuple[float, float] = (8.0, 2.0)
+    release_window: tuple[float, float] = (3.0, 1.0)
+    # Gaussian edges (sigma = half the window) instead of rectangles.
+    smooth: bool = True
+
+    def validate(self) -> None:
+        if self.peak_ratio < 1 or self.skill_ratio < 1:
+            raise ValueError("rebot_start_weights ratios must be >= 1 (1 = a move frame).")
+        if len(self.precision_scale) != 5 or any(not 0 < v <= 1 for v in self.precision_scale):
+            raise ValueError("rebot_start_weights.precision_scale needs five values in (0, 1].")
+        if any(v < 0 for v in (*self.grasp_window, *self.release_window)):
+            raise ValueError("rebot_start_weights windows must be nonnegative seconds.")
+
+
+@dataclass
 class DiverseCollectionConfig:
     """Mix the source-native diverse corpus against the LeRobot (ReBot) sources.
 
@@ -46,7 +81,12 @@ class DiverseCollectionConfig:
     # Stratified start coverage inside each ReBot group view: eligible starts (every
     # image_stride-th frame) are cut into cells of this many starts; every pass draws one
     # start per cell. 1 = plain iid draws.
+    # Applied after replay-cache loading; original source-root/episode frame ranges.
+    rebot_exclusions_manifest: str | None = None
     rebot_start_cell: int = 1
+    # Per-start draw weights around commit moments inside each ReBot group; replaces iid / cell
+    # draws. rebot_group_weights still sets the group shares.
+    rebot_start_weights: StartWeightsConfig = field(default_factory=StartWeightsConfig)
     # Inner rule across the five corpus sources: sqrt_episodes | episodes | anchors | uniform.
     group_weight: str = "sqrt_episodes"
     group_weight_overrides: dict[str, float] = field(default_factory=dict)
@@ -68,6 +108,9 @@ class DiverseCollectionConfig:
             raise ValueError("ReBot group names must be nonempty and weights nonnegative (0 excludes the group).")
         if self.rebot_start_cell < 1:
             raise ValueError("diverse.rebot_start_cell must be >= 1.")
+        self.rebot_start_weights.validate()
+        if self.rebot_start_weights.enabled and self.rebot_start_cell != 1:
+            raise ValueError("diverse.rebot_start_weights and rebot_start_cell > 1 are exclusive.")
         allowed = ("sqrt_episodes", "episodes", "anchors", "uniform")
         if self.group_weight not in allowed:
             raise ValueError(f"diverse.group_weight must be one of {allowed}, got {self.group_weight!r}.")

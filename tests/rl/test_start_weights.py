@@ -48,7 +48,7 @@ def test_frame_weights_follow_the_rule(tmp_path):
     assert smooth[120] == pytest.approx(3) and 1 < smooth[60] < 3 and smooth[0] < smooth[30] < smooth[90]
 
 
-def test_views_draw_by_weight_and_groups_share_by_mass(tmp_path):
+def test_views_draw_by_weight_and_groups_keep_config_shares(tmp_path):
     a = FakeBuffer(tmp_path / 'a', [300, 150], {'rigid': [0], 'cases': [1]})
     write_meta(tmp_path / 'a', [(0, 0, 180, 'grasp the cup', 3), (0, 180, 300, 'move the cup to the bin', 4),
                                (1, 300, 450, 'push the book aside', 2)], [('close', 120)])
@@ -57,7 +57,7 @@ def test_views_draw_by_weight_and_groups_share_by_mass(tmp_path):
     diverse = FakeBuffer(tmp_path / 'div', [90])
     a.code[:300] = 0; a.code[300:] = 1; ext.code[:] = 2; diverse.code[:] = 3
     cfg = DiverseCollectionConfig(weight=.25, rebot_weight=.75, rebot_start_weights=CFG,
-                                  rebot_group_weights={'rigid': 1, 'cases': 1, 'external_rebot': 1})
+                                  rebot_group_weights={'rigid': .4, 'cases': .1, 'external_rebot': .25})
     cfg.validate()
     views = list(episode_group_views(a, a.offline_source.episode_groups, 30, 1, CFG))
     rigid = views[0][1]
@@ -65,9 +65,8 @@ def test_views_draw_by_weight_and_groups_share_by_mass(tmp_path):
     mass = {name: m for name, _, m in views}
     assert mass['rigid'] == pytest.approx(float(rigid.weights.sum()))
     groups = build_mixture_groups(cfg, [a, ext], diverse, action_chunk_size=30)
-    ext_mass = float(groups[2].inner_weights[0])
-    total = mass['rigid'] + mass['cases'] + ext_mass
-    assert [g.weight for g in groups] == pytest.approx([.75 * mass['rigid'] / total, .75 * mass['cases'] / total, .75 * ext_mass / total, .25])
+    assert [g.weight for g in groups] == [.4, .1, .25, .25]                      # config shares, not mass
+    assert groups[0].inner_weights == [pytest.approx(mass['rigid'])]               # mass splits the views inside a group
     it = make_hierarchical_offline_iterator(groups, batch_size=64, proportional=True, seed=5, action_chunk_size=30)
     observed = Counter(); peak = 0
     for _ in range(600):
@@ -76,8 +75,8 @@ def test_views_draw_by_weight_and_groups_share_by_mass(tmp_path):
         idx = batch['complementary_info']['sample_index']; code = batch['complementary_info']['group_code']
         peak += int(((code == 0) & (idx >= 60) & (idx <= 150)).sum())
     n = 64 * 600
-    assert observed[0] / n == pytest.approx(.75 * mass['rigid'] / total, abs=.01)
-    assert observed[1] / n == pytest.approx(.75 * mass['cases'] / total, abs=.01)
+    assert observed[0] / n == pytest.approx(.4, abs=.01)
+    assert observed[1] / n == pytest.approx(.1, abs=.01)
     # inside rigid, the 31 peak starts carry weight 3 each against 1 for the other 60 (91 starts: 0..270 step 3)
     assert peak / observed[0] == pytest.approx(93 / 153, abs=.02)
 

@@ -34,7 +34,8 @@ FPS = 30
 
 
 def dataset(run):
-    return Path(run).resolve() / "inference_dataset"
+    run = Path(run).resolve()
+    return run / "inference_dataset" if (run / "inference_dataset").is_dir() else run
 
 
 def episodes(root):
@@ -45,6 +46,8 @@ def episodes(root):
 
 def intervention_spans(root, episode):
     """[(start s, end s)] of operator teleop inside an episode."""
+    if not (root / "meta/online_labels.parquet").exists():
+        return []
     o = pd.read_parquet(root / "meta/online_labels.parquet")
     iv = o[o.episode_index == episode].sort_values("frame_index").is_intervention.to_numpy().astype(int)
     pad = np.r_[0, iv, 0]
@@ -174,9 +177,9 @@ def plan_entry(row, remove, why):
             kept.append((cursor, a))
         cursor = max(cursor, b)
     assert kept, f"{row['id']}: nothing kept"
-    run = Path(row["run"])
+    run, src = Path(row["run"]), dataset(row["run"])
     return {
-        "source": str(dataset(run).relative_to(WORKSPACE)),
+        "source": str(src.relative_to(WORKSPACE) if src.is_relative_to(WORKSPACE) else src),
         "episode": row["episode"],
         "keep": [kept[0][0], kept[-1][1]],
         "cuts": [[kept[i][1], kept[i + 1][0]] for i in range(len(kept) - 1)],

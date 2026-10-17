@@ -688,6 +688,8 @@ def run_offline_training(
     critic_warmup_steps = getattr(cfg.policy, "critic_warmup_steps", 0)
     policy_update_freq = getattr(cfg.policy, "policy_update_freq", 1)
     skip_critic = getattr(cfg, "skip_critic", False)
+    from lerobot.rl.data_sources.frame_exclusions import validate_exclusion_training_mode
+    validate_exclusion_training_mode(cfg)
     gradient_accumulation_steps = getattr(cfg.policy, "gradient_accumulation_steps", 1)
     clip_grad_norm_value = getattr(cfg.policy, "optimizer_grad_clip_norm", 1.0)
     async_prefetch = getattr(cfg.policy, "async_prefetch", False)

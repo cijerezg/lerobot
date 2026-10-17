@@ -242,6 +242,15 @@ def build_mixture_groups(
     action_chunk_size: int = 30,
 ) -> list[MixtureGroup]:
     """ReBot first, diverse second -- the order that decides odd-batch ties."""
+    exclusions = None
+    if diverse_cfg.rebot_exclusions_manifest:
+        from lerobot.rl.data_sources.frame_exclusions import FrameExclusions
+        exclusions = FrameExclusions(diverse_cfg.rebot_exclusions_manifest)
+        exclusions.validate_sources([b.offline_source.root for b in rebot_buffers])
+        for buffer in rebot_buffers:
+            source = buffer.offline_source
+            if exclusions.has_root(source.root) and not getattr(source, 'episode_groups', None):
+                raise ValueError('Frame exclusions require episode_groups for each affected source')
     has_episode_groups = any(getattr(getattr(buffer, "offline_source", None), "episode_groups", None) for buffer in rebot_buffers)
     if has_episode_groups and not diverse_cfg.rebot_group_weights:
         raise ValueError("episode_groups requires diverse.rebot_group_weights")
@@ -255,7 +264,9 @@ def build_mixture_groups(
 
                 # Uniform over eligible starts across all roots in the same task
                 # pool. Physical-root sizes must not override the task's outer share.
-                views = episode_group_views(buffer, partition, action_chunk_size, diverse_cfg.rebot_start_cell)
+                views = episode_group_views(buffer, partition, action_chunk_size, diverse_cfg.rebot_start_cell,
+                                            diverse_cfg.rebot_start_weights if diverse_cfg.rebot_start_weights.enabled else None,
+                                            exclusions=exclusions)
             else:
                 views = [(buffer.offline_source.sampling_group, buffer,
                           rebot_weights[index] if rebot_weights else 1.0)]
@@ -267,6 +278,12 @@ def build_mixture_groups(
         excluded = [name for name, weight in diverse_cfg.rebot_group_weights.items() if weight == 0]
         if excluded:
             logger.info("[DiverseMixture] Excluded ReBot groups (weight 0): %s", excluded)
+        empty = [name for name in by_group if name not in excluded and not by_group[name]]
+        if empty:
+            raise ValueError(f'No eligible buffers remain for positive-weight ReBot groups: {empty}')
+        # Outer shares are the config's; with rebot_start_weights the views inside a group
+        # split by start-weight mass and draw by weight, so the per-start rule never moves a
+        # group's share.
         groups = [
             MixtureGroup(name, buffers, weight=diverse_cfg.rebot_group_weights[name], inner_weights=weights[name])
             for name, buffers in by_group.items()

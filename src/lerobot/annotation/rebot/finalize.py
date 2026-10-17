@@ -5,7 +5,8 @@ name and staging root come from <work>/pass.json. Refuses tables already present
     uv run python -m lerobot.annotation.rebot.finalize <work> outputs/<root>
 
 Tables (rubric v2 section 10 + the loader tables):
-  quality_spans.parquet      raw stretch + writer headroom (critiques 1 s before / 0.5 s after, clipped to the episode)
+  quality_spans.parquet      raw stretch + writer headroom (critiques 1 s before / 0.5 s after, clipped to the
+                             continuous footage: the episode edges, splices of cuts and the source root's seams)
   mistakes.parquet           final mistake events (replaces the table build_root wrote)
   precision_windows.parquet  w_a / commit / w_b per unit with a window
   episode_metadata.parquet   `quality` per segment: lowest critique stretch overlapping the segment (raw frames),
@@ -32,13 +33,15 @@ RUBRICS = "lerobot/src/lerobot/annotation/rubrics"
 
 
 def episode_map(staging, root, work):
-    """staging episode -> [(final episode, frame map, final [from, to), inside), ...]. The map takes a staging-root
+    """staging episode -> [(final episode, frame map, final [from, to), inside, piece), ...]. The map takes a staging-root
     frame to the final root through the source frame; idle cuts (spliced or trimmed) collapse onto the splice point,
     frames outside the final episode's kept range clip to its edges, and ``inside(g)`` says whether a staging frame
     falls in that range. A staging entry may feed several final episodes when its label entry was split after the
     staging build (a validation piece carved out of a train entry, 2026-10-14): a final entry matches the staging
     entry of the same source whose kept range contains it. A pass that re-annotates an annotated root may name that
-    root as its staging root: its episodes are then the inventory's source episodes, uncut."""
+    root as its staging root: its episodes are then the inventory's source episodes, uncut. ``piece(a, b)`` gives the
+    final frames [lo, hi) of the continuous footage around [a, b): headroom never crosses a splice (cuts of the label
+    file or idle cuts) or a seam of the source root (a rollout root cut by review, 2026-10-16)."""
 
     def prov(r):
         eps = pd.read_parquet(r / "meta/episodes/chunk-000/file-000.parquet").set_index("episode_index")
@@ -61,6 +64,7 @@ def episode_map(staging, root, work):
         for r in records(work):
             start = int(eps.loc[r["episode"]].dataset_from_index)
             s.update({(r["key"], j): (r["episode"], start, None, dict(keep=[0, r["frames"]])) for j in range(8)})
+    seams = {r["key"]: r.get("seams", []) for r in records(work)}
     out = {}
     for (source_key, _part), (ef, f0, f1, p) in f.items():
         es, s0, _, sp = next(
@@ -71,6 +75,12 @@ def episode_map(staging, root, work):
         ks = np.append(kept(sp["keep"], sp.get("cuts") or []), sp["keep"][1])
         k = kept(p["keep"], p["cuts"])
         ka, kb = p["keep"]
+        breaks = [f0 + j for j in np.flatnonzero(np.diff(k) != 1) + 1]
+        breaks += [f0 + remap(k, x) for x in seams[source_key] if ka < x < kb]
+        bounds = np.array(sorted({f0, f1, *breaks}))
+
+        def piece(a, b, bounds=bounds):
+            return int(bounds[bounds <= a].max()), int(bounds[bounds >= b].min())
 
         def src(g, s0=s0, ks=ks):
             return int(ks[min(g - s0, len(ks) - 1)])
@@ -81,7 +91,7 @@ def episode_map(staging, root, work):
         def inside(g, ka=ka, kb=kb, src=src):
             return ka <= src(g) < kb
 
-        out.setdefault(es, []).append((ef, fm, f0, f1, inside))
+        out.setdefault(es, []).append((ef, fm, f0, f1, inside, piece))
     return out
 
 
@@ -102,25 +112,27 @@ def main(work, root):
         es, seg = map(int, m.groups())
         if es not in emap:
             continue
-        for ef, fm, e0, e1, inside in emap[es]:
-            _unit(r, ef, fm, e0, e1, inside, em, spans, mistakes, windows)
+        for ef, fm, e0, e1, inside, piece in emap[es]:
+            _unit(r, ef, fm, e0, e1, inside, piece, em, spans, mistakes, windows)
     _tables(work, root, meta, name, pool, em, spans, mistakes, windows)
 
 
-def _unit(r, ef, fm, e0, e1, inside, em, spans, mistakes, windows):
-    """Rows of one graded unit for one final episode (frames clipped to it; a window needs its commit inside)."""
+def _unit(r, ef, fm, e0, e1, inside, piece, em, spans, mistakes, windows):
+    """Rows of one graded unit for one final episode (frames clipped to it, headroom to its continuous footage; a
+    window needs its commit inside)."""
     for s in r.get("spans", []):
         a, b = fm(s["raw_from"]), fm(s["raw_to"])
         if a == b:
             continue  # wholly inside an idle cut
         crit = s["grade"] <= 3
+        lo, hi = piece(a, b)
         spans.append(
             dict(
                 episode_index=ef,
                 raw_from_index=a,
                 raw_to_index=b,
-                from_index=max(e0, a - PRE) if crit else a,
-                to_index=min(e1, b + POST) if crit else b,
+                from_index=max(lo, a - PRE) if crit else a,
+                to_index=min(hi, b + POST) if crit else b,
                 quality=int(s["grade"]),
                 cause=s["cause"],
                 confidence=s["confidence"],
@@ -157,7 +169,7 @@ def _unit(r, ef, fm, e0, e1, inside, em, spans, mistakes, windows):
                 segment_index=int(host.segment_index.iloc[0]),
                 commit_index=fm(p["commit_index"]),
                 raw_from_index=fm(p["w_a"]),
-                from_index=max(e0, fm(p["w_a"]) - PRE),
+                from_index=max(piece(fm(p["w_a"]), fm(p["w_b"]))[0], fm(p["w_a"]) - PRE),
                 to_index=fm(p["w_b"]),
                 precision=int(p["level"]),
                 confidence=p["confidence"],

@@ -23,8 +23,8 @@ and not identified against the DM motors. Read contact and the shape of the lag 
 it, not millimetres of lag.
 
 One ``time`` timeline runs through the anchors in order, with a pause between them; the
-``anchor`` timeline jumps between anchors. Chunks are one second long, so slow the
-viewer's playback speed down to read them.
+``anchor`` timeline jumps between anchors. Chunks are one second long; ``--time-scale 2``
+stretches them to two timeline seconds so the viewer's 1x plays them at half speed.
 """
 
 from __future__ import annotations
@@ -261,11 +261,11 @@ class ChunkVideo:
         return encoded
 
 
-def blueprint(camera_labels: list[str], joint_names: list[str], execute_mode: bool) -> rrb.Blueprint:
+def blueprint(camera_labels: list[str], joint_names: list[str], execute_mode: bool, time_scale: float = 1.0) -> rrb.Blueprint:
     window = rrb.VisibleTimeRange(
         "time",
-        start=rrb.TimeRangeBoundary.cursor_relative(seconds=-1.5),
-        end=rrb.TimeRangeBoundary.cursor_relative(seconds=1.5),
+        start=rrb.TimeRangeBoundary.cursor_relative(seconds=-1.5 * time_scale),
+        end=rrb.TimeRangeBoundary.cursor_relative(seconds=1.5 * time_scale),
     )
     joint_tabs = rrb.Tabs(
         *[rrb.TimeSeriesView(origin=f"/plots/joints/{name}", name=name, time_ranges=window) for name in joint_names]
@@ -301,6 +301,7 @@ def main() -> None:
     parser.add_argument("--anchors", default=None, help="comma-separated anchor indices; default all")
     parser.add_argument("--episodes", default=None, help="comma-separated episode indices; default all")
     parser.add_argument("--pause", type=float, default=0.5, help="seconds of timeline between anchors")
+    parser.add_argument("--time-scale", type=float, default=1.0, help="timeline seconds per real second; 2 plays the chunks at half speed")
     parser.add_argument("--execute", action="store_true", help="run the chunks through MuJoCo physics instead of posing them")
     parser.add_argument("--substeps", type=int, default=17, help="physics steps per action tick (--execute)")
     parser.add_argument("--no-gravcomp", action="store_true", help="let the arm sag under its own weight (--execute)")
@@ -338,7 +339,7 @@ def main() -> None:
     sample_colors = [hex_rgb(SAMPLE_COLORS[k % len(SAMPLE_COLORS)]) for k in range(n_samples)]
 
     out = args.out or str(Path(args.records).with_name("action_trace_sim.rrd"))
-    layout = blueprint(camera_labels, joint_names, args.execute)
+    layout = blueprint(camera_labels, joint_names, args.execute, args.time_scale)
     rr.init("action_trace_sim", spawn=args.spawn, default_blueprint=layout)
     if not args.spawn:
         rr.save(out, default_blueprint=layout)
@@ -426,7 +427,7 @@ def main() -> None:
             rr.log("demo/measured_path", rr.LineStrips3D([arm.ee_path(measured)], colors=[hex_rgb(MEASURED_COLOR)], radii=[0.002]))
 
         for step in range(horizon):
-            rr.set_time("time", duration=clock + step / fps)
+            rr.set_time("time", duration=clock + step / fps * args.time_scale)
             for label, frames in clips.items():
                 if step < len(frames):
                     rr.log(f"cameras/{label}", rr.EncodedImage(contents=frames[step], media_type="image/jpeg"))
@@ -453,7 +454,7 @@ def main() -> None:
                     rr.log(f"sample{k}/ee", rr.Points3D([command_paths[k][step]], colors=[sample_colors[k]], radii=[0.005]))
                 for j, name in enumerate(joint_names):
                     rr.log(f"plots/joints/{name}/sample{k}_cmd", rr.Scalars(float(samples[k][step, j])))
-        clock += horizon / fps + args.pause
+        clock += horizon / fps * args.time_scale + args.pause
         print(f"anchor {anchor}: ep{episode} frame {frame}  final spread {final_spread * 1000:.0f} mm")
     if not args.spawn:
         print(f"wrote {out}")
