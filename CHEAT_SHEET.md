@@ -97,6 +97,21 @@ Browser UI over a run's probes (http://127.0.0.1:7870), rescans on refresh. Take
 
 uv run python -m lerobot.scripts.view_probes outputs olmoact2_offline_rebot_all-v6
 
+## Action trace in sim
+
+The Action Inspector's flow samples played on the MuJoCo reBot, as a rerun log. In the suite it is its own probe, `enable_action_trace_sim` (needs `enable_action_trace`, which it runs after), flags from `probe_parameters.trace_sim_args` (`"--time-scale 2"` = half speed, `--execute` = physics); output `validation/step_*/action_trace_sim/action_trace_sim.rrd`. By hand, on a checkpoint and chosen anchors:
+
+```bash
+uv run python -m lerobot.probes.action_trace_probe --config config_rl_validate.yaml \
+    --inference_checkpoint_path outputs/<run>/checkpoints/<step>/pretrained_model \
+    --dataset.root outputs/rebot_val_2026-10-14-v1 \
+    --probe_parameters.output_dir outputs/probe_runs/<name> \
+    --probe_parameters.trace_frames "$(cat migration/action_trace_sim_2026-10-15/grasp_anchors_6s.txt)"
+# other flags: --execute, --demo-arm, --anchors, --episodes, --spawn
+uv run python -m lerobot.probes.action_trace_sim --records outputs/probe_runs/<name>/action_trace/action_trace_records.npz --time-scale 2
+.venv/bin/rerun outputs/probe_runs/<name>/action_trace/action_trace_sim.rrd
+```
+
 ## Representation trajectories
 
 Uses `policy.pretrained_path` in `config_rl.yaml`. Captures separate image/state/action groups, real and constant prompts, then writes `trajectories.html` plus per-panel `panels/*.js` under `outputs/probe/validation/step_<checkpoint>/representations/` (or the configured probe output directory). Keep that directory together; the page loads panels and camera previews from it.

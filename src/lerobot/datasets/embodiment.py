@@ -75,6 +75,7 @@ EMBODIMENT_ALIASES: dict[str, str] = {
     "rebotb601": "Rebot B601",
     "rebotb601follower": "Rebot B601",
     "rebotb601leader": "Rebot B601",
+    "rebotb601sim": "Rebot B601",
     "so101": "SO-101",
     "so101follower": "SO-101",
     "so101leader": "SO-101",

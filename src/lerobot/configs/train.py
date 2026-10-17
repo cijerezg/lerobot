@@ -329,6 +329,7 @@ class ProbeConfig:
     enable_action_trace: bool = (
         False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
     )
+    enable_action_trace_sim: bool = False  # action_trace's samples played on the MuJoCo reBot -> rerun .rrd (needs enable_action_trace)
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
     enable_depth_modality: bool = False  # matched foreign/stale depth + null sensor-loss stress
     enable_depth_event: bool = False  # depth read at pre-grasp frames against far-from-event controls
@@ -563,6 +564,7 @@ class ProbeConfig:
     trace_n_samples: int = 4  # independent flow draws per anchor — the fan
     trace_table_z: float = 0.0  # table plane height (m). 0 = the arm's own mounting plane.
     trace_clearance_warn_m: float = 0.01  # samples dipping below this are drawn red
+    trace_sim_args: str = ""  # extra action_trace_sim flags for enable_action_trace_sim, e.g. "--time-scale 2 --execute"
 
 
 @dataclass(kw_only=True)

@@ -59,6 +59,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     rebot_b601_follower,
+    rebot_b601_sim,  # noqa: F401
     so_follower,
 )
 from lerobot.robots.robot import Robot
@@ -74,6 +75,7 @@ from lerobot.teleoperators import (
     keyboard,  # noqa: F401
     make_teleoperator_from_config,
     rebot_102_leader,  # noqa: F401
+    sim_autostart,  # noqa: F401
     so_leader,  # noqa: F401
 )
 from lerobot.teleoperators.teleoperator import Teleoperator

@@ -238,7 +238,9 @@ The most direct measure of action prediction quality, and the probe that answers
 
 **Task-space geometry.** The chunk is put through the reBot URDF, giving a table-clearance pre-flight check from per-link convex hulls, the multimodality fan across samples, and Cartesian error against GT. All of it is open-loop: every anchor restarts from a demonstrated state, so compounding error and recovery are invisible by construction, and Cartesian divergence from GT is not automatically error on a multimodal task.
 
-Output is one interactive Plotly page (`action_trace.html`) plus `metrics.csv`, `action_metrics.json`, and — on an `action_mode=both` checkpoint — a scale-locked FAST-vs-flow scene in `decoder_comparison.html`.
+Output is one interactive Plotly page (`action_trace.html`) plus `metrics.csv`, `action_metrics.json`, `action_trace_records.npz`, and — on an `action_mode=both` checkpoint — a scale-locked FAST-vs-flow scene in `decoder_comparison.html`.
+
+**In sim (`enable_action_trace_sim`, separate probe).** Runs right after this one and plays its `action_trace_records.npz` on the MuJoCo reBot with `lerobot.probes.action_trace_sim`: each flow sample next to the demonstrated chunk, with the anchor's camera video; `--execute` in `trace_sim_args` adds physics (achieved trails, end-effector lag, table contact). Output `action_trace_sim/action_trace_sim.rrd`, opened with `rerun`, not the probe viewer. Runs in its own process; needs `mujoco` and `rerun-sdk` in the environment.
 
 ### Standalone
 
@@ -255,6 +257,8 @@ python -m lerobot.probes.action_trace_probe --config path/to/config.yaml
 | `trace_max_anchors_per_episode` | `30` | Per-episode anchor cap |
 | `trace_n_samples` | `5` | Independent flow draws per anchor (the fan) |
 | `trace_clearance_warn_m` | `0.01` | Samples dipping below this are drawn red |
+| `enable_action_trace_sim` | `false` | Play this probe's samples in MuJoCo (needs `enable_action_trace`) |
+| `trace_sim_args` | `""` | Extra `action_trace_sim` flags, e.g. `"--time-scale 2 --execute"` |
 
 ---
 

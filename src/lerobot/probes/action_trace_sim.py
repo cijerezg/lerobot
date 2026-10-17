@@ -242,6 +242,11 @@ class ChunkVideo:
 
         key = f"observation.images.{label}"
         meta = self.dataset.meta
+        if key not in meta.video_keys:  # npz labels are canonical roles; a raw rig root (inference) stores top / wrist
+            from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP
+
+            raw = {role: name for name, role in CAMERA_ROLE_MAP["rebot"].items()}
+            key = f"observation.images.{raw[label]}"
         start = float(meta.episodes[episode][f"videos/{key}/from_timestamp"])
         end = float(meta.episodes[episode][f"videos/{key}/to_timestamp"])
         timestamps = [start + (frame + step) / self.fps for step in range(horizon)]

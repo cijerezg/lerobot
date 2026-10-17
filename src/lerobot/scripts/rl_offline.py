@@ -248,6 +248,8 @@ _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_hand_terms", "lerobot.probes.hand_terms", "hand_terms"),
     _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
     _ValidationProbeSpec("enable_action_trace", "lerobot.probes.action_trace_probe", "action_trace"),
+    # Must follow action_trace: plays its action_trace_records.npz.
+    _ValidationProbeSpec("enable_action_trace_sim", "lerobot.probes.action_trace_sim_probe", "action_trace_sim"),
     _ValidationProbeSpec("enable_attention", "lerobot.probes.attention", "attention"),
     _ValidationProbeSpec("enable_critic_values_distribution", "lerobot.probes.critic", "critic"),
     _ValidationProbeSpec("enable_representations", "lerobot.probes.representations", "representations"),
