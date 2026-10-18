@@ -103,7 +103,7 @@ The Action Inspector's flow samples played on the MuJoCo reBot, as a rerun log. 
 
 ```bash
 uv run python -m lerobot.probes.action_trace_probe --config config_rl_validate.yaml \
-    --inference_checkpoint_path outputs/<run>/checkpoints/<step>/pretrained_model \
+    --policy.pretrained_path outputs/<run>/checkpoints/<step>/pretrained_model \
     --dataset.root outputs/rebot_val_2026-10-14-v1 \
     --probe_parameters.output_dir outputs/probe_runs/<name> \
     --probe_parameters.trace_frames "$(cat migration/action_trace_sim_2026-10-15/grasp_anchors_6s.txt)"

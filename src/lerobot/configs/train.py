@@ -580,6 +580,11 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # uncached dataset for hours.
     cache_policy: str = "fallback"
     use_rerun: bool = True
+    # Standalone inference: True writes the rerun session to {output_dir}/rerun.rrd (no viewer spawned, works headless,
+    # replay with `rerun <file>`); False spawns the live viewer as before.
+    rerun_save: bool = False
+    # Standalone inference: False skips the OnlineEpisodeRecorder ({output_dir}/inference_dataset: videos, parquet, depth PNGs).
+    record_inference_dataset: bool = True
     video_logging_cameras: list[str] | None = (
         None  # derived from policy.image_features in validate() when unset
     )

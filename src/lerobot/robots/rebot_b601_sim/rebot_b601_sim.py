@@ -25,6 +25,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 
 from ..robot import Robot
 from .config_rebot_b601_sim import RebotB601SimRobotConfig
+from .nail_task import NailTaskScorer
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class RebotB601Sim(Robot):
         # every frame from the env worker, so each thread owns its renderers.
         self._local = threading.local()
         self.episodes_done = 0
+        self.subtask_scorer: NailTaskScorer | None = None
         self._backgrounds: dict[str, np.ndarray] = {}
 
     @property
@@ -114,6 +116,10 @@ class RebotB601Sim(Robot):
             if config.background is not None:
                 self._backgrounds[cam] = cv2.cvtColor(cv2.imread(config.background), cv2.COLOR_BGR2RGB)
         self._dynamic_geom = self.model.geom_bodyid != 0
+        free = [b for b in range(self.model.nbody) if self.model.body_jntnum[b] > 0 and self.model.jnt_type[self.model.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE]
+        always = {self.model.body(n).id for c in self.config.cameras.values() for n in (c.render_always or [])}
+        self._lazy_bodies = [b for b in free if b not in always] if always else []
+        self.subtask_scorer = NailTaskScorer(self.model, self.data, lambda: float(self._present_deg()[GRIPPER_IDX])) if self.config.auto_subtasks else None
         self._reset_scene()
         logger.info(f"{self} loaded {self.config.scene} (timestep {self.model.opt.timestep * 1e3:.2f} ms).")
 
@@ -133,6 +139,13 @@ class RebotB601Sim(Robot):
         self.data.ctrl[:] = self._qpos_robot()
         self._ctrl_deg = from_qpos(self._qpos_robot())
         mujoco.mj_forward(self.model, self.data)
+        # let the objects settle (neighbours placed from the image overlap by a few mm and push apart) before the start
+        # poses are taken: the composite renders a clutter body only once it has moved from here
+        for _ in range(int(0.5 / self.model.opt.timestep)):
+            mujoco.mj_step(self.model, self.data)
+        self._start_xpos = self.data.xpos.copy(); self._start_xquat = self.data.xquat.copy()
+        if self.subtask_scorer is not None:
+            self.subtask_scorer.reset()
 
     def _qpos_robot(self) -> np.ndarray:
         return self.data.qpos[self._q0 : self._q0 + NQ_ROBOT]
@@ -173,7 +186,14 @@ class RebotB601Sim(Robot):
         renderer.update_scene(self.data, config.camera)
         geom = renderer.render()[:, :, 0]
         renderer.disable_segmentation_rendering()
-        mask = ((geom >= 0) & self._dynamic_geom[np.clip(geom, 0, None)]).astype(np.float32)
+        render = self._dynamic_geom.copy()
+        for b in self._lazy_bodies:  # real pixels until the body leaves its start pose
+            moved = np.linalg.norm(self.data.xpos[b] - self._start_xpos[b]) > 0.003 or abs(float(np.dot(self.data.xquat[b], self._start_xquat[b]))) < np.cos(np.deg2rad(1.0))
+            if not moved:
+                render[self.model.geom_bodyid == b] = False
+        mask = ((geom >= 0) & render[np.clip(geom, 0, None)]).astype(np.uint8)
+        # 3x3 opening: silhouette edges of the free bodies come back labelled with robot geom ids (thin stray lines)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)).astype(np.float32)
         if config.background_feather_px > 0:
             mask = cv2.GaussianBlur(mask, (0, 0), config.background_feather_px)
         return (mask[:, :, None] * rgb + (1.0 - mask[:, :, None]) * background).astype(np.uint8)

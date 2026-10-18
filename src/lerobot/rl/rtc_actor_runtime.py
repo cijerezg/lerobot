@@ -491,7 +491,7 @@ def _rerun_log_worker(q) -> None:
         step, observation, action = item
         try:
             rr.set_time_sequence("step", step)
-            log_rerun_data(observation=observation, action=action)
+            log_rerun_data(observation=observation, action=action, compress_images=True)  # JPEG: a raw-image .rrd grew 26 GB in 3 sim episodes
         except Exception:
             logger.exception("[RERUN] logging failed for step %s (worker keeps running)", step)
 
@@ -896,6 +896,7 @@ def rtc_env_worker(
     trainer: Trainer | None = None,
     rerun_queue=None,
     recorder: OnlineEpisodeRecorder | None = None,
+    auto_subtasks=None,
 ) -> None:
     """Environment interaction worker copied from the tested PI05 RTC path."""
     _ = postprocessor  # queued actions are already postprocessed in rtc_inference_worker
@@ -1258,6 +1259,12 @@ def rtc_env_worker(
             transition = new_transition
             interaction_step += 1
             shared_state.current_step = interaction_step
+            if auto_subtasks is not None:  # sim: the body poses walk the subtask script (robots/rebot_b601_sim/nail_task.py)
+                want = auto_subtasks.poll()
+                if want != shared_state.subtask_cursor:
+                    cursor = shared_state.advance_subtask(want - shared_state.subtask_cursor)
+                    why = auto_subtasks.events[-1]["why"] if auto_subtasks.events else "resync"
+                    logger.info("[SUBTASK] auto %s -> [%d/%d] %s", why, cursor + 1, len(shared_state.subtask_script), shared_state.subtask_script[cursor][0])
 
             if done or truncated:
                 logger.info(
@@ -1269,6 +1276,10 @@ def rtc_env_worker(
                 leader_torqued = False
                 if recorder is not None:
                     recorder.save_episode()
+                if auto_subtasks is not None:
+                    events_path = Path(cfg.output_dir) / "subtask_events.json"
+                    past = json.loads(events_path.read_text()) if events_path.exists() else []
+                    events_path.write_text(json.dumps(past + [dict(episode=shared_state.episode_counter, success=bool(info_success), events=auto_subtasks.events)], indent=1))
 
                 if standalone:
                     if shared_state.is_logging_episode:
@@ -1566,7 +1577,11 @@ def act_with_policy_rtc_inference(
         import rerun as rr
         # Fresh app id (was "lerobot_inference"): the viewer caches blueprints per app id, and the
         # old id's blueprint predates the teleop-style entity naming (would render black panels).
-        rr.init("lerobot_rtc_inference", spawn=True)
+        if getattr(cfg, "rerun_save", False):
+            rr.init("lerobot_rtc_inference", spawn=False)
+            rr.save(str(Path(cfg.output_dir) / "rerun.rrd"))
+        else:
+            rr.init("lerobot_rtc_inference", spawn=True)
         rerun_queue = queue.Queue(maxsize=2)
         Thread(target=_rerun_log_worker, args=(rerun_queue,), daemon=True, name="rerun_log").start()
 
@@ -1626,14 +1641,16 @@ def act_with_policy_rtc_inference(
             cfg,
         )
         shared.configure_history(history_offsets)
-        recorder = OnlineEpisodeRecorder(
-            online_env.robot,
-            root=Path(cfg.output_dir) / "inference_dataset",
-            fps=cfg.env.fps,
-            task=cfg.policy.task,
-            # Depth PNGs land on the cache's read grid; a policy without a stride gets every frame.
-            depth_stride=getattr(cfg.policy, "image_stride", 1),
-        )
+        recorder = None
+        if getattr(cfg, "record_inference_dataset", True):
+            recorder = OnlineEpisodeRecorder(
+                online_env.robot,
+                root=Path(cfg.output_dir) / "inference_dataset",
+                fps=cfg.env.fps,
+                task=cfg.policy.task,
+                # Depth PNGs land on the cache's read grid; a policy without a stride gets every frame.
+                depth_stride=getattr(cfg.policy, "image_stride", 1),
+            )
         # Leader trace CSV muted 2026-09-13 (per-read targets/raw/mA/status); uncomment when
         # debugging the leader.
         # if _teleop_supports_feedback(teleop_device):
@@ -1643,6 +1660,7 @@ def act_with_policy_rtc_inference(
         # Operator subtask console: the scripted steps, indexed against the checkpoint
         # vocabulary where they match (else -1) for the buffer's subtask_index column.
         subtask_console = make_subtask_console(cfg, trainer, preprocessor, shared)
+        auto_subtasks = getattr(online_env.robot, "subtask_scorer", None)  # sim robot with auto_subtasks: no console keys needed
 
         post_inference_hook = None
         if post_inference_hook_factory is not None:
@@ -1687,6 +1705,7 @@ def act_with_policy_rtc_inference(
                 "trainer": trainer,
                 "rerun_queue": rerun_queue,
                 "recorder": recorder,
+                "auto_subtasks": auto_subtasks,
             },
             daemon=True,
             name="rtc_env",
@@ -1696,7 +1715,7 @@ def act_with_policy_rtc_inference(
         raise
 
     try:
-        if subtask_console is not None:
+        if subtask_console is not None and auto_subtasks is None:  # auto subtasks: no global key hook (any typed 'n' moved the cursor)
             subtask_console.start()
         env_thread.start()
         time.sleep(1.0)

@@ -24,6 +24,10 @@ class MujocoCameraConfig(CameraConfig):
     # before the composite so the real background stays untouched.
     color_gain: list[float] | None = None
     color_offset: list[float] | None = None
+    # Composite: when set, only these free bodies (the task objects, inpainted out of the background) and the robot are
+    # always rendered; every other free body (clutter) keeps the real background pixels until it moves (> 3 mm or 1 deg
+    # from its settled start pose). None = every free body is rendered.
+    render_always: list[str] | None = None
 
 
 @RobotConfig.register_subclass("rebot_b601_sim")
@@ -45,6 +49,8 @@ class RebotB601SimRobotConfig(RobotConfig):
     pos_vel_velocity: list[float] | None = None
     # Episodes to run before the robot stops the process (SIGINT, the operator's Ctrl-C); None = unbounded.
     episodes: int | None = None
+    # Subtask cursor driven by the body poses (nail_task.NailTaskScorer) instead of the operator console.
+    auto_subtasks: bool = False
     park_pose: dict[str, float] = field(default_factory=lambda: dict(_FOLLOWER.park_pose))
     park_deg_per_s: float = _FOLLOWER.park_deg_per_s
     joint_limits: dict[str, tuple[float, float]] = field(default_factory=lambda: dict(_FOLLOWER.joint_limits))

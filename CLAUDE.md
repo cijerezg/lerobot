@@ -67,6 +67,7 @@ Conventions:
 - **`docs/`** — all project documentation. `README.md` is the index and states the rules: `guide/` (how to use), `design/` (how it is built), `notes/` (dated notes with a status line), `runbooks/`, `reports/`, `archive/`, and `status.md` as the only snapshot page.
 - **`CHEAT_SHEET.md`** — the one command sheet.
 - **`tests/`** — pytest suite by module. Fork tests: `tests/rl/`, `tests/probes/`, `tests/annotation/`, `tests/policies/test_molmoact2_*.py`, `tests/datasets/test_diverse_*.py`, `tests/teleoperators/test_rebot_*.py`.
+- **`adhocs/`** — one-off analyses worth re-running, one folder each with a README (question, run, findings). Not on any pipeline path.
 - **`scripts/`** — ops shell scripts: `remote_validate.sh`, `chase_validate.sh`, `run_probes.sh`, probe helpers.
 - **`examples/dataset/diverse_robot_dataset/`** — the diverse-corpus build pipeline (production tooling, not an example).
 - **`.github/workflows/`** — `quality.yml` (pre-commit), `fast_tests.yml`, `full_tests.yml`, `security.yml`.
