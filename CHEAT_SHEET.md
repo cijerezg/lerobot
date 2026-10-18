@@ -85,6 +85,17 @@ Loads `inference_checkpoint_path` from config_rl.yaml. `inference_send_actions_t
 
 uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 
+## Sim eval (MuJoCo nail clippers, no hardware)
+
+`config_rl_sim.yaml` = config_rl.yaml with `env.robot: rebot_b601_sim` (layouts in `lerobot/src/lerobot/robots/rebot_b601_sim/scenes/`, README there), `sim_autostart` instead of the leader, task T085 and the auto subtask scorer. One layout, the checkpoint of the yaml; the run ends by itself after `env.robot.episodes` parks:
+
+MUJOCO_GL=egl uv run python -m lerobot.rl.inference_async --config_path=config_rl_sim.yaml [--env.robot.scene=nail_ep1]
+uv run rerun "$(ls -dt outputs/train/$(date +%F)/*rebot-sim-nail* | head -1)/rerun.rrd"
+
+Every layout on one checkpoint (what the chase runs on the DGX): `<run>/validation/step_<step>/sim_nail/<layout>/{rerun.rrd,subtask_events.json}` + `sim_nail/summary.md` (successes, steps reached per episode). `LAYOUTS="nail_ep5 nail_ep2"` and `SIM_EVAL_ARGS="--env.robot.episodes=1 --env.processor.reset.control_time_s=20"` for a short run:
+
+lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
+
 ## Rollout review (cut recorded inference episodes into a training root)
 
 One command: renders a review video per episode (missing ones only) into `migration/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
@@ -159,13 +170,17 @@ Reattach to a detached run:
 
 lerobot/scripts/remote_validate.sh --attach outputs/molmoact2_offline_rebot_v4/checkpoints/000400
 
-Flags: `--dry-run`, `--keep-checkpoint`, `--force-delete`, `--out DIR`, `--config PATH`, `--host`.
+Flags: `--dry-run`, `--keep-checkpoint`, `--force-delete`, `--out DIR`, `--config PATH`, `--host`, `--sim` (the MuJoCo nail-clipper eval, `run_sim_eval.sh` + `config_rl_sim.yaml`, instead of the probe suite; results in the same `validation/step_<step>/` as `sim_nail/`).
 
 ## Chase a run's checkpoints (overnight)
 
 Probes the newest unprobed checkpoint on the DGX until training exits or STOP. State in `<run>/validation/.chase/`.
 
 setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> > /dev/null 2>&1 &
+
+Sim eval instead of the probes (flags after `--` go to remote_validate.sh):
+
+setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> -- --sim > /dev/null 2>&1 &
 
 Stop after the pass in flight:
 
