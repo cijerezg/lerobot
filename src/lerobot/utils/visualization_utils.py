@@ -70,6 +70,7 @@ def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    static_images: bool = True,
 ) -> None:
     """
     Logs observation and action data to Rerun for real-time visualization.
@@ -88,6 +89,8 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        static_images: True (live viewer) shows the latest image regardless of the timeline; False indexes each image on the
+            current time, which a saved .rrd needs to scrub/replay.
     """
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
@@ -114,11 +117,13 @@ def log_rerun_data(
                 elif arr.ndim == 2 and str(k).endswith(".depth"):
                     # Raw z16 depth (D405: 0.1 mm/level -> 10000 units per meter).
                     # Colormap spans 3-35 cm (D405 min range is ~7 cm); farther values saturate.
-                    rr.log(key, rr.DepthImage(arr, meter=10000.0, depth_range=(300, 3500)), static=True)
+                    rr.log(key, rr.DepthImage(arr, meter=10000.0, depth_range=(300, 3500)), static=static_images)
                     image_keys.append(key)
                 else:
+                    if compress_images and arr.dtype != np.uint8:  # float images (0-1 or 0-255) -> u8: JPEG needs u8
+                        arr = np.clip(arr * (255.0 if arr.max() <= 1.0 else 1.0), 0, 255).astype(np.uint8)
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
-                    rr.log(key, entity=img_entity, static=True)
+                    rr.log(key, entity=img_entity, static=static_images)
                     image_keys.append(key)
         if image_keys and not _blueprint_sent:
             # One explicit grid (plot + one view per camera) instead of Rerun's auto-layout,

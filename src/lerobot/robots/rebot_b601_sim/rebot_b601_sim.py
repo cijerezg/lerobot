@@ -15,6 +15,7 @@ import os
 import signal
 import threading
 from functools import cached_property
+from pathlib import Path
 
 import cv2
 import mujoco
@@ -116,6 +117,7 @@ class RebotB601Sim(Robot):
             if config.background is not None:
                 self._backgrounds[cam] = cv2.cvtColor(cv2.imread(config.background), cv2.COLOR_BGR2RGB)
         self._dynamic_geom = self.model.geom_bodyid != 0
+        self._static_geom = {cam: np.isin(np.arange(self.model.ngeom), [self.model.geom(n).id for n in (c.render_static or [])]) for cam, c in self.config.cameras.items()}
         free = [b for b in range(self.model.nbody) if self.model.body_jntnum[b] > 0 and self.model.jnt_type[self.model.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE]
         always = {self.model.body(n).id for c in self.config.cameras.values() for n in (c.render_always or [])}
         self._lazy_bodies = [b for b in free if b not in always] if always else []
@@ -172,7 +174,7 @@ class RebotB601Sim(Robot):
             if config.color_gain is not None:
                 obs_dict[cam] = np.clip(obs_dict[cam] * np.asarray(config.color_gain) + np.asarray(config.color_offset or [0.0, 0.0, 0.0]), 0, 255).astype(np.uint8)
             if cam in self._backgrounds:
-                obs_dict[cam] = self._composite(renderer, config, obs_dict[cam], self._backgrounds[cam])
+                obs_dict[cam] = self._composite(cam, renderer, config, obs_dict[cam], self._backgrounds[cam])
             if config.use_depth:
                 renderer.enable_depth_rendering()
                 renderer.update_scene(self.data, config.camera)
@@ -180,18 +182,21 @@ class RebotB601Sim(Robot):
                 renderer.disable_depth_rendering()
         return obs_dict
 
-    def _composite(self, renderer: mujoco.Renderer, config, rgb: np.ndarray, background: np.ndarray) -> np.ndarray:
-        """Sim pixels of the dynamic bodies over the real background, mask edge feathered."""
+    def _composite(self, cam: str, renderer: mujoco.Renderer, config, rgb: np.ndarray, background: np.ndarray) -> np.ndarray:
+        """Sim pixels of the dynamic bodies (and the camera's render_static geoms) over the real background, mask edge feathered."""
         renderer.enable_segmentation_rendering()
         renderer.update_scene(self.data, config.camera)
         geom = renderer.render()[:, :, 0]
         renderer.disable_segmentation_rendering()
-        render = self._dynamic_geom.copy()
+        render = self._dynamic_geom | self._static_geom[cam]
         for b in self._lazy_bodies:  # real pixels until the body leaves its start pose
             moved = np.linalg.norm(self.data.xpos[b] - self._start_xpos[b]) > 0.003 or abs(float(np.dot(self.data.xquat[b], self._start_xquat[b]))) < np.cos(np.deg2rad(1.0))
             if not moved:
                 render[self.model.geom_bodyid == b] = False
         mask = ((geom >= 0) & render[np.clip(geom, 0, None)]).astype(np.uint8)
+        if config.render_static_gain is not None:
+            static = (geom >= 0) & self._static_geom[cam][np.clip(geom, 0, None)]
+            rgb = rgb.copy(); rgb[static] = np.clip(rgb[static] * np.asarray(config.render_static_gain), 0, 255).astype(np.uint8)
         # 3x3 opening: silhouette edges of the free bodies come back labelled with robot geom ids (thin stray lines)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)).astype(np.float32)
         if config.background_feather_px > 0:

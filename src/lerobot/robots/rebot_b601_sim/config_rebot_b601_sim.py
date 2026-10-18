@@ -18,6 +18,7 @@ class MujocoCameraConfig(CameraConfig):
 
     camera: str
     use_depth: bool = False
+    # A relative path resolves against the scene file's directory (scenes/<layout>/background_top.png).
     background: str | None = None
     background_feather_px: int = 2
     # Per-channel affine colour correction of the render (real = gain * sim + offset, fitted on real frames), applied
@@ -28,6 +29,12 @@ class MujocoCameraConfig(CameraConfig):
     # always rendered; every other free body (clutter) keeps the real background pixels until it moves (> 3 mm or 1 deg
     # from its settled start pose). None = every free body is rendered.
     render_always: list[str] | None = None
+    # Composite: static (world-body) geoms rendered instead of the real background pixels, by geom name, e.g. the table
+    # (`table`, `table_top`): the sim table is then one texture in this view too, with no real clutter left in it.
+    render_static: list[str] | None = None
+    # Per-channel gain on the render_static pixels after color_gain/offset (the table texture is authored in the wrist
+    # camera's colours; the top camera sees the wood lighter and less saturated).
+    render_static_gain: list[float] | None = None
 
 
 @RobotConfig.register_subclass("rebot_b601_sim")
@@ -35,8 +42,9 @@ class MujocoCameraConfig(CameraConfig):
 class RebotB601SimRobotConfig(RobotConfig):
     """MuJoCo stand-in for the reBot B601-DM follower (lerobot/robots/rebot_b601_sim)."""
 
-    # MJCF scene that includes the DM robot and names the cameras below
-    # (migration/real2sim_2026-10-17/work/scene_nail/scene_nail.xml).
+    # A layout name under robots/rebot_b601_sim/scenes/<name>/scene.xml (nail_ep5, nail_ep1, nail_ep2, nail_ep3: the
+    # 2026-10-16 nail-clipper layouts, README there), or a path to an MJCF file that includes the DM robot and names
+    # the cameras below.
     scene: str
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # One send_action advances 1/fps s of physics in `substeps` steps (probes/action_trace_sim defaults).

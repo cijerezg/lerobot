@@ -91,6 +91,18 @@ One command: renders a review video per episode (missing ones only) into `migrat
 
 uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/<root>]
 
+## Merge annotated roots
+
+Merges finished ReBot roots into one new root: videos and depth are hardlinked, tables re-indexed. Run verify_root after.
+
+uv run python -m lerobot.annotation.rebot.merge_roots outputs/<root_a> outputs/<root_b> --out outputs/<merged>
+
+## Data record
+
+Episodes, frames and hours per root and per sampling group, from config_rl.yaml and the roots. Writes lerobot/dataset_info/DATA.md. Rerun after every data or config change; roots built but not yet in the config go in lerobot/dataset_info/pending.yaml.
+
+uv run python lerobot/dataset_info/data_count.py
+
 ## Probe viewer
 
 Browser UI over a run's probes (http://127.0.0.1:7870), rescans on refresh. Takes a run dir, `validation/`, or a `step_*` dir.

@@ -106,6 +106,9 @@ uv run python -m $M.gripper_events.depth_gripper_event_annotate --data-dir outpu
 uv run python -m $M.rebot.verify_root outputs/<root>
 # 6. review videos for the user (labels burned in)
 uv run python -m $M.review.render_review_videos --rebot-root outputs/<root> --out <work>/review_videos
+# 7. optional: merge finished roots into one (videos and depth hardlinked, tables re-indexed), then verify
+uv run python -m $M.rebot.merge_roots outputs/<root_a> outputs/<root_b> --out outputs/<merged>
+uv run python -m $M.rebot.verify_root outputs/<merged>
 ```
 
 ### How a pass is run

@@ -488,10 +488,10 @@ def _rerun_log_worker(q) -> None:
             continue
         if item is None:
             break
-        step, observation, action = item
+        step, t_s, observation, action = item
         try:
-            rr.set_time_sequence("step", step)
-            log_rerun_data(observation=observation, action=action, compress_images=True)  # JPEG: a raw-image .rrd grew 26 GB in 3 sim episodes
+            rr.set_time("time", duration=t_s)  # seconds of control time: the viewer then plays at 1x (a bare step sequence played ~8x)
+            log_rerun_data(observation=observation, action=action, compress_images=True, static_images=False)  # JPEG: a raw-image .rrd grew 26 GB in 3 sim episodes; time-indexed so a saved .rrd replays
         except Exception:
             logger.exception("[RERUN] logging failed for step %s (worker keeps running)", step)
 
@@ -1249,7 +1249,7 @@ def rtc_env_worker(
                 act_np = executed_action.detach().float().cpu().numpy().reshape(-1)[:action_dim]
                 act_log = {name: float(v) for name, v in zip(_JOINT_ORDER, act_np, strict=False)}
                 with contextlib.suppress(queue.Full):
-                    rerun_queue.put_nowait((interaction_step, obs_log, act_log))
+                    rerun_queue.put_nowait((interaction_step, interaction_step / cfg.env.fps, obs_log, act_log))
             _t_rerun_end = time.perf_counter()
 
             shared_state.update_observation(
