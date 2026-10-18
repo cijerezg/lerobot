@@ -198,7 +198,7 @@ flock outputs/remote_val/.dgx.lock lerobot/scripts/remote_validate.sh <ckpt>
 
 Probe follower motors:
 
-.venv/bin/python probe_rebot_motors.py
+uv run python probe_rebot_motors.py
 
 Leader USB check after any re-plug (must be 200/200; ch341 must be under Bus 003/005 in `lsusb -t`, Bus 001 drops bytes):
 
