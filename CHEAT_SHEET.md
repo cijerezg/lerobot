@@ -96,6 +96,10 @@ Every layout on one checkpoint (what the chase runs on the DGX): `<run>/validati
 
 lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
 
+Two checkpoints side by side in one rerun viewer (A top row, B bottom row, shared time axis: wrist, top, depth, joints, subtask events). Paths: checkpoint step dir, `validation/step_X`, `sim_nail`, layout dir or `.rrd`; `--layout nail_ep2` picks the layout, `--save x.rrd` writes the merged file instead of opening the viewer:
+
+uv run python -m lerobot.scripts.compare_sim outputs/<run_a>/checkpoints/<step> outputs/<run_b>/checkpoints/<step> [--layout nail_ep5] [--label a --label b]
+
 ## Rollout review (cut recorded inference episodes into a training root)
 
 One command: renders a review video per episode (missing ones only) into `migration/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
