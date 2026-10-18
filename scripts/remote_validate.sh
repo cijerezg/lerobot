@@ -9,6 +9,7 @@
 #
 #   lerobot/scripts/remote_validate.sh outputs/molmoact2_offline_rebot_v4/checkpoints/000400
 #   lerobot/scripts/remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400
+#   lerobot/scripts/remote_validate.sh --sim outputs/.../checkpoints/000400   # MuJoCo nail-clipper eval instead of the probes
 #
 # The remote run is launched detached (setsid + nohup), so a dropped ssh does not kill
 # a two-hour probe suite — the tail reconnects, and `--attach` picks a run back up from
@@ -28,6 +29,7 @@ CODE=""
 CKPT=""
 CONFIG=""
 RUN_DIR=""
+SIM=0
 KEEP_CKPT=0
 FORCE_DELETE=0
 ATTACH=0
@@ -45,7 +47,9 @@ Positional:
 Options:
   --host HOST        ssh target (default: $DGX_HOST, else "dgx")
   --workspace DIR    workspace root, mirrored on both boxes (default: repo parent)
-  --config PATH      probe config (default: <workspace>/config_rl_validate.yaml)
+  --config PATH      probe config (default: <workspace>/config_rl_validate.yaml; --sim: config_rl_sim.yaml)
+  --sim              run lerobot/scripts/run_sim_eval.sh (policy in the MuJoCo sim, every layout) instead of run_probes.sh;
+                     results land in the same validation/step_<step>/ as sim_nail/
   --out DIR          run/output dir (default: <workspace>/outputs/remote_val/<slug>)
   --keep-checkpoint  do not delete the remote checkpoint copy when done
   --force-delete     delete the remote checkpoint even if it pre-existed there
@@ -60,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --host)            HOST="$2"; shift 2 ;;
     --workspace)       WS="$2"; shift 2 ;;
     --config)          CONFIG="$2"; shift 2 ;;
+    --sim)             SIM=1; shift ;;
     --out)             RUN_DIR="$2"; shift 2 ;;
     --keep-checkpoint) KEEP_CKPT=1; shift ;;
     --force-delete)    FORCE_DELETE=1; shift ;;
@@ -80,7 +85,7 @@ WS="$(cd "$WS" && pwd)" || die "workspace not found"
 CODE="${CODE:-$WS}"
 [[ -d "$CODE" ]] || die "code tree not found: $CODE"
 CODE="$(cd "$CODE" && pwd)"
-CONFIG="${CONFIG:-$WS/config_rl_validate.yaml}"
+if (( SIM )); then CONFIG="${CONFIG:-$WS/config_rl_sim.yaml}"; LAUNCHER=run_sim_eval.sh; else CONFIG="${CONFIG:-$WS/config_rl_validate.yaml}"; LAUNCHER=run_probes.sh; fi
 [[ -f "$CONFIG" ]] || die "config not found: $CONFIG"
 
 if   [[ -d "$CODE/src/lerobot" ]];         then SRC="$CODE/src/lerobot"
@@ -130,6 +135,7 @@ info "workspace  $WS"
 info "code       $SRC  (venv: $VENV)"
 info "checkpoint $MODEL"
 info "config     $CONFIG"
+info "launcher   $LAUNCHER"
 info "run dir    $RUN_DIR"
 info "results    $RESULT_DIR"
 
@@ -173,7 +179,7 @@ else
       "$SRC/" "$HOST:$SRC/" || die "code rsync failed"
   run sshx "mkdir -p '$RUN_DIR' '$WS/lerobot/scripts/probes'" || die "cannot prepare probe config directory"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$CONFIG" "$HOST:$REMOTE_CONFIG" || die "config rsync failed"
-  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/run_probes.sh" "$HOST:$WS/lerobot/scripts/" || die "probe launcher rsync failed"
+  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/run_probes.sh" "$WS/lerobot/scripts/run_sim_eval.sh" "$HOST:$WS/lerobot/scripts/" || die "probe launcher rsync failed"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/probes/" "$HOST:$WS/lerobot/scripts/probes/" || die "probe helpers rsync failed"
 
   # ── Sync checkpoint ───────────────────────────────────────────────────────────
@@ -199,7 +205,7 @@ export PYTHONPATH='$WS/lerobot/src'
 export PATH="\$HOME/.local/bin:\$PATH"
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
-bash lerobot/scripts/run_probes.sh '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'
+bash lerobot/scripts/$LAUNCHER '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'
 echo \$? > '$STATE/exit_code'
 EOF
   chmod +x "$launcher"
@@ -288,7 +294,8 @@ echo
 if (( EXIT == 0 )); then
   info "done. results: $RESULT_DIR/"
   view_root="$RESULT_DIR"; [[ -n "$RUN_NAME" ]] && view_root="$WS/outputs/$RUN_NAME"
-  info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$view_root'"
+  if (( SIM )); then info "summary: $RESULT_DIR/sim_nail/summary.md; replay: uv run rerun $RESULT_DIR/sim_nail/<layout>/rerun.rrd"
+  else info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$view_root'"; fi
 else
   info "log: $LLOG"
 fi

@@ -33,6 +33,14 @@ logger = logging.getLogger(__name__)
 # Set by park() after the configured number of episodes; sim_autostart stops starting episodes.
 STOP_EPISODES = threading.Event()
 
+# Packaged layouts: scenes/<name>/scene.xml (+ background_top.png, materials/), shared robot include and table texture.
+SCENES_DIR = Path(__file__).resolve().parent / "scenes"
+
+
+def scene_path(scene: str) -> Path:
+    """A layout name resolves under SCENES_DIR; anything ending in .xml is a path as given."""
+    return Path(scene) if scene.endswith(".xml") else SCENES_DIR / scene / "scene.xml"
+
 ARM_DOF = 6
 GRIPPER_IDX = 6
 NQ_ROBOT = 8
@@ -105,7 +113,8 @@ class RebotB601Sim(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        spec = mujoco.MjSpec.from_file(str(self.config.scene))
+        scene = scene_path(self.config.scene)
+        spec = mujoco.MjSpec.from_file(str(scene))
         if self.config.gravcomp:
             for name in ARM_BODIES:
                 spec.body(name).gravcomp = 1.0
@@ -115,7 +124,8 @@ class RebotB601Sim(Robot):
         self._q0 = int(self.model.jnt_qposadr[self.model.joint("joint1").id])
         for cam, config in self.config.cameras.items():
             if config.background is not None:
-                self._backgrounds[cam] = cv2.cvtColor(cv2.imread(config.background), cv2.COLOR_BGR2RGB)
+                background = scene.parent / config.background  # absolute paths pass through the join unchanged
+                self._backgrounds[cam] = cv2.cvtColor(cv2.imread(str(background)), cv2.COLOR_BGR2RGB)
         self._dynamic_geom = self.model.geom_bodyid != 0
         self._static_geom = {cam: np.isin(np.arange(self.model.ngeom), [self.model.geom(n).id for n in (c.render_static or [])]) for cam, c in self.config.cameras.items()}
         free = [b for b in range(self.model.nbody) if self.model.body_jntnum[b] > 0 and self.model.jnt_type[self.model.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE]
@@ -123,7 +133,7 @@ class RebotB601Sim(Robot):
         self._lazy_bodies = [b for b in free if b not in always] if always else []
         self.subtask_scorer = NailTaskScorer(self.model, self.data, lambda: float(self._present_deg()[GRIPPER_IDX])) if self.config.auto_subtasks else None
         self._reset_scene()
-        logger.info(f"{self} loaded {self.config.scene} (timestep {self.model.opt.timestep * 1e3:.2f} ms).")
+        logger.info(f"{self} loaded {scene} (timestep {self.model.opt.timestep * 1e3:.2f} ms).")
 
     @property
     def is_calibrated(self) -> bool:
