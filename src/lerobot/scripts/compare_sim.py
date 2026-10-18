@@ -73,23 +73,31 @@ def relog(rrd: Path, prefix: str) -> None:
     rec = rr.dataframe.load_recording(str(rrd))
     columns = [c for c in rec.schema().component_columns() if c.entity_path != "/__properties"]
     for entity in sorted({c.entity_path for c in columns}):
-        table = rec.view(index="time", contents=entity).select().read_all()
-        times = table.column("time").to_numpy(zero_copy_only=False)
-        batches = []
-        for c in columns:
-            if c.entity_path != entity:
-                continue
-            array = table.column(f"{entity}:{c.component}").combine_chunks()
-            lengths = pc.fill_null(pc.list_value_length(array), 0).to_numpy()
-            descriptor = rr.ComponentDescriptor(
+        names = [f"{entity}:{c.component}" for c in columns if c.entity_path == entity]
+        descriptors = {
+            f"{entity}:{c.component}": rr.ComponentDescriptor(
                 c.component, archetype=c.archetype, component_type=c.component_type
             )
-            batches.append(
-                rr.ComponentColumn(descriptor, _Batch(descriptor, array.flatten()), lengths=lengths)
-            )
-        rr.send_columns(
-            f"/{prefix}{entity}", indexes=[rr.TimeColumn("time", duration=times)], columns=batches
-        )
+            for c in columns
+            if c.entity_path == entity
+        }
+        # Batch by batch: a whole layout's JPEG column (2 GB) overflows the 32-bit offsets of one arrow array.
+        for batch in rec.view(index="time", contents=entity).select():
+            times = batch.column("time").to_numpy(zero_copy_only=False)
+            sent = []
+            for name in names:
+                if name not in batch.schema.names:
+                    continue  # static or off-timeline components (e.g. the root Clear) have no rows on `time`
+                array = batch.column(name)
+                lengths = pc.fill_null(pc.list_value_length(array), 0).to_numpy()
+                descriptor = descriptors[name]
+                sent.append(
+                    rr.ComponentColumn(descriptor, _Batch(descriptor, array.flatten()), lengths=lengths)
+                )
+            if sent:
+                rr.send_columns(
+                    f"/{prefix}{entity}", indexes=[rr.TimeColumn("time", duration=times)], columns=sent
+                )
 
 
 def log_events(rrd: Path, prefix: str, label: str) -> None:
@@ -147,8 +155,13 @@ def main() -> None:
         rr.save(str(args.save))
     else:
         rr.spawn()
+    # Pin the viewer to the sim clock: its default `log_time` axis is the order and speed the data was written in.
     rr.send_blueprint(
-        rrb.Blueprint(rrb.Vertical(row("A", labels[0]), row("B", labels[1])), collapse_panels=True)
+        rrb.Blueprint(
+            rrb.Vertical(row("A", labels[0]), row("B", labels[1])),
+            rrb.TimePanel(timeline="time", duration_cursor=0.0, playback_speed=1.0),
+            collapse_panels=True,
+        )
     )
     for prefix, rrd, label in zip(("A", "B"), rrds, labels, strict=True):
         print(f"{prefix}: {label}  {rrd}")
