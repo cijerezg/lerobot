@@ -354,6 +354,13 @@ lerobot = [
     "robots/rebot_b601_follower/mjcf/*.xml",
     "robots/rebot_b601_follower/mjcf/assets/*.STL",
     "robots/rebot_b601_follower/mjcf/assets/*.stl",
+    "robots/rebot_b601_sim/scenes/*.xml",
+    "robots/rebot_b601_sim/scenes/*.png",
+    "robots/rebot_b601_sim/scenes/README.md",
+    "robots/rebot_b601_sim/scenes/**/*.xml",
+    "robots/rebot_b601_sim/scenes/**/*.obj",
+    "robots/rebot_b601_sim/scenes/**/*.png",
+    "robots/rebot_b601_sim/scenes/**/*.json",
 ]
 
 [tool.setuptools.packages.find]
