@@ -26,42 +26,15 @@ def read_episode_ranges(root: str) -> dict[int, tuple[int, int]]:
 class EpisodeGroupBuffer:
     """Select eligible starts within whole episodes, leaving the underlying cache intact."""
 
-    def __init__(self, buffer, indices: torch.Tensor, group: str, chunk_size: int, cell: int = 1,
-                 weights: torch.Tensor | None = None):
+    def __init__(self, buffer, indices: torch.Tensor, group: str, chunk_size: int):
         self.buffer = buffer
         self.sampling_indices = indices
         self.sampling_group = group
         self.action_chunk_size = chunk_size
-        # Per-start draw weights (start_weights.py): draws are multinomial with replacement.
-        self.weights = weights
-        if weights is not None and cell != 1:
-            raise ValueError('start weights and cell sampling are exclusive')
-        # Stratified coverage: eligible starts are cut into cells of `cell` consecutive
-        # starts; one pass visits every cell once in random order at one random phase,
-        # so picks within a pass are exactly `cell` starts apart. cell=1 is iid order.
-        self.cell = cell
-        self._queue = None
-        self._queue_pos = 0
 
     def _positions(self, batch_size: int) -> torch.Tensor:
-        if self.weights is not None:
-            return torch.multinomial(self.weights, batch_size, replacement=True)
-        if self.cell == 1:
-            return torch.randint(len(self.sampling_indices), (batch_size,),
-                                 device=self.sampling_indices.device)
-        n = len(self.sampling_indices)
-        out = []
-        while batch_size > 0:
-            if self._queue is None or self._queue_pos >= len(self._queue):
-                cells = torch.randperm(-(-n // self.cell), device=self.sampling_indices.device)
-                phase = int(torch.randint(self.cell, (1,)))
-                self._queue = (cells * self.cell + phase).clamp_(max=n - 1)
-                self._queue_pos = 0
-            take = min(batch_size, len(self._queue) - self._queue_pos)
-            out.append(self._queue[self._queue_pos:self._queue_pos + take])
-            self._queue_pos += take
-            batch_size -= take
-        return torch.cat(out)
+        # iid draws over the eligible starts
+        return torch.randint(len(self.sampling_indices), (batch_size,), device=self.sampling_indices.device)
 
     def __len__(self):
         return len(self.sampling_indices)
@@ -86,12 +59,8 @@ class EpisodeGroupBuffer:
             yield self.sample(batch_size, action_chunk_size=action_chunk_size)
 
 
-def episode_group_views(buffer, groups: dict[str, list[int]], chunk_size: int, cell: int = 1, start_weights=None, exclusions=None):
-    """Return (group, view, mass), rejecting omissions and overlaps.
-
-    mass = the view's eligible-start count, or the sum of its start weights when a
-    StartWeightsConfig is given (then the view draws by those weights).
-    """
+def episode_group_views(buffer, groups: dict[str, list[int]], chunk_size: int, exclusions=None):
+    """Return (group, view, mass), rejecting omissions and overlaps. mass = the view's eligible-start count."""
     source = buffer.offline_source
     if source.episodes is not None:
         raise ValueError('episode_groups requires a complete dataset, not an episodes subset')
@@ -142,11 +111,6 @@ def episode_group_views(buffer, groups: dict[str, list[int]], chunk_size: int, c
         if not starts:
             raise ValueError(f'{source.name}: empty episode group {group!r}')
         indices = torch.cat(starts)
-        weights = None
-        if start_weights is not None:
-            from lerobot.rl.data_sources.start_weights import start_weights as compute
-            weights = compute(source.root, buffer.size, indices, start_weights)
-        mass = float(weights.sum()) if weights is not None else len(indices)
-        logger.info('[EpisodeGroups] %s / %s: %d whole episodes, %d eligible starts, cell %d, mass %.0f',
-                    source.name, group, len(episodes), len(indices), cell, mass)
-        yield group, EpisodeGroupBuffer(buffer, indices, group, chunk_size, cell, weights), mass
+        logger.info('[EpisodeGroups] %s / %s: %d whole episodes, %d eligible starts',
+                    source.name, group, len(episodes), len(indices))
+        yield group, EpisodeGroupBuffer(buffer, indices, group, chunk_size), len(indices)

@@ -10,6 +10,7 @@
 #   lerobot/scripts/remote_validate.sh outputs/molmoact2_offline_rebot_v4/checkpoints/000400
 #   lerobot/scripts/remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400
 #   lerobot/scripts/remote_validate.sh --sim outputs/.../checkpoints/000400   # MuJoCo nail-clipper eval instead of the probes
+#   lerobot/scripts/remote_validate.sh --with-sim outputs/.../checkpoints/000400   # probes, then the sim eval, one pass (chase: -- --with-sim)
 #
 # The remote run is launched detached (setsid + nohup), so a dropped ssh does not kill
 # a two-hour probe suite — the tail reconnects, and `--attach` picks a run back up from
@@ -30,6 +31,7 @@ CKPT=""
 CONFIG=""
 RUN_DIR=""
 SIM=0
+WITH_SIM=0
 KEEP_CKPT=0
 FORCE_DELETE=0
 ATTACH=0
@@ -50,6 +52,8 @@ Options:
   --config PATH      probe config (default: <workspace>/config_rl_validate.yaml; --sim: config_rl_sim.yaml)
   --sim              run lerobot/scripts/run_sim_eval.sh (policy in the MuJoCo sim, every layout) instead of run_probes.sh;
                      results land in the same validation/step_<step>/ as sim_nail/
+  --with-sim         run_probes.sh (config_rl_validate.yaml) and then run_sim_eval.sh (config_rl_sim.yaml) in one remote
+                     pass; both land in the same validation/step_<step>/
   --out DIR          run/output dir (default: <workspace>/outputs/remote_val/<slug>)
   --keep-checkpoint  do not delete the remote checkpoint copy when done
   --force-delete     delete the remote checkpoint even if it pre-existed there
@@ -65,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --workspace)       WS="$2"; shift 2 ;;
     --config)          CONFIG="$2"; shift 2 ;;
     --sim)             SIM=1; shift ;;
+    --with-sim)        WITH_SIM=1; shift ;;
     --out)             RUN_DIR="$2"; shift 2 ;;
     --keep-checkpoint) KEEP_CKPT=1; shift ;;
     --force-delete)    FORCE_DELETE=1; shift ;;
@@ -87,6 +92,9 @@ CODE="${CODE:-$WS}"
 CODE="$(cd "$CODE" && pwd)"
 if (( SIM )); then CONFIG="${CONFIG:-$WS/config_rl_sim.yaml}"; LAUNCHER=run_sim_eval.sh; else CONFIG="${CONFIG:-$WS/config_rl_validate.yaml}"; LAUNCHER=run_probes.sh; fi
 [[ -f "$CONFIG" ]] || die "config not found: $CONFIG"
+(( SIM && WITH_SIM )) && die "--sim and --with-sim are exclusive"
+SIM_CONFIG="$WS/config_rl_sim.yaml"
+(( WITH_SIM )) && { [[ -f "$SIM_CONFIG" ]] || die "sim config not found: $SIM_CONFIG"; }
 
 if   [[ -d "$CODE/src/lerobot" ]];         then SRC="$CODE/src/lerobot"
 elif [[ -d "$CODE/lerobot/src/lerobot" ]]; then SRC="$CODE/lerobot/src/lerobot"
@@ -129,13 +137,14 @@ RLOG="$RUN_DIR/remote_val.log"          # remote log path (same string locally)
 LLOG="$RUN_DIR/remote_val.log"          # local mirror we append to while tailing
 PROBE_RUN="$RUN_DIR/probes-$(date +%Y%m%d-%H%M%S)"   # fresh per launch: run_probes.sh refuses a reused dir
 REMOTE_CONFIG="$RUN_DIR/probe_config.yaml"
+REMOTE_SIM_CONFIG="$RUN_DIR/sim_config.yaml"
 
 info "host       $HOST"
 info "workspace  $WS"
 info "code       $SRC  (venv: $VENV)"
 info "checkpoint $MODEL"
 info "config     $CONFIG"
-info "launcher   $LAUNCHER"
+info "launcher   $LAUNCHER$( (( WITH_SIM )) && echo " + run_sim_eval.sh ($SIM_CONFIG)")"
 info "run dir    $RUN_DIR"
 info "results    $RESULT_DIR"
 
@@ -179,6 +188,7 @@ else
       "$SRC/" "$HOST:$SRC/" || die "code rsync failed"
   run sshx "mkdir -p '$RUN_DIR' '$WS/lerobot/scripts/probes'" || die "cannot prepare probe config directory"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$CONFIG" "$HOST:$REMOTE_CONFIG" || die "config rsync failed"
+  (( ! WITH_SIM )) || run rsync -a -e "ssh ${SSH_OPTS[*]}" "$SIM_CONFIG" "$HOST:$REMOTE_SIM_CONFIG" || die "sim config rsync failed"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/run_probes.sh" "$WS/lerobot/scripts/run_sim_eval.sh" "$HOST:$WS/lerobot/scripts/" || die "probe launcher rsync failed"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/probes/" "$HOST:$WS/lerobot/scripts/probes/" || die "probe helpers rsync failed"
 
@@ -206,7 +216,12 @@ export PATH="\$HOME/.local/bin:\$PATH"
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
 bash lerobot/scripts/$LAUNCHER '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'
-echo \$? > '$STATE/exit_code'
+rc=\$?
+if (( $WITH_SIM )); then
+  # Same run dir: run_sim_eval.sh adds validation/step_00000000/sim_nail next to the probes.
+  bash lerobot/scripts/run_sim_eval.sh '$MODEL' '$PROBE_RUN' '$REMOTE_SIM_CONFIG' || rc=1
+fi
+echo \$rc > '$STATE/exit_code'
 EOF
   chmod +x "$launcher"
 
@@ -294,8 +309,8 @@ echo
 if (( EXIT == 0 )); then
   info "done. results: $RESULT_DIR/"
   view_root="$RESULT_DIR"; [[ -n "$RUN_NAME" ]] && view_root="$WS/outputs/$RUN_NAME"
-  if (( SIM )); then info "summary: $RESULT_DIR/sim_nail/summary.md; replay: uv run rerun $RESULT_DIR/sim_nail/<layout>/rerun.rrd"
-  else info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$view_root'"; fi
+  if (( SIM || WITH_SIM )); then info "sim: $RESULT_DIR/sim_nail/summary.md; videos: $RESULT_DIR/sim_nail/<layout>/videos/ep<N>_{top,wrist,wrist_depth}.mp4 (compare_probes shows them side by side: uv run python -m lerobot.scripts.compare_probes '$view_root' ...)"; fi
+  if (( ! SIM )); then info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$view_root'"; fi
 else
   info "log: $LLOG"
 fi

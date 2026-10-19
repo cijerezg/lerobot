@@ -137,15 +137,19 @@ def test_checked_in_training_and_validation_splits_cover_every_internal_episode(
     workspace = Path(__file__).resolve().parents[3]
     configs = [yaml.safe_load((workspace/name).read_text()) for name in ('config_rl.yaml','config_rl_validate.yaml')]
     assert configs[0]['dataset']['sources'] == configs[1]['dataset']['sources']
-    expected = dict(clothing=.13, bits_clippers=.18, rigid=.245, bottles_lids=.154,
-                    pills_caps=.132, cases_kit_box_push=.159)
+    # internal percentages since 2026-10-17 (bits raised for the oct16 + oct17 tidy-up episodes)
+    expected = dict(clothing=.1096, bits_clippers=.308, rigid=.2068, bottles_lids=.13,
+                    pills_caps=.1114, cases_kit_box_push=.1342)
     cfg = configs[0]
     assert cfg['val_freq'] == 0 and not cfg['val_on_start']
-    assert cfg['diverse']['weight'] == .25 and cfg['diverse']['rebot_start_cell'] == 1  # 2026-10-14 mix 50/25/25
-    assert cfg['diverse']['rebot_start_weights']['enabled'] and cfg['diverse']['rebot_start_weights']['peak_ratio'] == 5  # 2026-10-16
+    assert cfg['diverse']['weight'] == .4 and cfg['diverse']['rebot_weight'] == .6  # 2026-10-18 mix 40/20/40
+    assert 'rebot_start_cell' not in cfg['diverse'] and 'rebot_start_weights' not in cfg['diverse']  # iid starts
+    manifests = ('rebot_exclusions_manifest', 'diverse_exclusions_manifest')
+    assert all(cfg['diverse'][k] for k in manifests)  # training excludes the reviewed segments
+    assert {k: v for k, v in cfg['diverse'].items() if k not in manifests} == configs[1]['diverse']  # probes never train
     shares = cfg['diverse']['rebot_group_weights']
-    assert shares['external_rebot'] == .25
-    assert sum(shares.values()) == pytest.approx(.75)
+    assert shares['external_rebot'] == .2
+    assert sum(shares.values()) == pytest.approx(.6)
     totals = Counter()
     for source in cfg['dataset']['sources']:
         if not source.get('episode_groups'):
@@ -155,11 +159,11 @@ def test_checked_in_training_and_validation_splits_cover_every_internal_episode(
         assert sorted(assigned) == sorted(ranges)
         for group, eps in source['episode_groups'].items():
             totals[group] += len(eps)
-    assert sum(totals.values()) == 189 + 241  # internal 174 (10-14 task review) + 2 oldval_train + 13 oct14
+    assert sum(totals.values()) == 198 + 241  # internal 174 (10-14 task review) + 2 oldval_train + 13 oct14 + 7 oct16 + 2 oct17
     assert totals['external_rebot'] == 231 and totals['excluded'] == 13 and shares['excluded'] == 0  # 10 shake-hand + 3 clipper (oct07 3,4; oct08 9)
     for group, share in expected.items():
         assert totals[group] > 0
-        assert shares[group] == pytest.approx(.50*share)
+        assert shares[group] == pytest.approx(.40*share)
 
 
 def _exclusion_manifest(tmp_path, buffer, exclusions, boundaries=()):

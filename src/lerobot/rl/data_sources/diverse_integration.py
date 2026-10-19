@@ -273,9 +273,7 @@ def build_mixture_groups(
 
                 # Uniform over eligible starts across all roots in the same task
                 # pool. Physical-root sizes must not override the task's outer share.
-                views = episode_group_views(buffer, partition, action_chunk_size, diverse_cfg.rebot_start_cell,
-                                            diverse_cfg.rebot_start_weights if diverse_cfg.rebot_start_weights.enabled else None,
-                                            exclusions=exclusions)
+                views = episode_group_views(buffer, partition, action_chunk_size, exclusions=exclusions)
             else:
                 views = [(buffer.offline_source.sampling_group, buffer,
                           rebot_weights[index] if rebot_weights else 1.0)]
@@ -290,9 +288,7 @@ def build_mixture_groups(
         empty = [name for name in by_group if name not in excluded and not by_group[name]]
         if empty:
             raise ValueError(f'No eligible buffers remain for positive-weight ReBot groups: {empty}')
-        # Outer shares are the config's; with rebot_start_weights the views inside a group
-        # split by start-weight mass and draw by weight, so the per-start rule never moves a
-        # group's share.
+        # Outer shares are the config's; inside a group the roots split by eligible-start count.
         groups = [
             MixtureGroup(name, buffers, weight=diverse_cfg.rebot_group_weights[name], inner_weights=weights[name])
             for name, buffers in by_group.items()

@@ -25,6 +25,7 @@ from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.processor import TransitionKey
 from lerobot.rl.actor import push_transitions_to_transport_queue
 from lerobot.rl.buffer import ReplayBuffer, assemble_history_windows
+from lerobot.rl.inference_video import EpisodeVideos
 from lerobot.rl.online_recorder import OnlineEpisodeRecorder
 from lerobot.rl.gym_manipulator import (
     create_transition,
@@ -897,6 +898,7 @@ def rtc_env_worker(
     rerun_queue=None,
     recorder: OnlineEpisodeRecorder | None = None,
     auto_subtasks=None,
+    videos: EpisodeVideos | None = None,
 ) -> None:
     """Environment interaction worker copied from the tested PI05 RTC path."""
     _ = postprocessor  # queued actions are already postprocessed in rtc_inference_worker
@@ -1215,6 +1217,9 @@ def rtc_env_worker(
                     raw_obs, executed_action,
                     is_intervention=is_intervening, subtask_index=subtask_idx_now, subtask=subtask_name_now or "",
                 )
+            if videos is not None:
+                videos.put(raw_obs)
+            if recorder is not None or videos is not None:
                 raw_obs = online_env.get_raw_observation()
 
             next_policy_fmt_obs = next_observation
@@ -1276,6 +1281,8 @@ def rtc_env_worker(
                 leader_torqued = False
                 if recorder is not None:
                     recorder.save_episode()
+                if videos is not None:
+                    videos.end_episode()
                 if auto_subtasks is not None:
                     events_path = Path(cfg.output_dir) / "subtask_events.json"
                     past = json.loads(events_path.read_text()) if events_path.exists() else []
@@ -1353,6 +1360,8 @@ def rtc_env_worker(
             shared_state.set_episode_active(False)
         if recorder is not None:
             recorder.finalize()
+        if videos is not None:
+            videos.close()
 
 
 
@@ -1651,6 +1660,9 @@ def act_with_policy_rtc_inference(
                 # Depth PNGs land on the cache's read grid; a policy without a stride gets every frame.
                 depth_stride=getattr(cfg.policy, "image_stride", 1),
             )
+        videos = None
+        if getattr(cfg, "record_inference_videos", False):
+            videos = EpisodeVideos(Path(cfg.output_dir) / "videos", cfg.inference_video_views, cfg.env.fps)
         # Leader trace CSV muted 2026-09-13 (per-read targets/raw/mA/status); uncomment when
         # debugging the leader.
         # if _teleop_supports_feedback(teleop_device):
@@ -1706,6 +1718,7 @@ def act_with_policy_rtc_inference(
                 "rerun_queue": rerun_queue,
                 "recorder": recorder,
                 "auto_subtasks": auto_subtasks,
+                "videos": videos,
             },
             daemon=True,
             name="rtc_env",

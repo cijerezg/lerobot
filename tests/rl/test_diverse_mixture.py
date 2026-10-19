@@ -90,12 +90,12 @@ def test_a_different_outer_split_is_configurable() -> None:
 
 def test_sqrt_episode_weights_are_what_the_plan_says(selection) -> None:
     targets = HierarchicalAnchorSampler(selection, seed=0).target_proportions()
-    expected = {  # v3 training-selection episode counts (2026-09-19)
-        "robochallenge": math.sqrt(199),
-        "molmoact": math.sqrt(416),
+    expected = {  # training-selection episode counts of DATA_ROOT (outputs/diverse_robot_dataset_v3), recounted 2026-10-18
+        "robochallenge": math.sqrt(196),
+        "molmoact": math.sqrt(411),
         "fmb": math.sqrt(160),
         "droid": math.sqrt(48),
-        "droid_success": math.sqrt(69),
+        "droid_success": math.sqrt(65),
         "ur7e": math.sqrt(4),
         "yam": math.sqrt(7),
     }

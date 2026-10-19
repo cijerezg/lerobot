@@ -585,6 +585,10 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     rerun_save: bool = False
     # Standalone inference: False skips the OnlineEpisodeRecorder ({output_dir}/inference_dataset: videos, parquet, depth PNGs).
     record_inference_dataset: bool = True
+    # Standalone inference: True writes {output_dir}/videos/ep<N>_<view>.mp4 per episode at env fps for every view below
+    # (rl/inference_video.py); a "<cam>.depth" view is colorized. The sim eval shows them through compare_probes.
+    record_inference_videos: bool = False
+    inference_video_views: list[str] = field(default_factory=lambda: ["top", "wrist", "wrist.depth"])
     video_logging_cameras: list[str] | None = (
         None  # derived from policy.image_features in validate() when unset
     )

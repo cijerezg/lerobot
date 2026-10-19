@@ -5,8 +5,10 @@
 #
 #   lerobot/scripts/run_sim_eval.sh CHECKPOINT_PRETRAINED_MODEL [FRESH_OUTPUT_DIRECTORY] [CONFIG]
 #
-# Output: <run>/validation/step_<step>/sim_nail/<layout>/ (rerun.rrd, subtask_events.json, logs/) per layout and
-# sim_nail/summary.{json,md} over all of them. Env: LAYOUTS (default "ep0 ep1 ep2 ep3"),
+# Output: <run>/validation/step_<step>/sim_nail/<layout>/ per layout: subtask_events.json, logs/ and
+# videos/ep<N>_{top,wrist,wrist_depth}.mp4 per episode (record_inference_videos; rerun.rrd only with rerun_save),
+# plus sim_nail/summary.{json,md} and index.json over all of them, so view_probes / compare_probes show the videos
+# as the sim_nail probe. Env: LAYOUTS (default "ep0 ep1 ep2 ep3"),
 # SIM_EVAL_ARGS (extra inference_async flags, e.g. "--env.robot.episodes=1 --env.processor.reset.control_time_s=20").
 set -uo pipefail
 sim_workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,8 +18,8 @@ sim_config="${3:-config_rl_sim.yaml}"
 [[ -f "$sim_checkpoint/config.json" ]] || { echo "Missing checkpoint config: $sim_checkpoint" >&2; exit 1; }
 sim_step=0
 if [[ -n "${2:-}" ]]; then
+  # May already hold a probe pass (remote_validate.sh --with-sim); only sim_nail itself must be new.
   sim_run_dir="$2"
-  [[ ! -e "$sim_run_dir" ]] || { echo "Use a fresh output directory: $sim_run_dir" >&2; exit 1; }
 else
   # With no output override, write beside the checkpoint's training run.
   sim_step_dir="$(dirname "$sim_checkpoint")"

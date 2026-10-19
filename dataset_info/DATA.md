@@ -1,6 +1,6 @@
 # Data record
 
-Generated 2026-10-18 17:57 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
+Generated 2026-10-18 20:25 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
 
 ## Training mix by sampling group
 
@@ -8,16 +8,16 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 
 | group | share | episodes | frames | usable frames | hours |
 |---|---|---|---|---|---|
-| external_rebot | 0.25 | 231 | 171,876 | 171,144 | 1.59 |
-| bits_clippers | 0.154 | 31 | 183,798 | 168,721 | 1.70 |
-| rigid | 0.1034 | 39 | 64,824 | 64,768 | 0.60 |
-| cases_kit_box_push | 0.0671 | 17 | 35,526 | 30,115 | 0.33 |
-| bottles_lids | 0.065 | 17 | 59,889 | 53,109 | 0.55 |
-| pills_caps | 0.0557 | 12 | 33,459 | 32,456 | 0.31 |
-| clothing | 0.0548 | 79 | 280,194 | 259,848 | 2.59 |
+| external_rebot | 0.2 | 231 | 171,876 | 171,144 | 1.59 |
+| bits_clippers | 0.1232 | 31 | 183,798 | 168,721 | 1.70 |
+| rigid | 0.08272 | 39 | 64,824 | 64,768 | 0.60 |
+| cases_kit_box_push | 0.05368 | 17 | 35,526 | 30,115 | 0.33 |
+| bottles_lids | 0.052 | 17 | 59,889 | 53,109 | 0.55 |
+| pills_caps | 0.04456 | 12 | 33,459 | 32,456 | 0.31 |
+| clothing | 0.04384 | 79 | 280,194 | 259,848 | 2.59 |
 | excluded | 0 | 13 | 20,634 | 0 | 0.19 |
-| **ReBot sampled** | **0.75** | **426** | **829,566** | **780,161** | **7.68** |
-| diverse corpus | 0.25 | 879 | 487,851 | | 6.39 (usable 6.33) |
+| **ReBot sampled** | **0.6** | **426** | **829,566** | **780,161** | **7.68** |
+| diverse corpus | 0.4 | 879 | 487,851 | | 6.39 (usable 6.33) |
 
 ## ReBot roots in the config
 
