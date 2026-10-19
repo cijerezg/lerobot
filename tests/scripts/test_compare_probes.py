@@ -235,3 +235,95 @@ def test_interactive_samples_expose_stable_frame_keys(tmp_path: Path) -> None:
             "global_idx": 14765,
         }
     ]
+
+
+def test_explicit_checkpoint_inputs_are_distinct_comparison_slots(tmp_path: Path) -> None:
+    run = _write_run(tmp_path, "same-run", steps=(400, 800))
+    index = build_compare_index(
+        resolve_compare_sources(
+            [run / "validation" / "step_00000400", run / "validation" / "step_00000800"]
+        )
+    )
+    assert [slot["run"]["initial_step"] for slot in index["runs"]] == [400, 800]
+    assert all(slot["run"]["explicit_step"] for slot in index["runs"])
+    assert not build_compare_index(resolve_compare_sources([run]))["runs"][0]["run"]["explicit_step"]
+    assert index["runs"][0]["probes"][0]["panels"]["400"][0]["url"].startswith("/asset/0/")
+    assert index["runs"][1]["probes"][0]["panels"]["800"][0]["url"].startswith("/asset/1/")
+
+
+@pytest.fixture
+def compare_url(tmp_path: Path):
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from lerobot.scripts.compare_probes import make_compare_handler
+
+    run = _write_run(tmp_path, "experiment", steps=(400, 800))
+    sources = resolve_compare_sources([run])
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_compare_handler(sources))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_production_page_serves_its_bundled_assets(compare_url: str) -> None:
+    import re
+    from urllib.request import Request, urlopen
+
+    with urlopen(compare_url) as response:
+        page = response.read()
+        assert response.headers.get_content_type() == "text/html"
+    assert b"Checkpoint Map" in page
+    assert b"migration/" not in page and b"Design lab" not in page
+    assets = re.findall(r'(?:src|href)="(/ui/compare-probes/[^"]+)"', page.decode())
+    assert len(assets) == 4
+    for path in ["/", *assets]:
+        with urlopen(compare_url + path) as response:
+            content = response.read()
+            assert content
+            if path.endswith(".css"):
+                assert response.headers.get_content_type() == "text/css"
+            elif path.endswith(".js"):
+                assert response.headers.get_content_type() in {"text/javascript", "application/javascript"}
+        with urlopen(Request(compare_url + path, method="HEAD")) as response:
+            assert int(response.headers["Content-Length"]) == len(content)
+            assert response.read() == b""
+    with urlopen(compare_url + "/api/index") as response:
+        assert len(json.load(response)["runs"]) == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/ui/compare-probes/compare_probes.py",
+        "/ui/compare-probes/../compare_probes.py",
+        "/ui/compare-probes/%2e%2e/compare_probes.py",
+        "/asset/0/%2e%2e/%2e%2e/compare_probes.py",
+        "/asset/4/step_00000400/attention/index.json",
+    ],
+)
+def test_viewer_does_not_serve_unlisted_assets(compare_url: str, path: str) -> None:
+    from urllib.error import HTTPError
+    from urllib.request import urlopen
+
+    with pytest.raises(HTTPError) as error:
+        urlopen(compare_url + path)
+    assert error.value.code == 404
+
+
+def test_namespaced_video_range_requests_still_work(compare_url: str, tmp_path: Path) -> None:
+    from urllib.request import Request, urlopen
+
+    video = tmp_path / "experiment/validation/step_00000400/attention/example.mp4"
+    video.write_bytes(b"0123456789")
+    url = compare_url + "/asset/0/step_00000400/attention/example.mp4"
+    with urlopen(Request(url, headers={"Range": "bytes=2-5"})) as response:
+        assert response.status == 206
+        assert response.headers["Content-Range"] == "bytes 2-5/10"
+        assert response.headers.get_content_type() == "video/mp4"
+        assert response.read() == b"2345"

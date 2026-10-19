@@ -154,15 +154,28 @@ Pick a geometry (raw cosines are ~1 everywhere; robot- or episode-centered shows
 
 ## Probe compare
 
-Same probes as columns, one to four runs or checkpoints (http://127.0.0.1:7871). Same path forms as
-the viewer; labels are optional and follow the paths in order. Only probes both passes ran line up,
-so a pass with a different suite shows empty columns.
+Checkpoint Map compares one to four runs or checkpoints at http://127.0.0.1:7871.
+Pass run or validation folders to browse training history in **Map**, or pass explicit
+`step_*` folders to open **Aligned view** at those exact checkpoints. Two checkpoints
+from the same run work as separate comparison slots:
 
+```bash
 uv run python -m lerobot.scripts.compare_probes \
-    outputs/<run>/validation/step_00000600 \
-    outputs/molmoact2_rebot_diverse_stochastic_rounding_v2/validation/step_00000600 \
-    --label=new-600 \
-    --label=sr_v2-600
+    outputs/<run>/validation/step_00000400 \
+    outputs/<run>/validation/step_00000800 \
+    --label=step-400 --label=step-800
+```
+
+Map tiles change one run at a time; **Checkpoints locked** moves all runs to a shared
+step. **Aligned view** shows only the selected checkpoints, including interactive
+inspectors and synchronized videos. **Sim outputs** opens available simulation
+recordings. Output buttons provide direct selection; missing outputs remain explicit,
+and **Shared outputs** filters to panels available in every slot. Jacobian probes are
+hidden until **Show Jacobian archive** is enabled.
+
+**Copy link** preserves the view, selected probe/output, checkpoints, baseline, lock,
+and metric selection. Keyboard shortcuts: `j`/`k` switch probes, `n`/`p` switch outputs,
+and Space plays/pauses visible videos. Refresh reloads newly written probe output.
 
 ## Remote validation on the DGX
 
@@ -185,6 +198,10 @@ setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> > /dev/null 2>&1 &
 Sim eval instead of the probes (flags after `--` go to remote_validate.sh):
 
 setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> -- --sim > /dev/null 2>&1 &
+
+Probes and then the sim eval in one pass per checkpoint (both land in validation/step_<step>/; the sim shows up as the "Sim Nail" probe in compare_probes):
+
+setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> -- --with-sim > /dev/null 2>&1 &
 
 Stop after the pass in flight:
 
