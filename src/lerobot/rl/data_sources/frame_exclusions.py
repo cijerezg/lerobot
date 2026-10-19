@@ -95,10 +95,42 @@ class FrameExclusions:
         return rows[valid]
 
 
+class DiverseExclusions:
+    """Diverse-corpus counterpart: episode-local [from_s, to_s) ranges keyed by episode_id."""
+
+    def __init__(self, path: str):
+        data = json.loads(Path(path).read_text())
+        if data.get('version') != 1 or not isinstance(data.get('exclusions'), list):
+            raise ValueError('Diverse exclusions require version 1 and an exclusions list')
+        self.ranges = {}
+        for entry in data['exclusions']:
+            episode_id, lo, hi = entry.get('episode_id'), entry.get('from_s'), entry.get('to_s')
+            if not isinstance(episode_id, str) or not episode_id:
+                raise ValueError('Diverse exclusions need an episode_id')
+            if not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)) or not 0 <= lo < hi:
+                raise ValueError(f'Diverse exclusion for {episode_id} needs 0 <= from_s < to_s')
+            self.ranges.setdefault(episode_id, []).append((float(lo), float(hi)))
+
+    def excluded_rows(self, rows, window_s: float) -> set[int]:
+        """Rows whose action window [anchor_s, anchor_s + window_s) overlaps an excluded range.
+
+        Every manifest episode must be in the selection, so a stale id cannot be a silent no-op.
+        """
+        missing = set(self.ranges) - {str(row['episode_id']) for row in rows}
+        if missing:
+            raise ValueError(f'Diverse exclusions reference episodes outside the selection: {sorted(missing)[:5]}')
+        out = set()
+        for index, row in enumerate(rows):
+            start = float(row['anchor_s'])
+            if any(start < hi and start + window_s > lo for lo, hi in self.ranges.get(str(row['episode_id']), [])):
+                out.add(index)
+        return out
+
+
 def validate_exclusion_training_mode(cfg):
     """This integration intentionally supports actor-only diverse training only."""
     diverse = getattr(cfg, 'diverse', None)
-    if not getattr(diverse, 'rebot_exclusions_manifest', None):
+    if not (getattr(diverse, 'rebot_exclusions_manifest', None) or getattr(diverse, 'diverse_exclusions_manifest', None)):
         return
     if not getattr(diverse, 'enabled', False):
         raise ValueError('Frame exclusions require diverse.enabled; refusing to ignore manifest')

@@ -4,7 +4,7 @@ training config and the roots themselves. Writes lerobot/dataset_info/DATA.md (o
     uv run python lerobot/dataset_info/data_count.py [--config config_rl.yaml]
 
 Sources: `dataset.sources` (ReBot roots and their episode_groups), `diverse.rebot_group_weights` (shares),
-`diverse.rebot_exclusions_manifest` (usefulness cuts: frames whose action targets are never drawn), `diverse.root`
+`diverse.rebot_exclusions_manifest` and `diverse.diverse_exclusions_manifest` (usefulness cuts: frames whose action targets are never drawn), `diverse.root`
 (corpus/ and fmb/ episodes.jsonl minus holdout_episodes.json and excluded_episodes.json), `val_dataset_path`.
 Roots built but not yet in the config are listed in lerobot/dataset_info/pending.yaml (`- root: ..., note: ...`).
 """
@@ -31,12 +31,12 @@ def hours(frames, fps=30):
     return f"{frames / fps / 3600:.2f}"
 
 
-def diverse_rows(root):
+def diverse_rows(root, cut_s):
     skip = set()
     for name in ("holdout_episodes.json", "excluded_episodes.json"):
         if (root / name).is_file():
             skip |= set(json.loads((root / name).read_text())["episode_ids"])
-    by_source = defaultdict(lambda: [0, 0, 0.0])
+    by_source = defaultdict(lambda: [0, 0, 0.0, 0.0])
     for sub in ("corpus", "fmb"):
         for line in (root / sub / "episodes.jsonl").read_text().splitlines():
             r = json.loads(line)
@@ -47,6 +47,7 @@ def diverse_rows(root):
             s[0] += 1
             s[1] += r.get("frames", r.get("frame_count", 0))
             s[2] += r.get("duration_s", r.get("duration_s_nominal", 0.0))
+            s[3] += cut_s.get(r["episode_id"], 0.0)
     return dict(sorted(by_source.items())), len(skip)
 
 
@@ -79,7 +80,12 @@ def main():
 
     rebot_share = sum(v for g, v in shares.items() if g in group)
     diverse_share = cfg["diverse"]["weight"] if cfg["diverse"].get("enabled") else 0
-    div, n_skip = diverse_rows(WORKSPACE / cfg["diverse"]["root"])
+    div_manifest = cfg["diverse"].get("diverse_exclusions_manifest")
+    cut_s = defaultdict(float)  # episode_id -> excluded seconds
+    if div_manifest:
+        for x in json.loads((WORKSPACE / div_manifest).read_text())["exclusions"]:
+            cut_s[x["episode_id"]] += x["to_s"] - x["from_s"]
+    div, n_skip = diverse_rows(WORKSPACE / cfg["diverse"]["root"], cut_s)
 
     out = [f"# Data record\n\nGenerated {datetime.now():%Y-%m-%d %H:%M} by `uv run python lerobot/dataset_info/data_count.py` from "
            f"`{args.config}`. Do not edit by hand; rerun after every change to the data or the config.\n"]
@@ -91,7 +97,8 @@ def main():
     tot = [sum(v[i] for g, v in group.items() if shares.get(g, 0)) for i in range(3)]
     out.append(f"| **ReBot sampled** | **{rebot_share:.4g}** | **{tot[0]}** | **{tot[1]:,}** | **{tot[2]:,}** | **{hours(tot[1])}** |")
     dn, df, ds = (sum(v[i] for v in div.values()) for i in range(3))
-    out.append(f"| diverse corpus | {diverse_share:.4g} | {dn} | {df:,} | | {ds / 3600:.2f} |\n")
+    dc = sum(v[3] for v in div.values())
+    out.append(f"| diverse corpus | {diverse_share:.4g} | {dn} | {df:,} | | {ds / 3600:.2f} (usable {(ds - dc) / 3600:.2f}) |\n")
 
     out.append("## ReBot roots in the config\n\n| source | root | episodes | frames | hours | sampled eps | groups (episodes / frames) |\n|---|---|---|---|---|---|---|")
     for name, root, n, f, sampled, per in src_rows:
@@ -101,9 +108,9 @@ def main():
     out.append(f"| **total** | | **{n_all}** | **{f_all:,}** | **{hours(f_all)}** | | |\n")
 
     out.append(f"## Diverse corpus\n\n`{cfg['diverse']['root']}`: corpus/ + fmb/ episodes, minus {n_skip} holdout or excluded episodes "
-               "(anchor-level retention not counted). Hours from each episode's duration.\n")
-    out.append("| source | episodes | frames | hours |\n|---|---|---|---|")
-    out += [f"| {k} | {n} | {f:,} | {s / 3600:.2f} |" for k, (n, f, s) in div.items()]
+               f"(anchor-level retention not counted). Hours from each episode's duration; usable = minus `{div_manifest}`.\n")
+    out.append("| source | episodes | frames | hours | usable hours |\n|---|---|---|---|---|")
+    out += [f"| {k} | {n} | {f:,} | {s / 3600:.2f} | {(s - c) / 3600:.2f} |" for k, (n, f, s, c) in div.items()]
 
     val = cfg.get("val_dataset_path")
     if val:

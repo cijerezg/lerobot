@@ -77,6 +77,7 @@ class HierarchicalAnchorSampler:
         seed: int = 0,
         rank: int = 0,
         world_size: int = 1,
+        excluded_rows: set[int] | None = None,
     ) -> None:
         if group_weight not in GROUP_WEIGHT_RULES:
             raise ValueError(f"group_weight must be one of {GROUP_WEIGHT_RULES}, got {group_weight!r}.")
@@ -85,8 +86,10 @@ class HierarchicalAnchorSampler:
         self.group_weight = group_weight
 
         episodes: dict[str, dict[str, list[int]]] = defaultdict(lambda: defaultdict(list))
+        excluded_rows = excluded_rows or set()
         for index, row in enumerate(selection.rows):
-            episodes[self.group_of(row)][str(row["episode_id"])].append(index)
+            if index not in excluded_rows:
+                episodes[self.group_of(row)][str(row["episode_id"])].append(index)
 
         self.groups = sorted(episodes)
         self.episode_rows: dict[str, list[np.ndarray]] = {

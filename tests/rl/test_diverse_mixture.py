@@ -177,6 +177,25 @@ def test_weights_can_be_overridden_per_group(selection) -> None:
         HierarchicalAnchorSampler(selection, group_weight_overrides={"nope": 1.0})
 
 
+def test_excluded_rows_are_never_drawn(selection) -> None:
+    excluded = set(range(0, len(selection.rows), 3))
+    draws = HierarchicalAnchorSampler(selection, seed=0, excluded_rows=excluded)(DRAWS)
+    assert not set(draws.tolist()) & excluded
+
+
+def test_diverse_exclusions_drop_anchors_whose_window_overlaps(tmp_path) -> None:
+    from lerobot.rl.data_sources.frame_exclusions import DiverseExclusions
+
+    rows = [{"episode_id": "a", "anchor_s": s} for s in (0.0, 1.0, 2.0, 3.0)] + [{"episode_id": "b", "anchor_s": 2.0}]
+    path = tmp_path / "x.json"
+    path.write_text('{"version": 1, "exclusions": [{"episode_id": "a", "from_s": 2.5, "to_s": 3.0}]}')
+    # window 1 s: anchor 2.0 covers [2.0, 3.0) and overlaps; 3.0 starts at the half-open end
+    assert DiverseExclusions(str(path)).excluded_rows(rows, 1.0) == {2}
+    path.write_text('{"version": 1, "exclusions": [{"episode_id": "z", "from_s": 0, "to_s": 1}]}')
+    with pytest.raises(ValueError, match="outside the selection"):
+        DiverseExclusions(str(path)).excluded_rows(rows, 1.0)
+
+
 # ── Telemetry ────────────────────────────────────────────────────────────────
 
 

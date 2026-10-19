@@ -28,6 +28,18 @@ fallback — but dtype/size mismatches DO silently fall back, so the policy conf
 must declare its `image_storage_*` fields). History windows are assembled at
 sample time — no cache format change.
 
+**Frame exclusions** (post-cache, reversible; `rl/data_sources/frame_exclusions.py`): ranges
+whose action targets are never sampled. Excluded frames can still appear as observation
+history for a kept start. Delete the config key to restore full sampling.
+
+| Key (`diverse.`) | Ranges | Rule |
+|---|---|---|
+| `rebot_exclusions_manifest` | `source_root`, `episode_index`, `[from_frame, to_frame)` | start `s` is kept iff `s + chunk <= lo` or `s >= hi` (`filter_starts`) |
+| `diverse_exclusions_manifest` | `episode_id`, `[from_s, to_s)` on the anchor timeline | anchor kept iff `anchor_s + H/rate <= lo` or `anchor_s >= hi`; the sampler skips the rows, cache and selection are unchanged |
+
+Both require `skip_critic: true` and no validation (`validate_exclusion_training_mode`). An
+unknown episode is an error, not a no-op.
+
 ## 2. Actor update
 
 `update_actor` ([rl_molmoact2_trainer.py:627](../../src/lerobot/rl/molmoact2/rl_molmoact2_trainer.py#L627)),

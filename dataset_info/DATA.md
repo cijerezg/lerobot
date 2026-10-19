@@ -1,14 +1,14 @@
 # Data record
 
-Generated 2026-10-17 22:15 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
+Generated 2026-10-18 17:57 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
 
 ## Training mix by sampling group
 
-Share = fraction of all training samples. Usable = frames minus the usefulness cuts (`migration/internal_usefulness_review_2026-10-16/cleanup/exclusions.json`). ReBot hours at 30 fps.
+Share = fraction of all training samples. Usable = frames minus the usefulness cuts (`migration/usefulness_review_ext_diverse_2026-10-18/cleanup/rebot_exclusions.json`). ReBot hours at 30 fps.
 
 | group | share | episodes | frames | usable frames | hours |
 |---|---|---|---|---|---|
-| external_rebot | 0.25 | 231 | 171,876 | 171,876 | 1.59 |
+| external_rebot | 0.25 | 231 | 171,876 | 171,144 | 1.59 |
 | bits_clippers | 0.154 | 31 | 183,798 | 168,721 | 1.70 |
 | rigid | 0.1034 | 39 | 64,824 | 64,768 | 0.60 |
 | cases_kit_box_push | 0.0671 | 17 | 35,526 | 30,115 | 0.33 |
@@ -16,8 +16,8 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 | pills_caps | 0.0557 | 12 | 33,459 | 32,456 | 0.31 |
 | clothing | 0.0548 | 79 | 280,194 | 259,848 | 2.59 |
 | excluded | 0 | 13 | 20,634 | 0 | 0.19 |
-| **ReBot sampled** | **0.75** | **426** | **829,566** | **780,893** | **7.68** |
-| diverse corpus | 0.25 | 879 | 487,851 | | 6.39 |
+| **ReBot sampled** | **0.75** | **426** | **829,566** | **780,161** | **7.68** |
+| diverse corpus | 0.25 | 879 | 487,851 | | 6.39 (usable 6.33) |
 
 ## ReBot roots in the config
 
@@ -38,17 +38,17 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 
 ## Diverse corpus
 
-`outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2`: corpus/ + fmb/ episodes, minus 30 holdout or excluded episodes (anchor-level retention not counted). Hours from each episode's duration.
+`outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2`: corpus/ + fmb/ episodes, minus 30 holdout or excluded episodes (anchor-level retention not counted). Hours from each episode's duration; usable = minus `migration/usefulness_review_ext_diverse_2026-10-18/cleanup/diverse_exclusions.json`.
 
-| source | episodes | frames | hours |
-|---|---|---|---|
-| droid | 48 | 34,752 | 0.64 |
-| droid_success | 65 | 36,203 | 0.67 |
-| fmb | 160 | 33,492 | 0.93 |
-| molmoact | 399 | 72,657 | 1.27 |
-| robochallenge | 196 | 297,768 | 2.76 |
-| ur7e | 4 | 8,382 | 0.08 |
-| yam | 7 | 4,597 | 0.05 |
+| source | episodes | frames | hours | usable hours |
+|---|---|---|---|---|
+| droid | 48 | 34,752 | 0.64 | 0.61 |
+| droid_success | 65 | 36,203 | 0.67 | 0.65 |
+| fmb | 160 | 33,492 | 0.93 | 0.92 |
+| molmoact | 399 | 72,657 | 1.27 | 1.27 |
+| robochallenge | 196 | 297,768 | 2.76 | 2.75 |
+| ur7e | 4 | 8,382 | 0.08 | 0.08 |
+| yam | 7 | 4,597 | 0.05 | 0.04 |
 
 ## Validation
 

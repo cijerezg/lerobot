@@ -83,6 +83,9 @@ class DiverseCollectionConfig:
     # start per cell. 1 = plain iid draws.
     # Applied after replay-cache loading; original source-root/episode frame ranges.
     rebot_exclusions_manifest: str | None = None
+    # Same idea for the diverse corpus: episode-local seconds; anchors whose action window
+    # overlaps an excluded range are never drawn (rows and cache unchanged).
+    diverse_exclusions_manifest: str | None = None
     rebot_start_cell: int = 1
     # Per-start draw weights around commit moments inside each ReBot group; replaces iid / cell
     # draws. rebot_group_weights still sets the group shares.

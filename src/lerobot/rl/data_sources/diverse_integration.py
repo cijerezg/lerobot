@@ -142,6 +142,14 @@ def build_diverse_buffer(
     task_indices, subtask_indices = extend_dataset_vocabulary(
         main_dataset, selection, is_main_process=is_main_process
     )
+    excluded_rows = None
+    if diverse_cfg.diverse_exclusions_manifest:
+        from lerobot.rl.data_sources.frame_exclusions import DiverseExclusions
+
+        excluded_rows = DiverseExclusions(diverse_cfg.diverse_exclusions_manifest).excluded_rows(
+            selection.rows, spec.action_horizon / spec.action_rate_hz)
+        if is_main_process:
+            logger.info("[Diverse] exclusions: %d of %d anchors never drawn", len(excluded_rows), len(selection.rows))
     sampler = HierarchicalAnchorSampler(
         selection,
         group_weight=diverse_cfg.group_weight,
@@ -149,6 +157,7 @@ def build_diverse_buffer(
         seed=seed,
         rank=rank,
         world_size=world_size,
+        excluded_rows=excluded_rows,
     )
     buffer = DiverseActorBuffer(
         selection,
