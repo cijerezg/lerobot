@@ -8,7 +8,7 @@
 # Output: <run>/validation/step_<step>/sim_nail/<layout>/ per layout: subtask_events.json, logs/ and
 # videos/ep<N>_{top,wrist,wrist_depth}.mp4 per episode (record_inference_videos; rerun.rrd only with rerun_save),
 # plus sim_nail/summary.{json,md} and index.json over all of them, so view_probes / compare_probes show the videos
-# as the sim_nail probe. Env: LAYOUTS (default "ep0 ep1 ep2 ep3"),
+# as the sim_nail probe. Env: LAYOUTS (default "clippers_only ep0 ep1 ep2 ep3"),
 # SIM_EVAL_ARGS (extra inference_async flags, e.g. "--env.robot.episodes=1 --env.processor.reset.control_time_s=20").
 set -uo pipefail
 sim_workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,10 +39,10 @@ export PYTHONSAFEPATH=1   # the Spark checkout has stray files under LeRobot/ler
 export MUJOCO_GL=egl
 export PYTHONUNBUFFERED=1
 failed=0
-for layout in ${LAYOUTS:-ep0 ep1 ep2 ep3}; do
+for layout in ${LAYOUTS:-clippers_only ep0 ep1 ep2 ep3}; do
   echo "=== $layout -> $sim_out/$layout"
   # The sim robot raises SIGINT after its last episode; the runtime treats it as the operator's Ctrl-C and exits 0.
-  # 1 h caps a stalled run (4 layouts x 3 episodes x 2 min nominal).
+  # 1 h caps a stalled run (5 layouts x 3 episodes x 2 min nominal).
   # shellcheck disable=SC2086
   timeout 3600 .venv/bin/python -m lerobot.rl.inference_async \
     --config_path="$sim_config" \

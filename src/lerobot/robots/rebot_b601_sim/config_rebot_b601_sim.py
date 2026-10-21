@@ -42,7 +42,7 @@ class MujocoCameraConfig(CameraConfig):
 class RebotB601SimRobotConfig(RobotConfig):
     """MuJoCo stand-in for the reBot B601-DM follower (lerobot/robots/rebot_b601_sim)."""
 
-    # A layout name under robots/rebot_b601_sim/scenes/<name>/scene.xml (ep0, ep1, ep2, ep3: the
+    # A layout name under robots/rebot_b601_sim/scenes/<name>/scene.xml (clippers_only, ep0, ep1, ep2, ep3: the
     # 2026-10-16 nail-clipper layouts, README there), or a path to an MJCF file that includes the DM robot and names
     # the cameras below.
     scene: str

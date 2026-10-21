@@ -15,7 +15,7 @@ Examples::
 
 A path may be a checkpoint step dir (``.../checkpoints/000400``), a ``validation/step_XXXXXXXX`` dir, a ``sim_nail``
 dir, a layout dir or a ``.rrd`` file; ``--layout`` picks the layout for everything above a layout dir.
-Layouts are ep0, ep1, ep2 and ep3.
+Layouts are clippers_only, ep0, ep1, ep2 and ep3.
 """
 
 from __future__ import annotations

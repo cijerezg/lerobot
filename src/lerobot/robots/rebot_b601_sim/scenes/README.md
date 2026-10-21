@@ -6,12 +6,13 @@ the calibration numbers and the rebuild order; the build scripts stay in that fo
 
 | layout | source | task objects | notes |
 |---|---|---|---|
-| ep0 | 10-16 ep 5 frame 0 | case at (0.16, 0.34), clippers near it | the nail-clipper episode; `config_rl_sim.yaml` default |
+| clippers_only | ep0 task-object poses | the original case + two clippers | uncluttered default; `config_rl_sim.yaml` selects it |
+| ep0 | 10-16 ep 5 frame 0 | case at (0.16, 0.34), clippers near it | the original cluttered nail-clipper episode |
 | ep1 | 10-16 ep 1 frame 0 | clippers 0.25-0.33 m from the case | tidy-up recording |
 | ep2 | 10-16 ep 2 frame 0 | case + clippers mirrored to +y (robot's right) | the only right-side layout |
 | ep3 | 10-16 ep 3 frame 0 | clippers 0.25-0.33 m from the case | tidy-up recording |
 
-Per layout: `scene.xml` (free bodies for the case, the two clippers and every clutter primitive, all within 0.50 m
+Per layout: `scene.xml` (free bodies for the case and two clippers; recorded layouts also include clutter primitives, all within 0.50 m
 of the base; table collision plane; cameras `ext` = top webcam, `wrist` = D405 on gripper_end), `materials/`
 (one flat measured colour per material as textured meshes, wrist-camera colour space), `background_top.png`
 (real top frame with the robot, its shadow and every object footprint filled with table grain: only the
@@ -26,12 +27,12 @@ kinematics of recorded joints misses the real object positions by 9-37 mm (the p
 visual meshes remain more detailed than the simplified collision geometry.
 
 
-Layout names are `ep0`, `ep1`, `ep2`, and `ep3`. These are simulation layout IDs;
+Layout names are `clippers_only`, `ep0`, `ep1`, `ep2`, and `ep3`. These are simulation layout IDs;
 the source recording episode numbers in the table above remain unchanged.
 
 ## Approved appearance update (2026-10-18)
 
-All four `scene.xml` files now use the approved clipper, surrounding-object and
+All `scene.xml` files now use the approved clipper, surrounding-object and
 connected headphone-case visuals. `run_sim_eval.sh` and `config_rl_sim.yaml` select
 these scenes normally; no experiment config or additional flag is needed.
 
