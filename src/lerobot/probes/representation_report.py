@@ -129,7 +129,7 @@ const median=a=>{const v=a.filter(x=>x!=null).sort((p,q)=>p-q);return v.length?v
 const kinds=['same_robot_same_task','same_robot_different_task','different_robot_same_task','different_robot_different_task'];
 const labels=['Same robot · same task','Same robot · different task','Other robot · same task','Other robot · different task'];
 const colors=['#3366cc','#dd6633','#119988','#9933aa','#cc4477','#667733','#0099c6','#b47700'];
-const MEASURES={cosine:{label:'Cosine',scale:'Viridis',reverse:false,bg:'background_same_robot',bgOther:'background_other_robot'},distance:{label:'L2 distance',scale:'Viridis',reverse:true,bg:'background_distance_same_robot',bgOther:'background_distance_other_robot'},lognorm:{label:'log2 norm ratio (column / row)',scale:'RdBu',reverse:false,bg:'background_lognorm_same_robot',bgOther:'background_lognorm_other_robot'}};
+const MEASURES={cosine:{label:'Cosine',scale:[[0,'#6a0dad'],[0.1875,'#f48fb1'],[0.375,'#ffffff'],[0.5625,'#ffd54f'],[0.75,'#f28e2b'],[0.875,'#1aa8a0'],[1,'#1f3f99']],reverse:false,diverging:false,fixed:[-0.6,1],bg:'background_same_robot',bgOther:'background_other_robot'},distance:{label:'L2 distance',scale:'Viridis',reverse:true,bg:'background_distance_same_robot',bgOther:'background_distance_other_robot'},lognorm:{label:'log2 norm ratio (column / row)',scale:'RdBu',reverse:false,diverging:true,bg:'background_lognorm_same_robot',bgOther:'background_lognorm_other_robot'}};
 const cache={}, crossCache={}, pending={};
 window.__trajectoryPanel=(key,data)=>{cache[key]=data;if(pending[key]){pending[key](data);delete pending[key];}};
 window.__trajectoryCross=(key,text)=>{const bytes=Uint8Array.from(atob(text),c=>c.charCodeAt(0));crossCache[key]=new Uint16Array(bytes.buffer);if(pending['cross:'+key]){pending['cross:'+key](crossCache[key]);delete pending['cross:'+key];}};
@@ -192,7 +192,7 @@ function setEpisode(ep){
 function stepEpisode(delta){const sel=$('episode'), k=sel.selectedIndex+delta;if(k<0||k>=sel.options.length)return;sel.selectedIndex=k;setEpisode(sel.value);}
 function heat(z,x,y,xtitle,ytitle,zrange,extraShapes,hover,axes){
  const M=MEASURES[measure()];
- return [[{type:'heatmap',x,y,z,colorscale:M.scale,reversescale:M.reverse,zmin:zrange[0],zmax:zrange[1],hoverongaps:false,...(hover||{hovertemplate:'row %{y:.2f} s · col %{x:.2f} s<br>%{z:.4f}<extra></extra>'}),colorbar:{title:{text:M.label.split(' (')[0]},len:.9}}],
+ return [[{type:'heatmap',x,y,z,colorscale:M.scale,reversescale:M.reverse,zmin:M.fixed?M.fixed[0]:zrange[0],zmax:M.fixed?M.fixed[1]:zrange[1],...(M.diverging?{zmid:0}:{}),hoverongaps:false,...(hover||{hovertemplate:'row %{y:.2f} s · col %{x:.2f} s<br>%{z:.4f}<extra></extra>'}),colorbar:{title:{text:M.label.split(' (')[0]},len:.9}}],
   {margin:{l:60,r:10,t:10,b:55},xaxis:{title:{text:xtitle},constrain:'domain',...(axes?.x||{})},yaxis:{title:{text:ytitle},scaleanchor:'x',constrain:'domain',autorange:'reversed',...(axes?.y||{})},shapes:extraShapes||[]},{responsive:true,displaylogo:false}];
 }
 function renderMatrix(){
