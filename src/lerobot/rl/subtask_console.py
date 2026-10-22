@@ -18,6 +18,10 @@ precision and contact are latched with it, so n/b/r switch "The precision is N o
 and "The contact is ..." together with the step (r uses ``eval_home_precision`` /
 ``eval_home_contact``). A list left unset keeps that channel off: no clause at all.
 
+``f`` toggles ``RTCSharedState.frozen``: the follower holds its last target, the leader
+holds with it, the policy idles and nothing is recorded until the next press. It is
+for rearranging the scene mid-episode; the runtime clears it on episode start.
+
 The listener is a global hook (no terminal focus required) and fires on its own
 thread, so neither the 30Hz executor nor the inference thread polls for input.
 
@@ -35,6 +39,7 @@ logger = logging.getLogger(__name__)
 NEXT_KEY = "n"
 BACK_KEY = "b"
 HOME_KEY = "r"
+FREEZE_KEY = "f"
 
 
 class SubtaskConsole:
@@ -73,11 +78,12 @@ class SubtaskConsole:
             f"  {i + 1}. {_describe(entry)}" for i, entry in enumerate(self.shared_state.subtask_script)
         )
         logger.info(
-            "[SUBTASK] Operator console active — generation disabled. [%s] next, [%s] back, [%s] %s.\n%s",
+            "[SUBTASK] Operator console active — generation disabled. [%s] next, [%s] back, [%s] %s, [%s] freeze/unfreeze.\n%s",
             NEXT_KEY,
             BACK_KEY,
             HOME_KEY,
             _describe(self.home),
+            FREEZE_KEY,
             steps,
         )
 
@@ -96,6 +102,9 @@ class SubtaskConsole:
             self.shared_state.update_subtask(*self.home)
             cursor = self.shared_state.subtask_cursor
             logger.info("[SUBTASK] %s   (script at %d/%d, n/b resume from there)", _describe(self.home), cursor + 1, len(self.shared_state.subtask_script))
+        elif char == FREEZE_KEY:
+            frozen = self.shared_state.toggle_freeze()
+            logger.info("[FREEZE] %s", "freeze requested" if frozen else "unfreeze requested")
 
     def _move(self, delta: int) -> None:
         cursor = self.shared_state.advance_subtask(delta)

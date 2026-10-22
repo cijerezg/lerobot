@@ -240,6 +240,9 @@ class RTCSharedState:
         self.latest_obs: dict | None = None
         self.is_intervening = False
         self.episode_active = False
+        # Operator freeze (console key f): the follower holds its last target, the leader
+        # holds with it, the policy idles and nothing is recorded until the next press.
+        self.frozen = False
         self.history_offsets: dict[str, list[int]] | None = None
         self.history_entries: deque | None = None
         # Current subtask: decoded by the high-level query, or walked by the operator
@@ -382,6 +385,11 @@ class RTCSharedState:
     def set_episode_active(self, status: bool) -> None:
         with self.lock:
             self.episode_active = status
+
+    def toggle_freeze(self) -> bool:
+        with self.lock:
+            self.frozen = not self.frozen
+            return self.frozen
 
     def request_reset(self) -> None:
         with self.lock:
@@ -675,7 +683,7 @@ def rtc_inference_worker(
                 last_subtask_time = None
                 continue
 
-            if shared_state.is_intervening:
+            if shared_state.is_intervening or shared_state.frozen:
                 time.sleep(0.01)
                 continue
 
@@ -910,6 +918,7 @@ def rtc_env_worker(
         teleop_feedback_supported = _teleop_supports_feedback(teleop_device)
 
         was_intervening = False
+        was_frozen = False
         sum_reward_episode = 0.0
         episode_intervention_steps = 0
         episode_total_steps = 0
@@ -988,6 +997,8 @@ def rtc_env_worker(
                 if not standalone:
                     shared_state.request_parameter_update()
                 was_intervening = False
+                was_frozen = False
+                shared_state.frozen = False
                 last_action = None
                 episode_log_buffer = []
 
@@ -1024,13 +1035,29 @@ def rtc_env_worker(
                 action_queue.clear()
                 if was_intervening and teleop_feedback_supported:
                     _ramp_leader(teleop_device, online_env.get_raw_joint_positions(), cfg.env.fps)
-                if was_intervening:
+                if was_intervening and not shared_state.frozen:  # frozen: the policy idles, no chunk is coming
                     _wait_for_first_chunk(action_queue, shared_state, cfg.env.fps)
             was_intervening = shared_state.is_intervening
+
+            # Freeze (console key f): hold the last executed target; the per-tick leader
+            # feedback below keeps the leader on its (stationary) pose. Unfreeze is the
+            # intervention-release dance: the queue holds pre-freeze chunks and the scene
+            # may have changed, so reset the policy and wait for a chunk on a fresh observation.
+            frozen = shared_state.frozen and not was_intervening
+            if was_frozen and not frozen:
+                logger.info("[RTC_ENV] Unfrozen, resetting policy/queue")
+                shared_state.request_reset()
+                action_queue.clear()
+                _wait_for_first_chunk(action_queue, shared_state, cfg.env.fps)
+            elif frozen and not was_frozen:
+                logger.info("[RTC_ENV] Frozen: follower and leader hold, nothing is recorded. Press f to resume.")
+            was_frozen = frozen
 
             _t_action_start = time.perf_counter()
             if was_intervening:
                 action = _raw_joint_action(online_env, action_dim, "cpu")
+            elif frozen:
+                action = last_action if last_action is not None else _raw_joint_action(online_env, action_dim, "cpu")
             else:
                 action = action_queue.get()
                 if action is not None:
@@ -1183,7 +1210,7 @@ def rtc_env_worker(
             # the same (state, action, depth) this frame gets in the learner buffer.
             # Depth uses the buffer's canonical complementary key (depth.{cam}.depth),
             # pulled unbatched from the unfiltered transition like the block above.
-            if shared_state.history_offsets is not None:
+            if shared_state.history_offsets is not None and not frozen:
                 entry = {}
                 for k in shared_state.history_offsets:
                     if k == ACTION:
@@ -1212,18 +1239,18 @@ def rtc_env_worker(
             if not standalone:
                 transitions_to_send.append(transition_cpu)
 
-            if recorder is not None:
+            if recorder is not None and not frozen:
                 recorder.add_frame(
                     raw_obs, executed_action,
                     is_intervention=is_intervening, subtask_index=subtask_idx_now, subtask=subtask_name_now or "",
                 )
-            if videos is not None:
+            if videos is not None and not frozen:
                 videos.put(raw_obs)
             if recorder is not None or videos is not None:
                 raw_obs = online_env.get_raw_observation()
 
             next_policy_fmt_obs = next_observation
-            if standalone and shared_state.is_logging_episode:
+            if standalone and shared_state.is_logging_episode and not frozen:
                 episode_log_buffer.append({
                     "obs": {
                         k: (transition_cpu["next_state"][k].clone() if "image" in k

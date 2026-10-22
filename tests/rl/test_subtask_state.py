@@ -166,3 +166,19 @@ def test_extract_metadata_from_columns():
     # Explicit dict beats columns; absent everything = None.
     assert step._extract_metadata({"metadata": {"quality": 5}}, 2) == [{"quality": 5}] * 2
     assert step._extract_metadata({}, 2) == [None, None]
+
+
+def test_subtask_console_freeze_toggle():
+    from types import SimpleNamespace
+
+    from lerobot.rl.subtask_console import SubtaskConsole
+
+    shared = RTCSharedState()
+    console = SubtaskConsole(["grasp the cup"], "return to home", ["grasp the cup"], shared)
+    assert shared.frozen is False
+    console._on_press(SimpleNamespace(char="f"))
+    assert shared.frozen is True
+    console._on_press(SimpleNamespace(char="f"))
+    assert shared.frozen is False
+    # The script cursor is untouched by the freeze key.
+    assert shared.subtask_cursor == 0

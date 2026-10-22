@@ -81,7 +81,7 @@ uv run aim up --repo ./aim
 
 ## Inference (standalone, RTC)
 
-Loads `inference_checkpoint_path` from config_rl.yaml. `inference_send_actions_to_robot: false` = read-only preflight. Subtasks: `n` next, `b` back.
+Loads `inference_checkpoint_path` from config_rl.yaml. `inference_send_actions_to_robot: false` = read-only preflight. Subtasks: `n` next, `b` back, `r` home. `f` freezes both arms in place (policy idles, nothing recorded) so you can rearrange the scene; press again to resume.
 
 uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 
