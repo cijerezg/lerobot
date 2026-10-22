@@ -1,6 +1,7 @@
 """Representations probe on one robot episode only (the probe root), every frame at repr_stride_s, with the deployed
 prompt metadata per step. The stock probe would also sample every training source in config_rl.yaml; this wrapper
-restricts the sampling plan to --dataset.root (and REPS_EPISODES="1,4" to those episodes). Everything else is the stock probe (trajectories.html, temporal.csv,
+restricts the sampling plan to --dataset.root (and REPS_EPISODES="1,4" to those episodes; REPS_DIVERSE="<episode label substring>" takes that diverse-corpus
+episode instead, through the stock diverse buffers). Everything else is the stock probe (trajectories.html, temporal.csv,
 cache/<group>.npy).
 
     uv run python lerobot/adhocs/intervention_episode_reps/reps_episode.py --config config_rl.yaml \
@@ -37,6 +38,15 @@ def _inputs(dataset, cfg, sample, chunk_size):
 def _sampling_plan(dataset, cfg):
     p = cfg.probe_parameters
     root = str(Path(dataset.root).resolve())
+    diverse = os.environ.get("REPS_DIVERSE")  # substring of a diverse episode label, e.g. "AUTOLab__ep001512": that episode only
+    if diverse:
+        buffers = R._open_diverse_buffers(cfg)
+        candidates = [frames for key, buf in buffers.items()
+                      for frames in R._diverse_candidates(buf, key, key.endswith("holdout"), p.repr_stride_s)
+                      if diverse in frames[0]["episode_label"]]
+        samples = R.select_sequences(candidates, p.max_episodes, p.repr_max_frames, p.random_seed,
+                                     p.repr_min_frames_per_episode, p.repr_holdout_episodes)
+        return samples, {}, buffers
     candidates = R._lerobot_candidates(dataset, cfg, root, False)
     wanted = os.environ.get("REPS_EPISODES")  # "1,4": only these episode indices of the root
     if wanted:

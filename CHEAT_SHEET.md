@@ -154,10 +154,9 @@ Pick a geometry (raw cosines are ~1 everywhere; robot- or episode-centered shows
 
 ## Probe compare
 
-Checkpoint Map compares one to four runs or checkpoints at http://127.0.0.1:7871.
-Pass run or validation folders to browse training history in **Map**, or pass explicit
-`step_*` folders to open **Aligned view** at those exact checkpoints. Two checkpoints
-from the same run work as separate comparison slots:
+Checkpoint compare puts one to four runs or checkpoints side by side at http://127.0.0.1:7871.
+Pass run or validation folders (each opens at its last checkpoint) or explicit `step_*`
+folders. Two checkpoints from the same run work as separate comparison slots:
 
 ```bash
 uv run python -m lerobot.scripts.compare_probes \
@@ -166,16 +165,20 @@ uv run python -m lerobot.scripts.compare_probes \
     --label=step-400 --label=step-800
 ```
 
-Map tiles change one run at a time; **Checkpoints locked** moves all runs to a shared
-step. **Aligned view** shows only the selected checkpoints, including interactive
-inspectors and synchronized videos. **Sim outputs** opens available simulation
-recordings. Output buttons provide direct selection; missing outputs remain explicit,
-and **Shared outputs** filters to panels available in every slot. Jacobian probes are
-hidden until **Show Jacobian archive** is enabled.
+A probe's outputs are navigated by axis: one chip row per axis parsed from the filenames
+(attention: Episode, Layer, Camera, View; sim: Scene, Sim episode, Camera; input swap
+examples: Kind, Band). Clicking a value keeps the other axes; a dashed chip has no output at
+the current combination and jumps to the nearest one. Flat probes show their figures as cards.
+**Wall** fans the camera axis out per run (every camera of the selected episode and layer,
+synced within a run). Each run card has its own checkpoint buttons and a through-training
+sparkline; **All runs at** moves every run to a common step; **Shared outputs** filters to
+panels present in every run. Missing outputs read "not recorded". Probes the suite no longer
+reads (spatial memorization, Jacobians, temporal attention, critic value, future visual) are
+hidden from the rail.
 
-**Copy link** preserves the view, selected probe/output, checkpoints, baseline, lock,
-and metric selection. Keyboard shortcuts: `j`/`k` switch probes, `n`/`p` switch outputs,
-and Space plays/pauses visible videos. Refresh reloads newly written probe output.
+**Copy link** preserves probe, output, checkpoints, baseline, filter and wall mode.
+Keyboard: `j`/`k` switch probes, `n`/`p` switch outputs, Space plays/pauses the stage.
+Refresh reloads newly written probe output.
 
 ## Remote validation on the DGX
 

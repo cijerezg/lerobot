@@ -278,7 +278,7 @@ def test_production_page_serves_its_bundled_assets(compare_url: str) -> None:
     with urlopen(compare_url) as response:
         page = response.read()
         assert response.headers.get_content_type() == "text/html"
-    assert b"Checkpoint Map" in page
+    assert b"Checkpoint compare" in page
     assert b"migration/" not in page and b"Design lab" not in page
     assets = re.findall(r'(?:src|href)="(/ui/compare-probes/[^"]+)"', page.decode())
     assert len(assets) == 4

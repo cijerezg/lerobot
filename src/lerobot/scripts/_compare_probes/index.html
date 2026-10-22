@@ -3,14 +3,43 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Checkpoint Map · Probe comparison</title>
+  <title>Checkpoint compare · Probe comparison</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/ui/compare-probes/evidence.css">
   <link rel="stylesheet" href="/ui/compare-probes/styles.css">
 </head>
 <body>
-  <main id="app" aria-live="off">Loading checkpoint evidence…</main>
-  <noscript>Enable JavaScript to compare probe outputs.</noscript>
-  <script src="/ui/compare-probes/model.js"></script>
-  <script src="/ui/compare-probes/app.js"></script>
+<header class="mast">
+  <div class="identity"><span class="mark"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="5.5" height="5.5" rx="1.2"/><rect x="11.5" y="3" width="5.5" height="5.5" rx="1.2"/><rect x="3" y="11.5" width="5.5" height="5.5" rx="1.2"/><rect x="11.5" y="11.5" width="5.5" height="5.5" rx="1.2"/></svg></span>Checkpoint <span class="identity-light">/ compare</span></div>
+  <div class="mast-note">Probe outputs across runs and checkpoints · J/K probe · N/P output · Space play</div>
+  <div class="utilities"><button id="copy-link">Copy link</button><button id="refresh">Refresh</button></div>
+</header>
+<div class="workspace">
+  <aside class="probe-rail">
+    <div class="rail-title">PROBES <span id="probe-count">—</span></div>
+    <label class="search-label"><input id="probe-filter" type="search" placeholder="Filter by name or group" autocomplete="off"></label>
+    <div id="probe-list"></div>
+  </aside>
+  <main class="work" id="app">
+    <div class="titlebar">
+      <div class="title-copy">
+        <div class="eyebrow" id="eyebrow"></div>
+        <h1 id="title">Loading…</h1>
+        <p id="claim"></p>
+      </div>
+      <div class="title-side" id="title-side"></div>
+    </div>
+    <section class="rails" id="rails" aria-label="Outputs"></section>
+    <section class="runs" id="runs" aria-label="Runs and checkpoints"></section>
+    <section class="stagebox">
+      <div class="stage-tools" id="stage-tools"></div>
+      <div class="stage" id="stage"></div>
+    </section>
+    <section class="metrics-section" id="metrics"></section>
+  </main>
+</div>
+<noscript>Enable JavaScript to compare probe outputs.</noscript>
+<script src="/ui/compare-probes/model.js"></script>
+<script src="/ui/compare-probes/app.js"></script>
 </body>
 </html>

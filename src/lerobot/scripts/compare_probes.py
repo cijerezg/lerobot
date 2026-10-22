@@ -21,10 +21,14 @@ Examples::
         outputs/run/validation/step_00000800 --label step-400 --label step-800
 
 The existing :mod:`lerobot.scripts.view_probes` remains the detailed single-run
-viewer. This companion defaults to a checkpoint map: columns are training steps
-and rows are runs. Aligned view compares the selected checkpoints side by side,
+viewer. This companion compares the selected checkpoint of each run side by side,
 matching figures by their exact probe-relative filename. With a fixed validation set, paths such as
-``ep0000_L14/overlay_img_top_summary.mp4`` identify the same sampled view.
+``ep0000_L14/overlay_img_top_summary.mp4`` identify the same sampled view. The page
+(``_compare_probes/app.js``) parses those filenames into axes, one chip row each, so a
+probe with hundreds of outputs (attention: episode x layer x camera x view) is navigated
+by clicking a value on one axis while the others stay put; a wall mode fans the camera
+axis out per run. Probes the suite no longer reads are hidden from the rail by the
+``HIDDEN`` pattern in ``app.js``; their output is still served.
 
 Probes that pick their examples by percentile break that assumption: the band is
 fixed but the frame it lands on is not, so the same figure is called
