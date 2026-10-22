@@ -9,8 +9,7 @@ the robot's SIGINT lands.
 
 from typing import Any
 
-from lerobot.robots.rebot_b601_sim import STOP_EPISODES
-from lerobot.robots.rebot_b601_sim.nail_task import SUCCESS
+from lerobot.robots.rebot_b601_sim import STOP_EPISODES, SUCCESS
 from lerobot.types import RobotAction
 
 from ..teleoperator import Teleoperator
@@ -62,7 +61,7 @@ class SimAutostartTeleop(Teleoperator):
         return {
             TeleopEvents.IS_INTERVENTION: False,
             TeleopEvents.TERMINATE_EPISODE: False,
-            TeleopEvents.SUCCESS: SUCCESS.is_set(),  # nail_task scorer: both clippers seated
+            TeleopEvents.SUCCESS: SUCCESS.is_set(),  # the scene's task scorer reached its last stage
             TeleopEvents.START_EPISODE: not STOP_EPISODES.is_set(),
             TeleopEvents.RERECORD_EPISODE: False,
         }

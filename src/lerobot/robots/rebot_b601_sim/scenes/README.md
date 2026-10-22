@@ -11,6 +11,35 @@ the calibration numbers and the rebuild order; the build scripts stay in that fo
 | ep1 | 10-16 ep 1 frame 0 | clippers 0.25-0.33 m from the case | tidy-up recording |
 | ep2 | 10-16 ep 2 frame 0 | case + clippers mirrored to +y (robot's right) | the only right-side layout |
 | ep3 | 10-16 ep 3 frame 0 | clippers 0.25-0.33 m from the case | tidy-up recording |
+| lift_bottle | ep0's standing bottle at clippers_only's case position | one bottle (`bottle`) | 2026-10-22, easy tier |
+| bottle_basket | ep0's standing bottle + measured brown basket (`assets/photoreal/basket`, woven mesh from 10-21 wrist frames, hollow collider) | `bottle`, `basket` | 2026-10-22, easy tier |
+| close_lid | ep2's hinged headphone case, base fixed, lid on a real hinge with a tray collider | `headphone_case`, `headphone_lid`, hinge `lid_hinge` (0 = open, closed = the nonzero end of its `range`) | 2026-10-22, easy tier |
+
+## Eval set, tiers and staged reward (2026-10-22)
+
+`tasks.py` is the registry: scene -> tier, task string, `eval_subtasks` script, scorer, stages. `run_sim_eval.sh` runs
+`LAYOUTS` (easy: clippers_only, bottle_basket, close_lid, lift_bottle; hard: ep0, ep3; ep1/ep2 stay on disk) with
+`episodes: 4` per layout and `control_time_s: 90.0` (`terminate_on_success` ends an episode at the last stage; the real
+nail episodes run 78-102 s, so 90 s truncates some). The episode reward is the cumulative value of the furthest stage
+reached (sequential walk, success reachable directly, never decreases); `sim_nail/index.json` carries `reward.<scene>`,
+`reward.easy`, `reward.hard` (tier mean over scenes of the per-scene episode mean) and `reward.mean` (mean of the tiers).
+
+| scene | tier | task (sheet id) |
+|---|---|---|
+| ep0, ep3 (ep1, ep2 on disk) | hard | Put the nail clippers in the clipper case (T085) |
+| clippers_only | easy | Put the nail clippers in the clipper case (T085) |
+| bottle_basket | easy | Put the bottle in the brown basket (no sheet entry; script after T072 steps 5-8 / T048 wording) |
+| close_lid | easy | Close the headphone case lid (T071) |
+| lift_bottle | easy | Lift the bottle (no sheet entry; script after T082/T089 + a lift step) |
+
+Stages (predicate = value); thresholds in `nail_task.py` / `easy_tasks.py`:
+
+| task | stages |
+|---|---|
+| nail (T085) | reach large 0.1, large held 0.2, large over the case 0.3, large seated 0.5, small held 0.6, small over the case 0.7, both seated 1.0 |
+| bottle_basket | midpoint within 6 cm 0.1, pinched 0.3, pinched and 3 cm up 0.5, 3 cm up over the basket footprint 0.8, inside the footprint below the rim and released 1.0 |
+| lift_bottle | midpoint within 6 cm 0.2, pinched 0.5, pinched and 5 cm up 0.8, pinched and 5 cm up for 2 s 1.0 |
+| close_lid | midpoint within 8 cm of the lid COM 0.1, hinge past 25 % of closed 0.4, past 75 % 0.7, within 8 % of closed with the gripper clear of case and lid 1.0 |
 
 Per layout: `scene.xml` (free bodies for the case and two clippers; recorded layouts also include clutter primitives, all within 0.50 m
 of the base; table collision plane; cameras `ext` = top webcam, `wrist` = D405 on gripper_end), `materials/`
@@ -27,8 +56,8 @@ kinematics of recorded joints misses the real object positions by 9-37 mm (the p
 visual meshes remain more detailed than the simplified collision geometry.
 
 
-Layout names are `clippers_only`, `ep0`, `ep1`, `ep2`, and `ep3`. These are simulation layout IDs;
-the source recording episode numbers in the table above remain unchanged.
+Layout names are the folder names above (simulation layout IDs); the source recording episode numbers in the
+table remain unchanged.
 
 ## Approved appearance update (2026-10-18)
 

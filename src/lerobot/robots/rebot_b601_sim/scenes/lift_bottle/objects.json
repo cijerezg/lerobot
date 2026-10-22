@@ -1,0 +1,50 @@
+{
+ "table": {
+  "x": [
+   -0.02406871889290285,
+   0.7175430191354957
+  ],
+  "y": [
+   -0.4808971977827673,
+   0.5297515685152803
+  ],
+  "corners_world": {
+   "far_left": [
+    -0.0469,
+    -0.4768,
+    0.0
+   ],
+   "near_left": [
+    0.7101,
+    -0.485,
+    0.0
+   ],
+   "near_right": [
+    0.725,
+    0.4289,
+    0.0
+   ],
+   "far_right": [
+    -0.0012,
+    0.6306,
+    0.0
+   ]
+  }
+ },
+ "m_per_px_at_table": 0.0021169847838423644,
+ "objects": {
+  "bottle": {
+   "xy": [
+    0.367,
+    0.0174
+   ],
+   "yaw_deg": 0.0,
+   "axis_length_m": null,
+   "center_px": null,
+   "kind": "cylinder standing",
+   "radius_m": 0.0275,
+   "height_m": 0.09,
+   "note": "ep0 bottle_yellow_cap_standing placed where clippers_only's clipper case sits (2026-10-22)"
+  }
+ }
+}

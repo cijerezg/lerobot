@@ -26,7 +26,8 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 
 from ..robot import Robot
 from .config_rebot_b601_sim import RebotB601SimRobotConfig
-from .nail_task import NailTaskScorer
+from .scorer import TaskScorer
+from .tasks import task_for
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class RebotB601Sim(Robot):
         # every frame from the env worker, so each thread owns its renderers.
         self._local = threading.local()
         self.episodes_done = 0
-        self.subtask_scorer: NailTaskScorer | None = None
+        self.subtask_scorer: TaskScorer | None = None
         self._backgrounds: dict[str, np.ndarray] = {}
 
     @property
@@ -131,7 +132,7 @@ class RebotB601Sim(Robot):
         free = [b for b in range(self.model.nbody) if self.model.body_jntnum[b] > 0 and self.model.jnt_type[self.model.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE]
         always = {self.model.body(n).id for c in self.config.cameras.values() for n in (c.render_always or [])}
         self._lazy_bodies = [b for b in free if b not in always] if always else []
-        self.subtask_scorer = NailTaskScorer(self.model, self.data, lambda: float(self._present_deg()[GRIPPER_IDX])) if self.config.auto_subtasks else None
+        self.subtask_scorer = task_for(self.config.scene).scorer(self.model, self.data, lambda: float(self._present_deg()[GRIPPER_IDX])) if self.config.auto_subtasks else None
         self._reset_scene()
         logger.info(f"{self} loaded {scene} (timestep {self.model.opt.timestep * 1e3:.2f} ms).")
 

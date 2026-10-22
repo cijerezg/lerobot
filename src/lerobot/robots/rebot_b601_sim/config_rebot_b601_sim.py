@@ -42,9 +42,8 @@ class MujocoCameraConfig(CameraConfig):
 class RebotB601SimRobotConfig(RobotConfig):
     """MuJoCo stand-in for the reBot B601-DM follower (lerobot/robots/rebot_b601_sim)."""
 
-    # A layout name under robots/rebot_b601_sim/scenes/<name>/scene.xml (clippers_only, ep0, ep1, ep2, ep3: the
-    # 2026-10-16 nail-clipper layouts, README there), or a path to an MJCF file that includes the DM robot and names
-    # the cameras below.
+    # A layout name under robots/rebot_b601_sim/scenes/<name>/scene.xml (the tasks.py registry; README there), or a
+    # path to such a file (it includes the DM robot and names the cameras below).
     scene: str
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # One send_action advances 1/fps s of physics in `substeps` steps (probes/action_trace_sim defaults).
@@ -57,7 +56,7 @@ class RebotB601SimRobotConfig(RobotConfig):
     pos_vel_velocity: list[float] | None = None
     # Episodes to run before the robot stops the process (SIGINT, the operator's Ctrl-C); None = unbounded.
     episodes: int | None = None
-    # Subtask cursor driven by the body poses (nail_task.NailTaskScorer) instead of the operator console.
+    # Subtask cursor and staged reward from the MuJoCo state (tasks.py scorer of the scene) instead of the operator console.
     auto_subtasks: bool = False
     park_pose: dict[str, float] = field(default_factory=lambda: dict(_FOLLOWER.park_pose))
     park_deg_per_s: float = _FOLLOWER.park_deg_per_s

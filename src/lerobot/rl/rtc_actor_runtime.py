@@ -1291,7 +1291,7 @@ def rtc_env_worker(
             transition = new_transition
             interaction_step += 1
             shared_state.current_step = interaction_step
-            if auto_subtasks is not None:  # sim: the body poses walk the subtask script (robots/rebot_b601_sim/nail_task.py)
+            if auto_subtasks is not None:  # sim: the body poses walk the subtask script (robots/rebot_b601_sim/tasks.py scorer)
                 want = auto_subtasks.poll()
                 if want != shared_state.subtask_cursor:
                     cursor = shared_state.advance_subtask(want - shared_state.subtask_cursor)
@@ -1313,7 +1313,7 @@ def rtc_env_worker(
                 if auto_subtasks is not None:
                     events_path = Path(cfg.output_dir) / "subtask_events.json"
                     past = json.loads(events_path.read_text()) if events_path.exists() else []
-                    events_path.write_text(json.dumps(past + [dict(episode=shared_state.episode_counter, success=bool(info_success), events=auto_subtasks.events)], indent=1))
+                    events_path.write_text(json.dumps(past + [dict(episode=shared_state.episode_counter, success=bool(info_success), reward=auto_subtasks.reward, stage=auto_subtasks.stage_name, events=auto_subtasks.events)], indent=1))
 
                 if standalone:
                     if shared_state.is_logging_episode:

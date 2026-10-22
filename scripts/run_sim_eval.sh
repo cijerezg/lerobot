@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Run the policy of one checkpoint in the MuJoCo nail-clipper sim on every layout, locally or on the Spark.
+# Run the policy of one checkpoint in the MuJoCo sim on every layout of the eval set, locally or on the Spark.
 # Sibling of run_probes.sh: same arguments, same output place, so chase_validate.sh / remote_validate.sh --sim
 # drive it on every new checkpoint.
 #
 #   lerobot/scripts/run_sim_eval.sh CHECKPOINT_PRETRAINED_MODEL [FRESH_OUTPUT_DIRECTORY] [CONFIG]
 #
-# Output: <run>/validation/step_<step>/sim_nail/<layout>/ per layout: subtask_events.json, logs/ and
-# videos/ep<N>_{top,wrist,wrist_depth}.mp4 per episode (record_inference_videos; rerun.rrd only with rerun_save),
-# plus sim_nail/summary.{json,md} and index.json over all of them, so view_probes / compare_probes show the videos
-# as the sim_nail probe. Env: LAYOUTS (default "clippers_only ep0 ep1 ep2 ep3"),
-# SIM_EVAL_ARGS (extra inference_async flags, e.g. "--env.robot.episodes=1 --env.processor.reset.control_time_s=20").
+# Output: <run>/validation/step_<step>/sim_nail/<layout>/ per layout: subtask_events.json (stage events, reward per
+# episode), logs/ and videos/ep<N>_{top,wrist,wrist_depth}.mp4 per episode (record_inference_videos; rerun.rrd only
+# with rerun_save), plus sim_nail/summary.{json,md} and index.json over all of them (reward per scene and tier), so
+# view_probes / compare_probes show them as the sim_nail probe. Each layout's task string and eval_subtasks script
+# come from the registry (robots/rebot_b601_sim/tasks.py) as CLI overrides of the config's nail-task values.
+# Env: LAYOUTS (default: the registry's LAYOUTS), SIM_EVAL_ARGS (extra inference_async flags, e.g.
+# "--env.robot.episodes=1 --env.processor.reset.control_time_s=20").
 set -uo pipefail
 sim_workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sim_workspace"
@@ -38,11 +40,13 @@ export PYTHONPATH="lerobot/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONSAFEPATH=1   # the Spark checkout has stray files under LeRobot/lerobot/ that shadow the package from the CWD
 export MUJOCO_GL=egl
 export PYTHONUNBUFFERED=1
+registry='from lerobot.robots.rebot_b601_sim.tasks import main; main()'
 failed=0
-for layout in ${LAYOUTS:-clippers_only ep0 ep1 ep2 ep3}; do
+for layout in ${LAYOUTS:-$(.venv/bin/python -c "$registry" layouts)}; do
   echo "=== $layout -> $sim_out/$layout"
+  mapfile -t task_overrides < <(.venv/bin/python -c "$registry" overrides "$layout")
   # The sim robot raises SIGINT after its last episode; the runtime treats it as the operator's Ctrl-C and exits 0.
-  # 1 h caps a stalled run (5 layouts x 3 episodes x 2 min nominal).
+  # 1 h caps a stalled run (4 episodes x 90 s + resets per layout).
   # shellcheck disable=SC2086
   timeout 3600 .venv/bin/python -m lerobot.rl.inference_async \
     --config_path="$sim_config" \
@@ -52,9 +56,10 @@ for layout in ${LAYOUTS:-clippers_only ep0 ep1 ep2 ep3}; do
     --job_name="sim-$layout" \
     --output_dir="$sim_out/$layout" \
     --aim.enable=false \
+    "${task_overrides[@]}" \
     ${SIM_EVAL_ARGS:-}
   rc=$?
   [[ $rc -eq 0 && -f "$sim_out/$layout/subtask_events.json" ]] || { echo "$layout failed (rc=$rc)" >&2; failed=1; }
 done
-.venv/bin/python lerobot/scripts/probes/sim_summary.py "$sim_out" --config "$sim_config" || failed=1
+.venv/bin/python lerobot/scripts/probes/sim_summary.py "$sim_out" || failed=1
 exit $failed

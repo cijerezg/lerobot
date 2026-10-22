@@ -701,6 +701,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         out["n_action_tokens"] = (
             None if out["discrete_token_ce"] is None else int(out["discrete_token_ce"].size)
         )
+        # The pack step's layout mask, cut to the probe's action width: which of the
+        # [chunk, action_dim] columns a normalized sample and the GT chunk share.
+        out["valid_dims"] = (~batch["action_dim_is_pad"][0, :action_dim]).cpu().numpy()
         return out
 
     def capture_attention(

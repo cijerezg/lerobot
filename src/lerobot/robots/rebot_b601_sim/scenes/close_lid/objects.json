@@ -1,0 +1,44 @@
+{
+ "source": "built by migration/sim_easy_envs_2026-10-22/close_lid/build_close_lid.py from clippers_only (table, cameras, lights, background) and the ep2 hinged headphone meshes; placement chosen like the clippers_only case, lid toward the robot as in the 2026-10-21 close-lid recordings",
+ "objects": {
+  "headphone_case": {
+   "xy": [
+    0.4189,
+    0.0174
+   ],
+   "z": 0.02,
+   "body_yaw_deg": 242.18,
+   "fixed": true,
+   "half_extents_m": [
+    0.092926,
+    0.075416,
+    0.02
+   ],
+   "note": "loaded base half, world-fixed body"
+  },
+  "headphone_lid": {
+   "xy": [
+    0.2611,
+    0.0174
+   ],
+   "joint": "lid_hinge",
+   "hinge_point_world": [
+    0.34,
+    0.0174,
+    0.0316
+   ],
+   "hinge_axis_world": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "open_rad": 0.0,
+   "closed_rad": 3.14159,
+   "half_extents_m": [
+    0.092926,
+    0.075416,
+    0.02
+   ]
+  }
+ }
+}

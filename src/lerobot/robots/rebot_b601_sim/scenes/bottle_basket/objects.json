@@ -1,0 +1,54 @@
+{
+ "task": "Pick the bottle up and put it in the brown basket.",
+ "objects": {
+  "bottle": {
+   "xy": [
+    0.38,
+    -0.08
+   ],
+   "z": 0.045,
+   "yaw_deg": -35.992911978159626,
+   "kind": "cylinder standing",
+   "radius_m": 0.0275,
+   "height_m": 0.09,
+   "free": true,
+   "visual": "ep0 bottle_yellow_cap_standing (nail_ep5 photoreal meshes, real yellow label crop); yaw keeps the label facing the ext camera"
+  },
+  "basket": {
+   "xy": [
+    0.41,
+    0.2
+   ],
+   "z": 0.0,
+   "yaw_deg": 0.0,
+   "kind": "open box, fixed body",
+   "outer_rim_m": [
+    0.3,
+    0.25
+   ],
+   "outer_base_m": [
+    0.28,
+    0.23
+   ],
+   "height_m": 0.21200000000000002,
+   "wall_m": 0.012,
+   "floor_top_m": 0.012,
+   "inner_m": [
+    0.266,
+    0.216,
+    0.2
+   ],
+   "free": false,
+   "collision": "floor box + four wall boxes (group 3), hollow",
+   "visual": "assets/photoreal/basket: woven walls (relief + real seagrass crops), rolled rim, floor"
+  }
+ },
+ "separation_m": 0.2816025568065745,
+ "radius_from_base_m": {
+  "bottle": 0.388329756778952,
+  "basket_centre": 0.4561797891182817
+ },
+ "basket_measurement": "migration/sim_easy_envs_2026-10-22/basket_reference/basket_depth_measurement.json (wrist D405 depth of the 2026-10-21 teleop + sim FK camera pose)",
+ "camera": "ext/wrist as clippers_only (same table, background_top.png, lights)",
+ "source": "migration/sim_easy_envs_2026-10-22/bottle_basket/build_basket.py"
+}

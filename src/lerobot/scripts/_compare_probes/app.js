@@ -203,6 +203,71 @@ function renderStage(lay){
  host.querySelectorAll('[data-wall-all]').forEach(b=>b.onclick=()=>host.querySelectorAll('.wall-run').forEach(s=>s.wallPlayback?.[b.dataset.wallAll]()));
 }
 
+/* ---------- radar (Objective) ----------
+   One polygon per run at its selected checkpoint. Each axis is min-max scaled over the compared
+   runs and flipped so outward is always good; a run missing a value leaves a gap, not a zero.
+   Values come from the objective index.json metrics and, when a sim index exists at the same
+   step, the sim_nail reward metrics. Axes nobody has are omitted and listed under the chart. */
+const RADAR_AXES=[
+ {probe:'objective',key:'loss_flow_joint.val',label:'flow loss (val)',good:'low'},
+ {probe:'objective',key:'loss_discrete_ce.val',label:'FAST CE (val)',good:'low'},
+ {probe:'objective',key:'loss_discrete_ce.train',label:'FAST CE (train)',good:'low'},
+ {probe:'objective',key:'offset.val',label:'offset',good:'low'},
+ {probe:'objective',key:'shape.val',label:'shape',good:'low'},
+ {probe:'objective',key:'collapse.val',label:'spread (collapse)',good:'high'},
+ {probe:'objective',key:'depth_event_reference.close.val.captured',label:'close captured',good:'high'},
+ {probe:'objective',key:'depth_event_reference.open.val.captured',label:'open captured',good:'high'},
+ {probe:'sim_nail',key:'reward.easy',label:'sim reward (easy)',good:'high'},
+ {probe:'sim_nail',key:'reward.hard',label:'sim reward (hard)',good:'high'}
+];
+// Run identity is the run colour plus a marker shape and a dash: the shell's run 3 and 4 accents
+// sit close together, so colour alone does not separate them.
+const MARKERS=[
+ (x,y,r)=>`<circle cx="${x}" cy="${y}" r="${r}"/>`,
+ (x,y,r)=>`<rect x="${x-r}" y="${y-r}" width="${2*r}" height="${2*r}"/>`,
+ (x,y,r)=>`<path d="M${x} ${y-r*1.3}L${x+r*1.3} ${y}L${x} ${y+r*1.3}L${x-r*1.3} ${y}Z"/>`,
+ (x,y,r)=>`<path d="M${x} ${y-r*1.3}L${x+r*1.25} ${y+r}L${x-r*1.25} ${y}Z"/>`
+];
+const DASHES=['','','7 4','2 4'];
+function radarRows(){
+ const n=L.data.runs.length;
+ return RADAR_AXES.map(a=>{
+  const m=L.metrics(a.probe).find(x=>x.key===a.key);
+  const values=L.data.runs.map((_,i)=>{const v=m?.cells[i]?.value;return finite(v)?v:null;});
+  const present=values.filter(v=>v!==null),lo=Math.min(...present),hi=Math.max(...present);
+  const scaled=values.map(v=>v===null?null:hi===lo?0.5:(a.good==='low'?hi-v:v-lo)/(hi-lo));
+  return Object.assign({},a,{values,scaled,fmt:m?.fmt??4,present:present.length,n});
+ });
+}
+function renderRadar(){
+ const host=document.getElementById('radar');
+ if(L.probeId!=='objective'){host.hidden=true;host.innerHTML='';return;}
+ host.hidden=false;
+ const rows=radarRows(),axes=rows.filter(r=>r.present),omitted=rows.filter(r=>!r.present);
+ if(!axes.length){host.innerHTML='<div class="radar-head"><strong>Objective radar</strong><span>No objective metrics at the selected checkpoints.</span></div>';return;}
+ const W=560,H=470,cx=W/2,cy=H/2+6,R=150,n=axes.length,runs=L.data.runs;
+ const angle=j=>-Math.PI/2+j*2*Math.PI/n;
+ const pos=(j,s)=>[cx+Math.cos(angle(j))*R*s,cy+Math.sin(angle(j))*R*s];
+ const pt=p=>`${p[0].toFixed(1)} ${p[1].toFixed(1)}`;
+ const rings=[.25,.5,.75,1].map(s=>`<polygon class="radar-ring" points="${axes.map((_,j)=>pt(pos(j,s))).join(' ')}"/>`).join('');
+ const spokes=axes.map((_,j)=>{const [x,y]=pos(j,1);return `<line class="radar-spoke" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`;}).join('');
+ const labels=axes.map((a,j)=>{const [x,y]=pos(j,1.16),c=Math.cos(angle(j));const anchor=Math.abs(c)<.2?'middle':c>0?'start':'end';return `<text class="radar-label" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle">${h(a.label)}</text>`;}).join('');
+ const polygons=runs.map((r,i)=>{
+  const pts=axes.map((a,j)=>a.scaled[i]===null?null:pos(j,a.scaled[i]));
+  let d='',open=false;pts.forEach(p=>{if(!p){open=false;return;}d+=(open?'L':'M')+pt(p);open=true;});
+  const complete=pts.every(Boolean);if(complete)d+='Z';else if(pts[0]&&pts.at(-1))d+='L'+pt(pts[0]);
+  const marks=axes.map((a,j)=>pts[j]?`<g class="radar-mark">${MARKERS[i](pts[j][0],pts[j][1],4.5)}<title>${h(r.run.label)} · step ${L.step(i)}\n${h(a.label)}: ${L.format(a.values[i],a.fmt)}${a.good==='low'?' (lower is better)':' (higher is better)'}</title></g>`:'').join('');
+  return `<g class="radar-run" data-run="${i}">${complete?`<path class="radar-fill" d="${d}"/>`:''}<path class="radar-line" d="${d}"${DASHES[i]?` stroke-dasharray="${DASHES[i]}"`:''}/>${marks}</g>`;
+ }).join('');
+ const legend=runs.map((r,i)=>`<span class="radar-key" data-run="${i}"><svg viewBox="0 0 26 14" aria-hidden="true"><path class="radar-line" d="M1 7H25"${DASHES[i]?` stroke-dasharray="${DASHES[i]}"`:''}/><g class="radar-mark">${MARKERS[i](13,7,4)}</g></svg>${h(r.run.label)} <small>step ${L.step(i)}</small></span>`).join('');
+ const table=`<table><thead><tr><th>Axis</th>${runs.map((r,i)=>`<th>${h(r.run.label)}${i===L.baseline?' <small>baseline</small>':''}</th>`).join('')}</tr></thead><tbody>${axes.map(a=>{
+  const best=a.good==='low'?Math.min(...a.values.filter(finite)):Math.max(...a.values.filter(finite));
+  return `<tr><th>${h(a.label)}<small>${a.good==='low'?'↓ lower is better · outward = low':'↑ higher is better · outward = high'}</small></th>${a.values.map(v=>`<td class="${finite(v)&&v===best?'evidence-best':''}">${v===null?'—':L.format(v,a.fmt)}</td>`).join('')}</tr>`;
+ }).join('')}</tbody></table>`;
+ const note=omitted.length?`<p class="radar-note">Omitted (no value in any compared checkpoint): ${omitted.map(a=>`${h(a.label)} <code>${h(a.probe)}/${h(a.key)}</code>`).join(', ')}.</p>`:'';
+ host.innerHTML=`<div class="radar-head"><strong>Objective radar</strong><span>${n} axes · min-max over the ${runs.length} compared checkpoint${runs.length===1?'':'s'} · outward is better on every axis · hover a marker for the raw value</span></div><div class="radar-body"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Objective radar">${rings}${spokes}${labels}${polygons}</svg><div class="radar-side"><div class="radar-legend">${legend}</div><div class="evidence-metrics radar-table">${table}</div>${note}</div></div>`;
+}
+
 /* ---------- metrics ---------- */
 function renderMetrics(){
  const host=document.getElementById('metrics'),all=L.metrics(),primary=all.filter(m=>m.primary),rows=L.allMetrics||!primary.length?all:primary;
@@ -215,7 +280,7 @@ function render(){
  if(!L.data)return;
  wall=hashParam('wall')==='1';
  const lay=layout();
- renderRail();renderTitle(lay);renderRails(lay);renderRuns();renderTools(lay);renderStage(lay);renderMetrics();
+ renderRail();renderTitle(lay);renderRails(lay);renderRuns();renderRadar();renderTools(lay);renderStage(lay);renderMetrics();
 }
 
 document.getElementById('probe-filter').oninput=e=>{railFilter=e.target.value;renderRail();};

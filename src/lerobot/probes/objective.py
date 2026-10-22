@@ -25,6 +25,29 @@ its training sample does not reproduce the trainer's weighted dataset mixture.
 Compare val and train under this probe regime, and compare checkpoints only with
 matching data, normalization, and objective weights.
 
+Three sample-fit numbers sit beside the losses. Every measured frame also draws
+``SAMPLE_COUNT`` action-expert chunks (seeded ``random_seed + global_idx + k``, one
+batched forward, normalized space, valid joints and unpadded chunk steps only), and
+an orthonormal DCT along the chunk axis splits the error of their mean against the
+GT chunk into a DC band and the bands above it. Energies are pooled over joints
+before any ratio is taken.
+
+``offset`` is the DC-band energy of (sample mean - GT) over the DC-band energy of
+(hold - GT), where hold repeats the current state across the chunk. 0 is exact; 1 is
+no better than holding still. It reads where the chunk is placed, not its motion.
+Both ``offset`` and ``shape`` headlines pool the energies over frames before dividing
+(bootstrap SEM); the per-frame ratios are kept for the distributions only.
+
+``shape`` is the energy of (sample mean - GT) in every band above DC over the GT
+chunk's own energy in those bands (hold has no motion, so that is the hold error).
+0 is exact; 1 is no better than a motionless chunk. It reads the motion profile
+independently of where the chunk sits.
+
+``collapse`` is the unbiased std over the samples, per joint per chunk step in
+normalized units, averaged over valid joints and steps. It is descriptive: low
+collapse with high offset or shape is a distribution that has collapsed onto a
+wrong chunk, not a confident fit.
+
 Registered probe: enable with ``probe_parameters.enable_objective``.
 """
 
@@ -47,6 +70,7 @@ from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.probes.action_trace_probe import _orthonormal_dct_matrix
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
@@ -69,6 +93,9 @@ from lerobot.utils.utils import init_logging
 
 VAL_COLOR = "#E63946"
 TRAIN_COLOR = "#457B9D"
+
+SAMPLE_COUNT = 8
+SAMPLE_FIT_KEYS = ("offset", "shape", "collapse")
 
 AUXILIARY_LOSS_KEYS = (
     "loss_action_aux",
@@ -156,8 +183,58 @@ def gap_z(val: np.ndarray, train: np.ndarray) -> float:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def sample_fit(samples, gt, hold, valid_dims, n_steps: int) -> dict:
+    """``offset``, ``shape`` and ``collapse`` for one frame (module docstring).
+
+    ``samples`` is ``[K, T, D]``, ``gt`` and ``hold`` are ``[T, D]``, all in normalized
+    action space; ``valid_dims`` is a bool ``[D]`` mask and ``n_steps`` the unpadded
+    chunk length. Band energies are pooled over joints before the ratio, so a static
+    joint cannot blow the number up. A chunk with no GT motion has no ``shape``.
+    """
+    keep = torch.as_tensor(valid_dims, dtype=torch.bool)
+    samples = torch.as_tensor(samples)[:, :n_steps, keep].double()
+    gt = torch.as_tensor(gt)[:n_steps, keep].double()
+    hold = torch.as_tensor(hold)[:n_steps, keep].double()
+    dct = _orthonormal_dct_matrix(n_steps)
+    mean_energy = (dct @ (samples.mean(dim=0) - gt)).square().sum(dim=1)
+    hold_energy = (dct @ (hold - gt)).square().sum(dim=1)
+    dc = float(hold_energy[0])
+    motion = float(hold_energy[1:].sum())
+    # Numerator and denominator energies are kept per frame: the headline pools them
+    # over frames before dividing (pooled_ratio), so a near-motionless GT chunk, whose
+    # own ratio is huge, weighs in by its energy and not by its ratio.
+    return {
+        "offset": float(mean_energy[0]) / dc if dc > 0 else None,
+        "shape": float(mean_energy[1:].sum()) / motion if motion > 0 else None,
+        "collapse": float(samples.std(dim=0).mean()),
+        "offset_num": float(mean_energy[0]),
+        "offset_den": dc,
+        "shape_num": float(mean_energy[1:].sum()),
+        "shape_den": motion,
+    }
+
+
+def draw_samples(adapter, frame: dict, seed: int, k: int) -> torch.Tensor:
+    """``k`` flow samples of one frame in one batched forward, normalized ``[k, T, D]``.
+
+    Sample ``i`` draws its noise from ``seed + i``; the prompt is the deployment prompt
+    ``training_losses`` scores, with the discrete head left out of the loop.
+    """
+    noise = torch.cat([adapter.flow_noise_like(1, seed + i) for i in range(k)], dim=0)
+    _, samples = adapter.predict_action_chunk_batch(
+        frame["obs"],
+        frame["task"],
+        [frame["subtask"] or None] * k,
+        metadatas=[frame["metadata"]] * k,
+        noise=noise,
+        inference_action_mode="continuous",
+    )
+    return samples
+
+
 def measure_split(adapter, datasets, cfg, split: str, timesteps: np.ndarray) -> list[dict]:
-    """One ``training_losses`` forward per sampled frame, over every dataset in the split."""
+    """One ``training_losses`` forward plus one ``SAMPLE_COUNT``-wide sampling forward
+    per sampled frame, over every dataset in the split."""
     p = cfg.probe_parameters
     chunk_size = int(cfg.policy.chunk_size)
     stride = probe_image_stride(cfg)
@@ -172,21 +249,35 @@ def measure_split(adapter, datasets, cfg, split: str, timesteps: np.ndarray) -> 
         samples = sample_episodes_evenly(dataset, n_frames, per_source, p.random_seed, stride)
         for ep_idx, fr_idx, global_idx in samples:
             frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
+            seed = int(p.random_seed) + int(global_idx)
             losses = adapter.training_losses(
                 frame,
                 flow_timesteps=grid,
                 # Same frame -> same noise at every checkpoint, so a difference between
                 # two checkpoints is the model changing and nothing else.
-                flow_noise_seed=int(p.random_seed) + int(global_idx),
+                flow_noise_seed=seed,
                 dropout=False,
             )
             if "loss_flow_joint" not in losses:
                 losses["loss_flow_joint"] = losses.get("loss_hand_joint")
                 if losses["loss_flow_joint"] is None:
                     losses["loss_flow_joint"] = losses.get("loss_flow")
+            # GT past the episode end is the last action repeated (get_frame_data);
+            # those steps are not scored.
+            n_steps = min(chunk_size, episode_lengths[ep_idx] - int(fr_idx))
+            state = frame["state"]
+            hold = state[: frame["gt_actions"].shape[-1]].unsqueeze(0).repeat(chunk_size, 1)
+            fit = sample_fit(
+                draw_samples(adapter, frame, seed, SAMPLE_COUNT),
+                adapter.normalize_gt_actions(frame["gt_actions"], state),
+                adapter.normalize_gt_actions(hold, state),
+                losses["valid_dims"],
+                n_steps,
+            )
             rows.append(
                 {
                     **losses,
+                    **fit,
                     # Kept per frame, not pooled from the sidecar, so the floor and
                     # ceiling describe exactly the frames the BCE was measured on.
                     **{
@@ -317,6 +408,31 @@ def group_mean(rows: list[dict], group_key: str, value_key: str) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def pooled_ratio(val_rows: list[dict], train_rows: list[dict], key: str, n_boot: int = 500) -> dict:
+    """``compare`` for a ratio metric: sum of numerators over sum of denominators per split.
+
+    The SEM is a bootstrap over frames. Frames whose own ratio is undefined (zero
+    denominator) still contribute their numerator energy.
+    """
+    entry: dict = {}
+    for split, rows in (("val", val_rows), ("train", train_rows)):
+        num, den = column(rows, f"{key}_num"), column(rows, f"{key}_den")
+        if num.size == 0:
+            continue
+        rng = np.random.RandomState(0)
+        draws = rng.randint(0, num.size, size=(n_boot, num.size))
+        boots = num[draws].sum(axis=1) / den[draws].sum(axis=1)
+        entry[split] = float(num.sum() / den.sum())
+        entry[f"{split}_sem"] = float(boots.std(ddof=1))
+        entry[f"{split}_n"] = int(num.size)
+    if "val" not in entry or "train" not in entry:
+        return entry
+    entry["gap"] = entry["val"] - entry["train"]
+    entry["ratio"] = entry["val"] / entry["train"] if entry["train"] != 0 else None
+    entry["z"] = entry["gap"] / float(np.sqrt(entry["val_sem"] ** 2 + entry["train_sem"] ** 2))
+    return entry
+
+
 def compare(val_rows: list[dict], train_rows: list[dict], key: str) -> dict:
     """Val and train means for one loss, with the standard errors and the gap."""
     val, train = column(val_rows, key), column(train_rows, key)
@@ -410,6 +526,9 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
         "loss_total": compare(val_rows, train_rows, "loss_total"),
     }
     summary.update({key: compare(val_rows, train_rows, key) for key in AUXILIARY_LOSS_KEYS})
+    summary["offset"] = pooled_ratio(val_rows, train_rows, "offset")
+    summary["shape"] = pooled_ratio(val_rows, train_rows, "shape")
+    summary["collapse"] = compare(val_rows, train_rows, "collapse")
 
     splits = (("val", val_rows), ("train", train_rows))
 
@@ -665,6 +784,29 @@ def render_flow_components(summary, output_dir: str) -> None:
         _pair_points(ax, summary[key], label, "loss")
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "flow_components.png"), bbox_inches="tight", dpi=125)
+    plt.close(fig)
+
+
+def render_sample_fit(summary, output_dir: str) -> None:
+    fig, axes = plt.subplots(1, 3, figsize=(16.5, 4.4))
+    for ax, (key, title, ylabel) in zip(
+        axes,
+        (
+            ("offset", "Offset — DC error / hold DC error", "ratio (0 exact, 1 hold)"),
+            ("shape", "Shape — non-DC error / GT motion energy", "ratio (0 exact, 1 motionless)"),
+            ("collapse", f"Collapse — std over {SAMPLE_COUNT} samples", "normalized units"),
+        ),
+        strict=True,
+    ):
+        _pair_points(ax, summary[key], title, ylabel)
+    fig.suptitle(
+        f"Sample fit — mean of {SAMPLE_COUNT} flow samples against the GT chunk, "
+        "valid joints and unpadded steps only",
+        fontsize=12,
+        fontweight="bold",
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    fig.savefig(os.path.join(output_dir, "sample_fit.png"), bbox_inches="tight", dpi=125)
     plt.close(fig)
 
 
@@ -1026,6 +1168,7 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
 
     render_objective(summary, val_rows, train_rows, output_dir)
     render_flow_components(summary, output_dir)
+    render_sample_fit(summary, output_dir)
     render_flow(summary, output_dir)
     render_discrete(summary, val_rows, train_rows, output_dir)
     render_breakdown(summary, val_rows, output_dir)
@@ -1042,6 +1185,9 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
         ("FAST CE", "loss_discrete_ce"),
         ("FAST aux", "loss_discrete_aux"),
         ("depth event", "loss_depth_event"),
+        ("offset", "offset"),
+        ("shape", "shape"),
+        ("collapse", "collapse"),
     ):
         entry = summary[key]
         if not entry:
@@ -1090,6 +1236,10 @@ def aim_scalars(summary: dict) -> dict:
     for split, entry in (summary.get("discrete") or {}).items():
         if split == "val":
             scalars["objective_val_fast_top1"] = entry["top1"]
+    for key in SAMPLE_FIT_KEYS:
+        entry = summary.get(key) or {}
+        if entry.get("val") is not None:
+            scalars[f"objective_val_{key}"] = float(entry["val"])
     # Fraction of the learnable BCE range each depth head holds — the raw BCE moves
     # too little against its own sampling noise to be worth a Aim panel.
     for head, splits in (summary.get("depth_event_reference") or {}).items():
@@ -1221,6 +1371,44 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 "frame-to-frame spread alone." + provisional,
             ),
             Metric(
+                "loss_discrete_ce.train",
+                "FAST cross-entropy (train)",
+                good="low",
+                fmt=4,
+                note="The same CE on the matched training sample; the radar reads it "
+                "beside the val value.",
+            ),
+            *[
+                Metric(
+                    f"{key}.val", label, good=good, fmt=3, baseline=baseline, primary=True,
+                    note=note, trend=True,
+                )
+                for key, label, good, baseline, note in (
+                    ("offset", "Sample offset (val)", "low", 0.0,
+                     f"DC-band energy of (mean of {SAMPLE_COUNT} flow samples $-$ GT) over the "
+                     "DC-band energy of (hold $-$ GT), orthonormal DCT along the chunk, energies "
+                     "pooled over valid joints and over frames. 0 exact, 1 no better than holding still."),
+                    ("shape", "Sample shape (val)", "low", 0.0,
+                     "Energy of (sample mean $-$ GT) in every DCT band above DC over the GT "
+                     "chunk's energy in those bands (the hold error, since hold has no motion), "
+                     "pooled over frames. 0 exact, 1 no better than a motionless chunk."),
+                    ("collapse", "Sample collapse (val)", "none", None,
+                     f"Unbiased std over the {SAMPLE_COUNT} samples per joint per step, "
+                     "normalized units, mean over valid joints and steps. Descriptive: low "
+                     "collapse with high offset or shape is a collapsed distribution on a "
+                     "wrong chunk, not a confident fit."),
+                )
+            ],
+            *[
+                Metric(
+                    f"{key}.z", f"Sample {key} gap (standard errors)",
+                    good="none" if key == "collapse" else "low", fmt=1, baseline=0.0,
+                    note=f"Held-out minus training {key} in pooled SEM units"
+                    + (" (bootstrap over frames)." if key != "collapse" else ".") + provisional,
+                )
+                for key in SAMPLE_FIT_KEYS
+            ],
+            Metric(
                 "discrete.val.top1",
                 "FAST top-1 accuracy (val)",
                 good="high",
@@ -1291,6 +1479,18 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 "frame, area-normalised so the two splits compare despite unequal $n$.",
                 primary=True,
                 refs=["action_trace"],
+            ),
+            Panel(
+                "sample_fit.png",
+                "Sample fit: offset, shape and collapse",
+                f"Mean of {SAMPLE_COUNT} seeded flow samples per frame against the GT chunk, "
+                "split by an orthonormal DCT along the chunk into the DC band (**left**, "
+                "placement; divided by the hold chunk's DC error) and the bands above it "
+                "(**middle**, motion profile; divided by the GT motion energy). 0 exact, 1 "
+                "no better than holding still. **Right** — std across the samples: read it "
+                "against the two ratios, since a tight fan on a wrong chunk is collapse, "
+                "not confidence. Train/val means with SEM.",
+                primary=True,
             ),
             Panel(
                 "action_exemplars.html",

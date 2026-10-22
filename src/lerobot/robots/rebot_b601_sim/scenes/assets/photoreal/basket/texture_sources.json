@@ -1,0 +1,53 @@
+{
+ "weave": {
+  "source": "outputs/rebot_teleop_2026-10-21-cut-v1 wrist ep0 frame 1020 (outer wall, frontal), metric size from the depth sidecar",
+  "quad": [
+   [
+    52,
+    110
+   ],
+   [
+    352,
+    13
+   ],
+   [
+    377,
+    108
+   ],
+   [
+    77,
+    205
+   ]
+  ],
+  "patch_m": [
+   0.16221543729564586,
+   0.17090693496921947
+  ],
+  "mean_bgr": [
+   17.70169219367589,
+   33.450909914361,
+   45.43166996047431
+  ]
+ },
+ "rim": {
+  "source": "wrist ep0 frame 6030 near rim",
+  "quad": [
+   [
+    130,
+    282
+   ],
+   [
+    600,
+    278
+   ],
+   [
+    600,
+    326
+   ],
+   [
+    130,
+    330
+   ]
+  ]
+ }
+}

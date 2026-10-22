@@ -212,3 +212,13 @@ output directory. `--inv_distance_matched --inv_analyze_only` renders saved resu
 fixed endpoints and candidate-distance audit; `matched_*.npz` stores all 61 unique
 targets per anchor, their recovered inputs, and actual production reconstructions.
 Matching and geometry use the same 210 valid normalized coordinates.
+
+## Objective probe: sample-fit metrics
+
+Every frame the objective probe scores also draws 8 seeded flow samples in one batched
+forward (`probes/objective.py`, `sample_fit`); valid joints and unpadded chunk steps only,
+energies pooled over joints before any ratio.
+
+- `offset` — DC-band energy (orthonormal DCT along the chunk) of (sample mean - GT) over the DC-band energy of (hold - GT); 0 exact, 1 no better than holding still.
+- `shape` — energy of (sample mean - GT) in every band above DC over the GT chunk's energy in those bands; 0 exact, 1 no better than a motionless chunk.
+- `collapse` — unbiased std over the 8 samples per joint per step in normalized units, mean over valid joints and steps; descriptive, and low collapse beside high offset or shape is a collapsed distribution.
