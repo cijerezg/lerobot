@@ -217,8 +217,8 @@ Matching and geometry use the same 210 valid normalized coordinates.
 
 Every frame the objective probe scores also draws 8 seeded flow samples in one batched
 forward (`probes/objective.py`, `sample_fit`); valid joints and unpadded chunk steps only,
-energies pooled over joints before any ratio.
+MSE per step and valid joint in normalized action units.
 
-- `offset` — DC-band energy (orthonormal DCT along the chunk) of (sample mean - GT) over the DC-band energy of (hold - GT); 0 exact, 1 no better than holding still.
-- `shape` — energy of (sample mean - GT) in every band above DC over the GT chunk's energy in those bands; 0 exact, 1 no better than a motionless chunk.
+- `offset` — DC-band MSE (orthonormal DCT along the chunk) of (sample mean - GT): the squared error of the chunk's mean position.
+- `shape` — MSE of (sample mean - GT) in every band above DC: the squared error of the motion profile. `offset + shape` = the sample mean's chunk MSE. `hold_offset` / `hold_shape` are the same split for the hold-still chunk, a reference level.
 - `collapse` — unbiased std over the 8 samples per joint per step in normalized units, mean over valid joints and steps; descriptive, and low collapse beside high offset or shape is a collapsed distribution.

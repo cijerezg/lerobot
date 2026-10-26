@@ -1,0 +1,6 @@
+object,image,clause,orig_image
+large_clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03_early.png,grasp the large nail clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03.png
+large_clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03_early.png,grasp the large nail clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03.png
+large_clipper,frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04.png
+large_clipper,frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24.png
+large_clipper,frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11.png

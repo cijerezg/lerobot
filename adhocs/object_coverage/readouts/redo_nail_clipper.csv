@@ -1,0 +1,14 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep001_seg04_early.png,C3,165,,,C3,unsure,"likely sitting in the clipper case slot; gripper hovering over case"
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep002_seg03_early.png,D2,15,,,C3,unsure,"small silver piece at C2/D2 line next to gripper finger; case under wrist"
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep007_seg08_early.png,C3,,,,C3,unsure,"occluded; gripper over case at C3, clipper not visible"
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep001_seg09_early.png,B3,,,,B3,unsure,"occluded; gripper over case at B3"
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep002_seg08_early.png,,,,,A1,unsure,"not found; gripper at A4/B4 holding pill bottle"
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg09_early.png,B2,120,,,B2,unsure,small silver piece just right of the case under the gripper
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg28_early.png,D3,,,,B2,unsure,"occluded; gripper over headphone case at D3"
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep004_seg02_early.png,D2,90,,,C3,sure,loose on table near D2/D3 line
+frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg03_early.png,B2,,,,B2,unsure,"occluded; gripper over case at B2"
+frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg14_early.png,A2,90,,,B2,unsure,"small silver piece at A2 bottom beside gripper; case mostly under gripper"
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep000_seg12_early.png,B1,90,,,A2,sure,on B1/B2 line just right of case
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep001_seg03_early.png,A2,,,,A2,unsure,"occluded; gripper over case at A2/B2"
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep002_seg03_early.png,D2,,,,D2,unsure,"occluded; gripper over C3/D2, a clipper sits in the case at D2"

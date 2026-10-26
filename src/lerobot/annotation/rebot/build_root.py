@@ -207,6 +207,7 @@ def build(rows, destination, split="train", annotator=None):
                         index=df["index"].values,
                         is_intervention=o.is_intervention.values,
                         recorded_subtask=next((o[c].values for c in ("subtask", "recorded_subtask") if c in o), [""] * n),
+                        policy_index=o.policy_index.values if "policy_index" in o else np.full(n, -1, dtype=np.int64),
                     )
                 )
             )

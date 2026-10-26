@@ -21,8 +21,13 @@ const RULES={
   extraLabel:f=>`Also for episode ${f.Episode}, layer ${f.Layer}`,
   wall:{axis:'Camera',columns:2}
  },
+ sim:{
+  parse(key){const m=key.match(/^([^/]+)\/videos\/ep(\d+)_(top|wrist|wrist_depth)\.mp4$/);if(!m)return null;return {facets:{Scene:m[1],'Sim episode':m[2],Camera:m[3]}};},
+  order:{Camera:['top','wrist','wrist_depth']},
+  wall:{axis:'Camera',columns:3}
+ },
  sim_nail:{
-  parse(key){const m=key.match(/^ep(\d+)\/videos\/ep(\d+)_(top|wrist|wrist_depth)\.mp4$/);if(!m)return null;return {facets:{Scene:'ep'+m[1],'Sim episode':m[2],Camera:m[3]}};},
+  parse(key){const m=key.match(/^([^/]+)\/videos\/ep(\d+)_(top|wrist|wrist_depth)\.mp4$/);if(!m)return null;return {facets:{Scene:m[1],'Sim episode':m[2],Camera:m[3]}};},
   order:{Camera:['top','wrist','wrist_depth']},
   wall:{axis:'Camera',columns:3}
  },
@@ -207,65 +212,243 @@ function renderStage(lay){
    One polygon per run at its selected checkpoint. Each axis is min-max scaled over the compared
    runs and flipped so outward is always good; a run missing a value leaves a gap, not a zero.
    Values come from the objective index.json metrics and, when a sim index exists at the same
-   step, the sim_nail reward metrics. Axes nobody has are omitted and listed under the chart. */
+   step, the sim reward metrics. Axes nobody has are omitted and listed under the chart. */
 const RADAR_AXES=[
  {probe:'objective',key:'loss_flow_joint.val',label:'flow loss (val)',good:'low'},
  {probe:'objective',key:'loss_discrete_ce.val',label:'FAST CE (val)',good:'low'},
  {probe:'objective',key:'loss_discrete_ce.train',label:'FAST CE (train)',good:'low'},
- {probe:'objective',key:'offset.val',label:'offset',good:'low'},
- {probe:'objective',key:'shape.val',label:'shape',good:'low'},
+ {probe:'objective',key:'offset.val',label:'offset MSE (val)',good:'low'},
+ {probe:'objective',key:'shape.val',label:'shape MSE (val)',good:'low'},
  {probe:'objective',key:'collapse.val',label:'spread (collapse)',good:'high'},
  {probe:'objective',key:'depth_event_reference.close.val.captured',label:'close captured',good:'high'},
  {probe:'objective',key:'depth_event_reference.open.val.captured',label:'open captured',good:'high'},
- {probe:'sim_nail',key:'reward.easy',label:'sim reward (easy)',good:'high'},
- {probe:'sim_nail',key:'reward.hard',label:'sim reward (hard)',good:'high'}
+ {probe:'sim',key:'reward.easy',label:'sim reward (easy)',good:'high'},
+ {probe:'sim',key:'reward.hard',label:'sim reward (hard)',good:'high'}
 ];
-// Run identity is the run colour plus a marker shape and a dash: the shell's run 3 and 4 accents
-// sit close together, so colour alone does not separate them.
+const RADAR_WINDOWS=[1.25,1.5,2,4];
+const RADAR_MAX=8;
+const radarWindow=()=>RADAR_WINDOWS.includes(Number(hashParam('radar_r')))?Number(hashParam('radar_r')):2;
+const RADAR_DIFF_AXES=/captured$|^reward\./;
+// Within one run the polygons of different steps share the run's colour family. The dash is the
+// primary step cue (rank 0 solid, 1 dashed, 2 dotted, 3 dash-dot, ...), the marker shape the
+// secondary one, and the lightness steps toward white with the distance from the selected step,
+// which is drawn at full colour. Rank = the step's position among that run's toggled steps.
 const MARKERS=[
  (x,y,r)=>`<circle cx="${x}" cy="${y}" r="${r}"/>`,
  (x,y,r)=>`<rect x="${x-r}" y="${y-r}" width="${2*r}" height="${2*r}"/>`,
  (x,y,r)=>`<path d="M${x} ${y-r*1.3}L${x+r*1.3} ${y}L${x} ${y+r*1.3}L${x-r*1.3} ${y}Z"/>`,
  (x,y,r)=>`<path d="M${x} ${y-r*1.3}L${x+r*1.25} ${y+r}L${x-r*1.25} ${y}Z"/>`
 ];
-const DASHES=['','','7 4','2 4'];
-function radarRows(){
- const n=L.data.runs.length;
+const DASHES=['','8 4','2 4','8 4 2 4','12 4 2 4 2 4','4 4'];
+const polyColor=p=>p.selected?'var(--run-accent)':`color-mix(in srgb,var(--run-accent) ${Math.max(40,100-22*p.distance)}%,#fff)`;
+const swatch=(p,cls='')=>`<svg class="radar-swatch ${cls}" viewBox="0 0 30 14" aria-hidden="true" style="color:${polyColor(p)}"><path class="radar-line" d="M1 7H29"${p.dash?` stroke-dasharray="${p.dash}"`:''}/><g class="radar-mark">${p.marker(15,7,4)}</g></svg>`;
+const polyKey=p=>`${p.run}:${p.step}`;
+const hashList=k=>(hashParam(k)||'').split(',').filter(Boolean);
+// A step counts once its objective index is written (panels present), not while the probe dir is still empty.
+const objectiveAt=(i,s)=>L.data.runs[i]?.probes.some(p=>p.id==='objective'&&p.panels[String(s)]?.length>0);
+const objectiveValue=(i,s,probe,key)=>{const m=L.data.runs[i].probes.find(p=>p.id===probe)?.metrics.find(x=>x.key===key);const v=m?.values?.[String(s)];return {value:finite(v)?v:null,fmt:m?.fmt??4};};
+/* The toggled polygons: each run's selected step unless hidden (radar_hide), plus the
+   extras the user turned on (radar_show); ordered by run then step, at most RADAR_MAX. */
+function radarPolygons(){
+ const hide=new Set(hashList('radar_hide')),set=new Map();
+ L.data.runs.forEach((_,i)=>{const s=Number(L.step(i));if(objectiveAt(i,s)&&!hide.has(`${i}:${s}`))set.set(`${i}:${s}`,{run:i,step:s});});
+ hashList('radar_show').forEach(k=>{const [i,s]=k.split(':').map(Number);if(objectiveAt(i,s))set.set(k,{run:i,step:s});});
+ const polys=[...set.values()].sort((a,b)=>a.run-b.run||a.step-b.step).slice(0,RADAR_MAX);
+ polys.forEach(p=>{
+  const own=polys.filter(q=>q.run===p.run),selected=Number(L.step(p.run));
+  p.rank=own.indexOf(p);p.key=polyKey(p);p.selected=p.step===selected;
+  p.distance=Math.abs(p.rank-(own.findIndex(q=>q.step===selected)<0?own.length-1:own.findIndex(q=>q.step===selected)));
+  p.dash=DASHES[p.rank%DASHES.length];p.marker=MARKERS[p.rank%MARKERS.length];
+ });
+ return polys;
+}
+function toggleRadarPolygon(i,s){
+ const key=`${i}:${s}`,isDefault=Number(L.step(i))===s,show=new Set(hashList('radar_show')),hide=new Set(hashList('radar_hide'));
+ const on=radarPolygons().some(p=>p.key===key);
+ if(on){show.delete(key);if(isDefault)hide.add(key);}else{hide.delete(key);if(!isDefault)show.add(key);}
+ setHashParam('radar_show',[...show].join(','));setHashParam('radar_hide',[...hide].join(','));renderRadar();
+}
+/* Baseline-relative geometry. Ratio axes (losses, offset, shape, collapse):
+   t = s * log2(value / baseline) / log2(R), s = -1 lower-is-better, +1 for collapse.
+   Difference axes (captured fractions, sim rewards, all in [-1, 1]):
+   t = (value - baseline) / D with D = 0.25 * log2(R), so R = 2 gives D = 0.25.
+   r = 0.5 + 0.5 * clamp(t, -1, 1): the baseline (its run at its selected step) sits on the
+   0.5 ring, the rim is an R-fold (or +D) improvement, the centre an R-fold (or -D)
+   degradation; beyond that the point is clamped. */
+function radarRows(polys,baseline){
+ const R=radarWindow(),D=0.25*Math.log2(R);
  return RADAR_AXES.map(a=>{
-  const m=L.metrics(a.probe).find(x=>x.key===a.key);
-  const values=L.data.runs.map((_,i)=>{const v=m?.cells[i]?.value;return finite(v)?v:null;});
-  const present=values.filter(v=>v!==null),lo=Math.min(...present),hi=Math.max(...present);
-  const scaled=values.map(v=>v===null?null:hi===lo?0.5:(a.good==='low'?hi-v:v-lo)/(hi-lo));
-  return Object.assign({},a,{values,scaled,fmt:m?.fmt??4,present:present.length,n});
+  const diff=RADAR_DIFF_AXES.test(a.key),s=a.good==='low'?-1:1;
+  const cells=polys.map(p=>objectiveValue(p.run,p.step,a.probe,a.key)),values=cells.map(c=>c.value);
+  const b=objectiveValue(baseline.run,baseline.step,a.probe,a.key).value,fmt=cells.find(c=>c.value!==null)?.fmt??4;
+  const rel=values.map(v=>v===null||b===null?null:diff?v-b:(v>0&&b>0?v/b:null));
+  const t=rel.map(x=>x===null?null:diff?x/D:s*Math.log2(x)/Math.log2(R));
+  const scaled=t.map(x=>x===null?null:0.5+0.5*Math.max(-1,Math.min(1,x)));
+  const clamped=t.map(x=>x!==null&&Math.abs(x)>1);
+  const rim=b===null?null:diff?b+D:s<0?b/R:b*R,centre=b===null?null:diff?b-D:s<0?b*R:b/R;
+  return Object.assign({},a,{values,rel,scaled,clamped,diff,fmt,present:values.filter(v=>v!==null).length,baseline:b,rim,centre,R,D});
  });
 }
+const relText=(a,x)=>x===null?'—':a.diff?(x>0?'+':'')+x.toFixed(3)+' vs baseline':x.toFixed(2)+'x baseline';
 function renderRadar(){
  const host=document.getElementById('radar');
  if(L.probeId!=='objective'){host.hidden=true;host.innerHTML='';return;}
  host.hidden=false;
- const rows=radarRows(),axes=rows.filter(r=>r.present),omitted=rows.filter(r=>!r.present);
- if(!axes.length){host.innerHTML='<div class="radar-head"><strong>Objective radar</strong><span>No objective metrics at the selected checkpoints.</span></div>';return;}
- const W=560,H=470,cx=W/2,cy=H/2+6,R=150,n=axes.length,runs=L.data.runs;
- const angle=j=>-Math.PI/2+j*2*Math.PI/n;
- const pos=(j,s)=>[cx+Math.cos(angle(j))*R*s,cy+Math.sin(angle(j))*R*s];
- const pt=p=>`${p[0].toFixed(1)} ${p[1].toFixed(1)}`;
- const rings=[.25,.5,.75,1].map(s=>`<polygon class="radar-ring" points="${axes.map((_,j)=>pt(pos(j,s))).join(' ')}"/>`).join('');
- const spokes=axes.map((_,j)=>{const [x,y]=pos(j,1);return `<line class="radar-spoke" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`;}).join('');
- const labels=axes.map((a,j)=>{const [x,y]=pos(j,1.16),c=Math.cos(angle(j));const anchor=Math.abs(c)<.2?'middle':c>0?'start':'end';return `<text class="radar-label" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle">${h(a.label)}</text>`;}).join('');
- const polygons=runs.map((r,i)=>{
-  const pts=axes.map((a,j)=>a.scaled[i]===null?null:pos(j,a.scaled[i]));
-  let d='',open=false;pts.forEach(p=>{if(!p){open=false;return;}d+=(open?'L':'M')+pt(p);open=true;});
-  const complete=pts.every(Boolean);if(complete)d+='Z';else if(pts[0]&&pts.at(-1))d+='L'+pt(pts[0]);
-  const marks=axes.map((a,j)=>pts[j]?`<g class="radar-mark">${MARKERS[i](pts[j][0],pts[j][1],4.5)}<title>${h(r.run.label)} · step ${L.step(i)}\n${h(a.label)}: ${L.format(a.values[i],a.fmt)}${a.good==='low'?' (lower is better)':' (higher is better)'}</title></g>`:'').join('');
-  return `<g class="radar-run" data-run="${i}">${complete?`<path class="radar-fill" d="${d}"/>`:''}<path class="radar-line" d="${d}"${DASHES[i]?` stroke-dasharray="${DASHES[i]}"`:''}/>${marks}</g>`;
+ const runs=L.data.runs,base=L.baseline,baseline={run:base,step:Number(L.step(base))},polys=radarPolygons(),full=polys.length>=RADAR_MAX;
+ const chips=runs.map((r,i)=>{
+  const steps=r.steps.map(s=>s.step).filter(s=>objectiveAt(i,s));
+  return `<div class="radar-chip-run" data-run="${i}"><span class="run-marker">${i+1}</span><strong>${h(r.run.label)}</strong><div class="chips">${steps.map(s=>{const p=polys.find(q=>q.run===i&&q.step===s),isBase=i===base&&s===baseline.step;return `<button class="chip${p?' active':''}" data-radar-toggle="${i}:${s}" aria-pressed="${!!p}"${!p&&full?' disabled':''} title="${isBase?'baseline polygon (the 0.5 ring)':p?'remove this polygon':full?'at most '+RADAR_MAX+' polygons':'add this polygon'}">${p?swatch(p):''}${s.toLocaleString()}${isBase?' ·':''}${s===Number(L.step(i))?'<small>sel</small>':''}</button>`;}).join('')}</div></div>`;
  }).join('');
- const legend=runs.map((r,i)=>`<span class="radar-key" data-run="${i}"><svg viewBox="0 0 26 14" aria-hidden="true"><path class="radar-line" d="M1 7H25"${DASHES[i]?` stroke-dasharray="${DASHES[i]}"`:''}/><g class="radar-mark">${MARKERS[i](13,7,4)}</g></svg>${h(r.run.label)} <small>step ${L.step(i)}</small></span>`).join('');
- const table=`<table><thead><tr><th>Axis</th>${runs.map((r,i)=>`<th>${h(r.run.label)}${i===L.baseline?' <small>baseline</small>':''}</th>`).join('')}</tr></thead><tbody>${axes.map(a=>{
+ const chipRow=`<div class="radar-chips"><span class="axis-label">Polygons<em>${polys.length} of ${RADAR_MAX}</em></span>${chips}${full?`<small class="radar-cap">Cap reached: turn a polygon off to add another.</small>`:''}</div>`;
+ // Every axis keeps its slot and angle whatever the selection: an axis without values (or
+ // without a baseline value) is drawn greyed, with no points, and listed under the chart.
+ const axes=radarRows(polys,baseline);axes.forEach(a=>{a.active=a.present>0&&a.baseline!==null;});
+ const live=axes.filter(a=>a.active),omitted=axes.filter(a=>!a.present),unanchored=axes.filter(a=>a.present&&a.baseline===null);
+ if(!polys.length||!live.length){host.innerHTML=`<div class="radar-head"><strong>Objective radar</strong><span>${polys.length?'No objective metrics with a baseline value at these checkpoints.':'No polygon selected.'}</span></div>${chipRow}`;host.querySelectorAll('[data-radar-toggle]').forEach(b=>b.onclick=()=>toggleRadarPolygon(...b.dataset.radarToggle.split(':').map(Number)));return;}
+ const W=560,H=470,cx=W/2,cy=H/2+6,RAD=150,n=axes.length,R=radarWindow(),D=0.25*Math.log2(R);
+ const angle=j=>-Math.PI/2+j*2*Math.PI/n;
+ const pos=(j,s)=>[cx+Math.cos(angle(j))*RAD*s,cy+Math.sin(angle(j))*RAD*s];
+ const pt=p=>`${p[0].toFixed(1)} ${p[1].toFixed(1)}`;
+ const ring=(s,cls)=>`<polygon class="${cls}" points="${axes.map((_,j)=>pt(pos(j,s))).join(' ')}"/>`;
+ const rings=ring(.25,'radar-ring')+ring(.75,'radar-ring')+ring(1,'radar-limit')+ring(.5,'radar-baseline')+`<circle class="radar-limit" cx="${cx}" cy="${cy}" r="3"/>`;
+ const spokes=axes.map((_,j)=>{const [x,y]=pos(j,1);return `<line class="radar-spoke" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`;}).join('');
+ const ringText=a=>`baseline ${L.format(a.baseline,a.fmt)} on the 0.5 ring · rim ${L.format(a.rim,a.fmt)} · centre ${L.format(a.centre,a.fmt)}`;
+ const labels=axes.map((a,j)=>{const [x,y]=pos(j,1.16),c=Math.cos(angle(j));const anchor=Math.abs(c)<.2?'middle':c>0?'start':'end';return `<text class="radar-label${a.active?'':' radar-label-off'}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle">${h(a.label)}<title>${h(a.label)} (${a.good==='low'?'lower is better':'higher is better'})\n${a.active?ringText(a):'no value for this selection'}</title></text>`;}).join('');
+ const polyLabel=p=>`${h(runs[p.run].run.label)} · step ${p.step}`;
+ const isBaseline=p=>p.run===baseline.run&&p.step===baseline.step;
+ const polygons=polys.map((p,k)=>{
+  const pts=axes.map((a,j)=>a.scaled[k]===null?null:pos(j,a.scaled[k]));
+  let d='',open=false;pts.forEach(q=>{if(!q){open=false;return;}d+=(open?'L':'M')+pt(q);open=true;});
+  const complete=pts.every(Boolean);if(complete)d+='Z';else if(pts[0]&&pts.at(-1))d+='L'+pt(pts[0]);
+  const marks=axes.map((a,j)=>pts[j]?`<g class="radar-mark${a.clamped[k]?' radar-clamped':''}">${p.marker(pts[j][0],pts[j][1],4.5)}<title>${polyLabel(p)}\n${h(a.label)}: ${L.format(a.values[k],a.fmt)}${isBaseline(p)?' (baseline)':', '+relText(a,a.rel[k])}${a.clamped[k]?' · beyond the window, clamped':''}\n${ringText(a)}</title></g>`:'').join('');
+  return `<g class="radar-run" data-run="${p.run}" style="color:${polyColor(p)}">${complete&&!isBaseline(p)?`<path class="radar-fill" d="${d}"/>`:''}<path class="radar-line" d="${d}"${p.dash?` stroke-dasharray="${p.dash}"`:''}/>${marks}</g>`;
+ }).join('');
+ const legend=polys.map(p=>`<span class="radar-key" data-run="${p.run}">${swatch(p)}${polyLabel(p)}${isBaseline(p)?' <small>baseline</small>':''}${p.selected?'':' <small>(not selected)</small>'}</span>`).join('')+`<span class="radar-key radar-key-note"><svg class="radar-swatch" viewBox="0 0 30 14" aria-hidden="true"><g class="radar-mark radar-clamped"><circle cx="15" cy="7" r="4"/></g></svg>hollow = clamped at the window</span>`;
+ const picker=`<div class="radar-picker"><span>window R</span><div class="segmented">${RADAR_WINDOWS.map(w=>`<button data-radar-r="${w}" class="${w===R?'active':''}">${w}x</button>`).join('')}</div><small>rim = ${R}x better, centre = ${R}x worse · captured and reward: ±${D.toFixed(3)} absolute</small></div>`;
+ const table=`<table><thead><tr><th>Axis</th>${polys.map(p=>`<th><span class="radar-th" data-run="${p.run}">${swatch(p)}<span class="run-marker">${p.run+1}</span> step ${p.step}</span>${isBaseline(p)?' <small>baseline</small>':''}</th>`).join('')}</tr></thead><tbody>${axes.map(a=>{
   const best=a.good==='low'?Math.min(...a.values.filter(finite)):Math.max(...a.values.filter(finite));
-  return `<tr><th>${h(a.label)}<small>${a.good==='low'?'↓ lower is better · outward = low':'↑ higher is better · outward = high'}</small></th>${a.values.map(v=>`<td class="${finite(v)&&v===best?'evidence-best':''}">${v===null?'—':L.format(v,a.fmt)}</td>`).join('')}</tr>`;
+  return `<tr><th>${h(a.label)}<small>${a.good==='low'?'↓ lower is better · outward = low':'↑ higher is better · outward = high'}</small></th>${a.values.map((v,k)=>`<td class="${finite(v)&&v===best?'evidence-best':''}">${v===null?'—':L.format(v,a.fmt)}${!isBaseline(polys[k])&&a.rel[k]!==null?`<small>${relText(a,a.rel[k])}</small>`:''}</td>`).join('')}</tr>`;
  }).join('')}</tbody></table>`;
- const note=omitted.length?`<p class="radar-note">Omitted (no value in any compared checkpoint): ${omitted.map(a=>`${h(a.label)} <code>${h(a.probe)}/${h(a.key)}</code>`).join(', ')}.</p>`:'';
- host.innerHTML=`<div class="radar-head"><strong>Objective radar</strong><span>${n} axes · min-max over the ${runs.length} compared checkpoint${runs.length===1?'':'s'} · outward is better on every axis · hover a marker for the raw value</span></div><div class="radar-body"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Objective radar">${rings}${spokes}${labels}${polygons}</svg><div class="radar-side"><div class="radar-legend">${legend}</div><div class="evidence-metrics radar-table">${table}</div>${note}</div></div>`;
+ const notes=[];
+ if(!polys.some(isBaseline))notes.push(`The baseline polygon (run ${base+1} at step ${baseline.step}) is turned off; it is still the 0.5 ring every other polygon is measured against.`);
+ if(omitted.length)notes.push(`No value (axis kept in place, greyed): ${omitted.map(a=>`${h(a.label)} <code>${h(a.probe)}/${h(a.key)}</code>`).join(', ')}.`);
+ if(unanchored.length)notes.push(`No baseline value (axis kept in place, greyed): ${unanchored.map(a=>h(a.label)).join(', ')}.`);
+ host.innerHTML=`<div class="radar-head"><strong>Objective radar</strong><span>${n} axes · ${polys.length} polygon${polys.length===1?'':'s'}, every one relative to the baseline run at its selected step, which sits on the 0.5 ring · outward is better on every axis · losses, offset, shape and spread by log2 ratio over a ${R}x window, captured and reward by absolute difference over ±${D.toFixed(3)} · the rim and centre rings are the clamp limits · hover a marker or an axis label for the raw values</span></div>${chipRow}${picker}<div class="radar-body${polys.length>=4?' radar-wide':''}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Objective radar">${rings}${spokes}${labels}${polygons}</svg><div class="radar-side"><div class="radar-legend">${legend}</div><div class="evidence-metrics radar-table">${table}</div>${notes.map(t=>`<p class="radar-note">${t}</p>`).join('')}</div></div>`;
+ host.querySelectorAll('[data-radar-r]').forEach(b=>b.onclick=()=>{setHashParam('radar_r',b.dataset.radarR);renderRadar();});
+ host.querySelectorAll('[data-radar-toggle]').forEach(b=>b.onclick=()=>toggleRadarPolygon(...b.dataset.radarToggle.split(':').map(Number)));
+}
+
+/* ---------- paired per-frame scatter (Objective) ----------
+   Each run's objective/objective.json carries one row per probed frame. Runs probing the same
+   seeded frames are joined on (source, split, global_idx): x = the baseline run, y = each other
+   run, three panels per pair (global error with a picker, then offset and shape). The JSON is
+   fetched lazily, only when the Objective page shows two or more runs. */
+const PAIR_GLOBAL=[
+ {key:'loss_flow_joint',label:'joint flow loss',log:true},
+ {key:'loss_discrete_ce',label:'FAST CE',log:true},
+ {key:'loss_depth_event',label:'depth event loss',log:true},
+ {key:'collapse',label:'collapse (std over samples)',log:false}
+];
+const PAIR_FIXED=[{key:'offset',label:'offset (DC-band MSE, normalized units)',log:true},{key:'shape',label:'shape (above-DC MSE, normalized units)',log:true}];
+const SPLIT_COLOR={val:'#E63946',train:'#457B9D'};
+const SOURCE_COLORS=['#80baff','#eda361','#8ed3a2','#e58ad0','#f2d56b','#8fd6e8','#c9a6ff','#f29b8a','#a7c957','#6fb3b8','#d4a373','#b8b8ff','#ff9f1c'];
+const pairCache=new Map();
+function pairFrames(i){
+ const panel=L.probe(i,'objective')?.panels[L.step(i)]?.[0];
+ if(!panel)return {error:'no objective output at this step'};
+ const url=panel.url.replace(/[^/]+$/,'objective.json'),entry=pairCache.get(url);
+ if(entry)return entry;
+ const pending={loading:true};pairCache.set(url,pending);
+ fetch(url,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject(Error('HTTP '+r.status))).then(j=>pairCache.set(url,{rows:j.per_frame||[]})).catch(e=>pairCache.set(url,{error:e.message})).finally(()=>{if(L.probeId==='objective')renderPairs();});
+ return pending;
+}
+const frameKey=r=>`${r.source}|${r.split}|${r.global_idx}`;
+function ranks(v){const idx=v.map((_,i)=>i).sort((a,b)=>v[a]-v[b]),r=Array(v.length);for(let i=0;i<idx.length;){let j=i;while(j+1<idx.length&&v[idx[j+1]]===v[idx[i]])j++;const avg=(i+j)/2+1;for(let k=i;k<=j;k++)r[idx[k]]=avg;i=j+1;}return r;}
+function spearman(x,y){if(x.length<3)return null;const rx=ranks(x),ry=ranks(y),m=(x.length+1)/2;let sxy=0,sxx=0,syy=0;for(let i=0;i<x.length;i++){const a=rx[i]-m,b=ry[i]-m;sxy+=a*b;sxx+=a*a;syy+=b*b;}return sxx&&syy?sxy/Math.sqrt(sxx*syy):null;}
+function worstDecile(pts,get){const k=Math.max(1,Math.round(pts.length/10));return new Set([...pts].sort((a,b)=>get(b)-get(a)).slice(0,k).map(p=>p.id));}
+function pairStats(pts){
+ return ['val','train'].map(split=>{
+  const q=pts.filter(p=>p.split===split);if(!q.length)return {split,n:0};
+  const A=worstDecile(q,p=>p.x),B=worstDecile(q,p=>p.y);let disc=0;A.forEach(id=>{if(!B.has(id))disc++;});
+  return {split,n:q.length,rho:spearman(q.map(p=>p.x),q.map(p=>p.y)),below:q.filter(p=>p.y<p.x).length/q.length,disc,decile:A.size};
+ });
+}
+const tickText=v=>{const a=Math.abs(v);return a===0?'0':a>=100?v.toFixed(0):String(Number(v.toPrecision(a>=1?3:2)));};
+function logTicks(lo,hi){const out=[];for(let e=Math.floor(lo);e<=Math.floor(hi);e++)for(const m of (hi-lo>=2.5?[1]:[1,2,5])){const v=m*10**e,l=Math.log10(v);if(l>=lo&&l<=hi)out.push(v);}return out;}
+function linTicks(lo,hi){const raw=(hi-lo)/4,p=10**Math.floor(Math.log10(raw)),step=[1,2,5,10].map(m=>m*p).find(s=>s>=raw);const out=[];for(let v=Math.ceil(lo/step)*step;v<=hi+1e-12;v+=step)out.push(Number(v.toPrecision(10)));return out;}
+function scatterSVG(pts,m,colorOf,xLabel,yLabel){
+ const W=380,H=380,l=52,r=12,t=12,b=44,pw=W-l-r,ph=H-t-b,tr=m.log?Math.log10:v=>v;
+ const vals=pts.flatMap(p=>[tr(p.x),tr(p.y)]);let lo=Math.min(...vals),hi=Math.max(...vals);if(lo===hi){lo-=1;hi+=1;}const pad=(hi-lo)*.05;lo-=pad;hi+=pad;
+ const X=v=>l+(tr(v)-lo)/(hi-lo)*pw,Y=v=>t+ph-(tr(v)-lo)/(hi-lo)*ph;
+ const ticks=m.log?logTicks(lo,hi):linTicks(lo,hi);
+ const grid=ticks.map(v=>`<line class="pair-gridline" x1="${X(v).toFixed(1)}" y1="${t}" x2="${X(v).toFixed(1)}" y2="${t+ph}"/><line class="pair-gridline" x1="${l}" y1="${Y(v).toFixed(1)}" x2="${l+pw}" y2="${Y(v).toFixed(1)}"/><text class="pair-tick" x="${X(v).toFixed(1)}" y="${t+ph+14}" text-anchor="middle">${tickText(v)}</text><text class="pair-tick" x="${l-6}" y="${Y(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle">${tickText(v)}</text>`).join('');
+ const order=[...pts].sort((a,b)=>(a.split==='val')-(b.split==='val'));
+ const dots=order.map(p=>`<circle class="pair-dot${p.id===pairFrame?' pair-dot-pinned':''}" data-frame="${h(p.id)}" cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="3" fill="${colorOf(p)}"><title>${h(p.row.source)} · episode ${p.row.episode_idx} · frame ${p.row.frame_idx} · ${p.split}\n${h(p.row.subtask||'(no subtask)')}\nx ${h(xLabel)}: ${L.format(p.x,4)}\ny ${h(yLabel)}: ${L.format(p.y,4)}</title></circle>`).join('');
+ return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${h(m.label)}: ${h(yLabel)} against ${h(xLabel)}">${grid}<rect class="pair-frame" x="${l}" y="${t}" width="${pw}" height="${ph}"/><line class="pair-identity" x1="${l}" y1="${t+ph}" x2="${l+pw}" y2="${t}"/>${dots}<text class="pair-axis" x="${l+pw/2}" y="${H-6}" text-anchor="middle">x · ${h(xLabel)}${m.log?' (log)':''}</text><text class="pair-axis" transform="translate(12 ${t+ph/2}) rotate(-90)" text-anchor="middle">y · ${h(yLabel)}${m.log?' (log)':''}</text></svg>`;
+}
+function pairPanel(m,base,other,joined,colorOf,xLabel,yLabel){
+ const pts=joined.map(([k,a,c])=>({id:k,row:a,split:a.split,x:a[m.key],y:c[m.key]})).filter(p=>finite(p.x)&&finite(p.y)&&(!m.log||(p.x>0&&p.y>0)));
+ const skipped=joined.length-pts.length;
+ if(!pts.length)return `<article class="pair-panel"><h4>${h(m.label)}</h4><p class="evidence-empty">No usable rows (${skipped} skipped: missing${m.log?' or non-positive':''}).</p></article>`;
+ const stats=pairStats(pts).map(s=>s.n?`<div class="pair-stat" style="--split:${SPLIT_COLOR[s.split]}"><b>${s.split}</b><span>n <strong>${s.n}</strong></span><span>Spearman ρ <strong>${s.rho===null?'—':s.rho.toFixed(3)}</strong></span><span>y &lt; x <strong>${(100*s.below).toFixed(0)}%</strong></span><span title="Frames in the worst decile (highest value) of one run but not the other">discordant <strong>${s.disc}</strong> of ${s.decile}</span></div>`:`<div class="pair-stat" style="--split:${SPLIT_COLOR[s.split]}"><b>${s.split}</b><span>no rows</span></div>`).join('');
+ const gap=p=>m.log?Math.abs(Math.log(p.y)-Math.log(p.x)):Math.abs(p.y-p.x);
+ const top=[...pts].sort((a,b)=>gap(b)-gap(a)).slice(0,10);
+ const table=`<table><colgroup><col style="width:14%"><col style="width:24%"><col style="width:26%"><col style="width:14%"><col style="width:14%"><col style="width:8%"></colgroup><thead><tr><th>ep:frame</th><th>source</th><th>subtask</th><th>x</th><th>y</th><th title="Run with the higher value">↑</th></tr></thead><tbody>${top.map(p=>`<tr data-frame="${h(p.id)}" class="${p.id===pairFrame?'pair-row-pinned':''}" title="${h(p.row.source)} · episode ${p.row.episode_idx} · frame ${p.row.frame_idx} · ${p.split}\n${h(p.row.subtask||'')}\nclick to show the frame"><td>${p.row.episode_idx}:${p.row.frame_idx}</td><td>${h(p.row.source)}</td><td>${h(p.row.subtask||'—')}</td><td>${L.format(p.x,3)}</td><td>${L.format(p.y,3)}</td><td><span class="run-marker" data-run="${p.y>p.x?other:base}">${(p.y>p.x?other:base)+1}</span></td></tr>`).join('')}</tbody></table>`;
+ return `<article class="pair-panel"><h4>${h(m.label)}${skipped?` <small>${skipped} skipped</small>`:''}</h4>${scatterSVG(pts,m,colorOf,xLabel,yLabel)}<div class="pair-stats">${stats}</div><div class="pair-table"><small>10 frames with the largest ${m.log?'|log y − log x|':'|y − x|'} · click a row to show the frame</small>${table}</div></article>`;
+}
+/* Frame panel: the frame behind a clicked dot or table row, pinned in the hash as pair_frame
+   (the joined row key) until closed. Images are fetched only on that click, through fetch so a
+   404 can show its reason; the object URLs are kept per request URL. */
+let pairFrame=null;
+const frameImages=new Map();
+function frameImage(url){
+ if(!frameImages.has(url))frameImages.set(url,fetch(url,{cache:'force-cache'}).then(async r=>{if(r.ok)return {src:URL.createObjectURL(await r.blob())};const body=await r.json().catch(()=>({}));return {error:body.error||('HTTP '+r.status)};}).catch(e=>({error:e.message})));
+ return frameImages.get(url);
+}
+function renderFramePanel(host,rowsByRun){
+ const el=host.querySelector('#pair-frame');
+ if(!pairFrame){el.hidden=true;el.innerHTML='';return;}
+ const rows=rowsByRun.map(m=>m.get(pairFrame)||null),row=rows.find(Boolean);
+ if(!row){el.hidden=true;return;}
+ el.hidden=false;
+ const url=cam=>`/api/frame?root=${encodeURIComponent(row.source_root)}&idx=${row.global_idx}&cam=${cam}`;
+ const metrics=[['loss_flow_joint','flow loss'],['offset','offset MSE'],['shape','shape MSE']];
+ el.innerHTML=`<header class="pair-frame-head"><strong>${h(row.source)} · episode ${row.episode_idx} · frame ${row.frame_idx} <small>${h(row.split)} · global ${row.global_idx}</small></strong><button data-frame-close aria-label="Close frame panel">Close ×</button></header><div class="pair-frame-body"><div class="pair-frame-cams">${['top','wrist'].map(cam=>`<figure><figcaption>${cam}</figcaption><div class="pair-frame-img" data-cam="${cam}"><span>Loading…</span></div></figure>`).join('')}</div><div class="pair-frame-info"><p><b>subtask</b> ${h(row.subtask||'—')}</p><p><b>progress</b> ${finite(row.progress)?(100*row.progress).toFixed(0)+'% of the episode':'—'}</p><div class="evidence-metrics"><table><thead><tr><th></th>${L.data.runs.map((r,i)=>`<th><span class="run-marker" data-run="${i}">${i+1}</span>${i===L.baseline?'<small>baseline</small>':''}</th>`).join('')}</tr></thead><tbody>${metrics.map(([k,label])=>`<tr><th>${label}</th>${rows.map(x=>`<td>${x&&finite(x[k])?L.format(x[k],4):'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></div>`;
+ el.querySelector('[data-frame-close]').onclick=()=>{pairFrame=null;setHashParam('pair_frame','');renderPairs();};
+ el.querySelectorAll('.pair-frame-img').forEach(box=>frameImage(url(box.dataset.cam)).then(result=>{if(!box.isConnected)return;box.innerHTML=result.src?`<img src="${result.src}" alt="${box.dataset.cam} camera, episode ${row.episode_idx} frame ${row.frame_idx}">`:`<span class="pair-frame-error">Frame not available: ${h(result.error)}</span>`;}));
+}
+function renderPairs(){
+ const host=document.getElementById('pairs'),runs=L.data.runs;
+ if(L.probeId!=='objective'||runs.length<2){host.hidden=true;host.innerHTML='';return;}
+ host.hidden=false;
+ pairFrame=hashParam('pair_frame')||null;
+ const metric=PAIR_GLOBAL.find(m=>m.key===hashParam('pair_metric'))||PAIR_GLOBAL[0],bySource=hashParam('pair_color')==='source';
+ const base=L.baseline,baseLabel=runs[base].run.label,frames=runs.map((_,i)=>pairFrames(i));
+ const rowsByRun=frames.map(f=>new Map((f.rows||[]).map(r=>[frameKey(r),r])));
+ const sources=[...new Set(frames.flatMap(f=>f.rows||[]).map(r=>r.source))].sort(natural);
+ const colorOf=bySource?p=>SOURCE_COLORS[sources.indexOf(p.row.source)%SOURCE_COLORS.length]:p=>SPLIT_COLOR[p.split];
+ const legend=bySource?sources.map((s,i)=>`<span class="pair-key"><i style="background:${SOURCE_COLORS[i%SOURCE_COLORS.length]}"></i>${h(s)}</span>`).join(''):Object.entries(SPLIT_COLOR).map(([s,c])=>`<span class="pair-key"><i style="background:${c}"></i>${s}</span>`).join('');
+ const picker=`<div class="segmented">${PAIR_GLOBAL.map(m=>`<button data-pair-metric="${m.key}" class="${m.key===metric.key?'active':''}">${h(m.label)}</button>`).join('')}</div><div class="segmented"><button data-pair-color="split" class="${bySource?'':'active'}">by split</button><button data-pair-color="source" class="${bySource?'active':''}">by source</button></div>`;
+ const sections=runs.map((r,j)=>{
+  if(j===base)return '';
+  const a=frames[base],c=frames[j];
+  let body;
+  if(a.loading||c.loading)body='<p class="evidence-empty">Loading per-frame rows…</p>';
+  else if(a.error||c.error)body=`<p class="evidence-empty">${h(a.error||c.error)}</p>`;
+  else{
+   const byKey=new Map(c.rows.map(x=>[frameKey(x),x]));
+   const joined=a.rows.map(x=>[frameKey(x),x,byKey.get(frameKey(x))]).filter(x=>x[2]);
+   const partial=joined.length<a.rows.length||joined.length<c.rows.length;
+   body=`<p class="pair-join${partial?' pair-partial':''}">${joined.length} frames matched on (source, split, global_idx) · baseline ${a.rows.length} rows, this run ${c.rows.length}${partial?' · partial match: the runs did not probe the same frames (config or data differ), read with care':''}.</p>`+
+    (joined.length?`<div class="pair-grid">${[metric,...PAIR_FIXED].map(m=>pairPanel(m,base,j,joined,colorOf,baseLabel,r.run.label)).join('')}</div>`:'');
+  }
+  return `<section class="pair-run" data-run="${j}"><header class="pair-head"><span class="run-marker">${j+1}</span><strong>y · ${h(r.run.label)} <small>step ${L.step(j)}</small></strong><span class="pair-vs">against x · <span class="run-marker" data-run="${base}">${base+1}</span> ${h(baseLabel)} <small>step ${L.step(base)}</small></span></header>${body}</section>`;
+ }).join('');
+ host.innerHTML=`<div class="radar-head"><strong>Paired per-frame scatter</strong><span>Same frames, two checkpoints: a point above the diagonal is a frame this run scores higher (worse for losses, offset and shape) than the baseline. Global error (picker), then its offset and shape components: DC-band and above-DC MSE of the sample mean against the GT chunk in normalized action units, which add up to the chunk MSE. Hover a point for the frame, click it to see the cameras.</span></div><div class="pair-tools">${picker}<div class="pair-legend">${legend}</div></div><div id="pair-frame" class="pair-frame" hidden></div>${sections}`;
+ renderFramePanel(host,rowsByRun);
+ host.querySelectorAll('[data-pair-metric]').forEach(b=>b.onclick=()=>{setHashParam('pair_metric',b.dataset.pairMetric);renderPairs();});
+ host.querySelectorAll('[data-pair-color]').forEach(b=>b.onclick=()=>{setHashParam('pair_color',b.dataset.pairColor);renderPairs();});
+ host.querySelectorAll('[data-frame]').forEach(el=>el.onclick=()=>{setHashParam('pair_frame',el.dataset.frame);renderPairs();});
 }
 
 /* ---------- metrics ---------- */
@@ -280,7 +463,7 @@ function render(){
  if(!L.data)return;
  wall=hashParam('wall')==='1';
  const lay=layout();
- renderRail();renderTitle(lay);renderRails(lay);renderRuns();renderRadar();renderTools(lay);renderStage(lay);renderMetrics();
+ renderRail();renderTitle(lay);renderRails(lay);renderRuns();renderRadar();renderPairs();renderTools(lay);renderStage(lay);renderMetrics();
 }
 
 document.getElementById('probe-filter').oninput=e=>{railFilter=e.target.value;renderRail();};

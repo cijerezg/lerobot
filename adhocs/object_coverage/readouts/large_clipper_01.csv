@@ -1,0 +1,8 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/large_clipper/rebot_2026-10-16-annotated-v1__ep005_seg00.png,B3,0,,,C3,unsure,two loose clippers (B3 horizontal and D3 vertical); took the longer B3 one
+frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg00.png,B2,90,,,B2,unsure,two loose clippers (A2 and B2); took the longer B2 one next to the case
+frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11.png,,,,,B2,unsure,"not found; no loose clipper on table, both appear to be in the case at B2"
+frames/large_clipper/rebot_2026-10-17-merged-v1__ep001_seg03.png,E1,165,,,C3,unsure,small metallic objects at E1 and E3; took E1
+frames/large_clipper/rebot_2026-10-21-annotated-v1__ep000_seg09.png,A1,0,,,A2,unsure,loose clipper beside the case near A1/B1 line
+frames/large_clipper/rebot_2026-10-21-annotated-v1__ep003_seg00.png,C3,120,,,D3,sure,smaller clipper at D3/E3 line
+frames/large_clipper/rebot_2026-10-21-annotated-v1__ep006_seg00.png,C3,150,,,C3,unsure,on B3/C3 line; case at C3

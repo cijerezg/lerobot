@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep000_seg04.png,C2,90,,,,unsure,clipper case not seen
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep001_seg00.png,E2,45,,,C3,unsure,on E2/E3 line
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep001_seg04.png,C3,,,,C3,unsure,occluded
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep002_seg00.png,C2,165,,,C3,sure,larger clipper also on C2/D2 line
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep002_seg03.png,C3,,,,C3,unsure,occluded
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg05.png,D3,75,,,,unsure,clipper case not seen
+frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg05.png,B3,,,,,unsure,tiny; clipper case not seen
+frames/nail_clipper/rebot_teleop_2026-10-08-annotated-v1-tasks1__ep009_seg06.png,D3,0,,,C4,sure,case on C/D line
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep000_seg04.png,E3,30,,,,sure,clipper case not seen
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep001_seg00.png,C3,90,,,D3,sure,second larger clipper in C3 at angle 0
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep001_seg03.png,C3,0,,,D3,sure,case partly under gripper
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep004_seg18.png,E2,0,,,E1,unsure,on E1/E2 line next to case
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep005_seg04.png,C3,165,,,B3,unsure,on B/C and row 3/4 lines
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep005_seg08.png,C3,165,,,B3,unsure,case partly under gripper

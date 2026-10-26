@@ -1,0 +1,10 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit/rebot_2026-10-16-annotated-v1__ep000_seg06.png,B3,90,,4,E3,unsure,bit just right of large clipper at A3/B3 line
+frames/bit/rebot_2026-10-16-annotated-v1__ep000_seg14.png,E2,90,,2,E3,unsure,only one clipper case visible (D2) partly under gripper; bit to its right
+frames/bit/rebot_2026-10-16-annotated-v1__ep000_seg29.png,C4,90,,1,E3,sure,bit just below kit
+frames/bit/rebot_2026-10-16-annotated-v1__ep000_seg41.png,E2,15,,1,E3,unsure,small dark bit right of clipper case
+frames/bit/rebot_2026-10-16-annotated-v1__ep006_seg13.png,B2,0,,1,E4,unsure,no clear loose bit on table; silver piece lying on kit by white card
+frames/bit/rebot_2026-10-17-merged-v1__ep000_seg08.png,B4,105,,1,D4,sure,box on D4/E4 line
+frames/bit/rebot_2026-10-21-annotated-v1__ep000_seg00.png,C4,105,,1,D1,sure,
+frames/bit/rebot_2026-10-21-annotated-v1__ep002_seg00.png,D3,90,,1,C3,sure,bit just above box on C3/D3 line
+frames/bit/rebot_2026-10-21-annotated-v1__ep007_seg00.png,C3,,,0,D4,unsure,not found; gripper over C3 may hide it

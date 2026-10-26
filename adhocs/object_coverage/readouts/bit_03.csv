@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg09.png,A2,15,,3,B4,unsure,bit on A/B line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg12.png,B4,,,3,B4,unsure,occluded; target likely under gripper next to box
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg18.png,F2,165,,1,B4,sure,only loose bit
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg00.png,D3,135,,8,E3,unsure,bit between sock and box
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg03.png,E3,,,7,E3,unsure,occluded; bits near box hidden by arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg06.png,A3,15,,6,E3,unsure,bit on A/B line left of sock
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg09.png,A2,15,,5,E3,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg12.png,E3,,,4,E3,unsure,occluded; bit near box hidden by arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg15.png,E3,,,4,E3,unsure,occluded; bit near box hidden by arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg18.png,D4,45,,3,E3,unsure,near D3/D4 line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg21.png,C4,60,,2,E3,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg24.png,B3,15,,1,E3,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg30.png,E3,15,,1,E3,unsure,at E2/E3/F2/F3 corner
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep009_seg00.png,E3,90,,4,D4,sure,

@@ -13,7 +13,7 @@ Examples::
     uv run python -m lerobot.scripts.compare_sim RUN_A/validation/step_00001200 RUN_B/validation/step_00001200 --layout ep2
     uv run python -m lerobot.scripts.compare_sim a/rerun.rrd b/rerun.rrd --label old --label new --no-open
 
-A path may be a checkpoint step dir (``.../checkpoints/000400``), a ``validation/step_XXXXXXXX`` dir, a ``sim_nail``
+A path may be a checkpoint step dir (``.../checkpoints/000400``), a ``validation/step_XXXXXXXX`` dir, a ``sim`` (or pre-2026-10-22 ``sim_nail``)
 dir, a layout dir or a ``.rrd`` file; ``--layout`` picks the layout for everything above a layout dir.
 Layouts are clippers_only, ep0, ep1, ep2 and ep3.
 """
@@ -54,8 +54,10 @@ def resolve_rrd(path: Path, layout: str) -> Path:
         return path / "rerun.rrd"
     if path.parent.name == "checkpoints" and path.name.isdigit():
         path = path.parent.parent / "validation" / f"step_{int(path.name):08d}"
-    if (path / "sim_nail").is_dir():
-        path = path / "sim_nail"
+    for name in ("sim", "sim_nail"):
+        if (path / name).is_dir():
+            path = path / name
+            break
     rrd = path / layout / "rerun.rrd"
     if not rrd.is_file():
         raise SystemExit(f"no sim recording at {rrd}")
@@ -63,7 +65,7 @@ def resolve_rrd(path: Path, layout: str) -> Path:
 
 
 def default_label(rrd: Path) -> str:
-    """``<run>-<step>`` for ``<run>/validation/step_X/sim_nail/<layout>/rerun.rrd``, else the folder name."""
+    """``<run>-<step>`` for ``<run>/validation/step_X/sim/<layout>/rerun.rrd``, else the folder name."""
     parts = rrd.resolve().parts
     if "validation" in parts:
         i = parts.index("validation")
@@ -174,7 +176,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_a", type=Path)
     ap.add_argument("run_b", type=Path)
-    ap.add_argument("--layout", default="ep0", help="layout folder under sim_nail (default ep0)")
+    ap.add_argument("--layout", default="ep0", help="layout folder under sim (default ep0)")
     ap.add_argument(
         "--label", action="append", default=[], help="row label, once per run (default <run>-<step>)"
     )

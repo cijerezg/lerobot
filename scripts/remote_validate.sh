@@ -51,7 +51,7 @@ Options:
   --workspace DIR    workspace root, mirrored on both boxes (default: repo parent)
   --config PATH      probe config (default: <workspace>/config_rl_validate.yaml; --sim: config_rl_sim.yaml)
   --sim              run lerobot/scripts/run_sim_eval.sh (policy in the MuJoCo sim, every layout) instead of run_probes.sh;
-                     results land in the same validation/step_<step>/ as sim_nail/
+                     results land in the same validation/step_<step>/ as sim/
   --with-sim         run_probes.sh (config_rl_validate.yaml) and then run_sim_eval.sh (config_rl_sim.yaml) in one remote
                      pass; both land in the same validation/step_<step>/
   --out DIR          run/output dir (default: <workspace>/outputs/remote_val/<slug>)
@@ -218,7 +218,7 @@ echo \$\$ > '$STATE/pid'
 bash lerobot/scripts/$LAUNCHER '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'
 rc=\$?
 if (( $WITH_SIM )); then
-  # Same run dir: run_sim_eval.sh adds validation/step_00000000/sim_nail next to the probes.
+  # Same run dir: run_sim_eval.sh adds validation/step_00000000/sim next to the probes.
   bash lerobot/scripts/run_sim_eval.sh '$MODEL' '$PROBE_RUN' '$REMOTE_SIM_CONFIG' || rc=1
 fi
 echo \$rc > '$STATE/exit_code'
@@ -309,7 +309,7 @@ echo
 if (( EXIT == 0 )); then
   info "done. results: $RESULT_DIR/"
   view_root="$RESULT_DIR"; [[ -n "$RUN_NAME" ]] && view_root="$WS/outputs/$RUN_NAME"
-  if (( SIM || WITH_SIM )); then info "sim: $RESULT_DIR/sim_nail/summary.md; videos: $RESULT_DIR/sim_nail/<layout>/videos/ep<N>_{top,wrist,wrist_depth}.mp4 (compare_probes shows them side by side: uv run python -m lerobot.scripts.compare_probes '$view_root' ...)"; fi
+  if (( SIM || WITH_SIM )); then info "sim: $RESULT_DIR/sim/summary.md; videos: $RESULT_DIR/sim/<layout>/videos/ep<N>_{top,wrist,wrist_depth}.mp4 (compare_probes shows them side by side: uv run python -m lerobot.scripts.compare_probes '$view_root' ...)"; fi
   if (( ! SIM )); then info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$view_root'"; fi
 else
   info "log: $LLOG"

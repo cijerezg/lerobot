@@ -1,0 +1,5 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit_kit/rebot_2026-10-16-annotated-v1__ep006_seg15.png,B2,150,SE,flat,,unsure,kit tilted; center on B/C line; gripper over bits end
+frames/bit_kit/rebot_2026-10-21-annotated-v1__ep000_seg05.png,C2,0,E,flat,,sure,lower left partly under headphone case
+frames/bit_kit/rebot_2026-10-21-annotated-v1__ep001_seg06.png,C3,0,E,flat,,sure,
+frames/bit_kit/rebot_2026-10-21-annotated-v1__ep002_seg06.png,B2,90,S,flat,,unsure,center on A/B line; white card at north end

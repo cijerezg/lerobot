@@ -21,7 +21,7 @@ the calibration numbers and the rebuild order; the build scripts stay in that fo
 `LAYOUTS` (easy: clippers_only, bottle_basket, close_lid, lift_bottle; hard: ep0, ep3; ep1/ep2 stay on disk) with
 `episodes: 4` per layout and `control_time_s: 90.0` (`terminate_on_success` ends an episode at the last stage; the real
 nail episodes run 78-102 s, so 90 s truncates some). The episode reward is the cumulative value of the furthest stage
-reached (sequential walk, success reachable directly, never decreases); `sim_nail/index.json` carries `reward.<scene>`,
+reached (sequential walk, success reachable directly, never decreases); `sim/index.json` carries `reward.<scene>`,
 `reward.easy`, `reward.hard` (tier mean over scenes of the per-scene episode mean) and `reward.mean` (mean of the tiers).
 
 | scene | tier | task (sheet id) |

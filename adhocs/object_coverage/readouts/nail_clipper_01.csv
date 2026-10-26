@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep007_seg05.png,C3,15,,,C3,unsure,thin clipper below case; second small silver item in C2
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep007_seg08.png,C3,,,,C3,unsure,occluded
+frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep008_seg13.png,C2,165,,,,unsure,case not visible (likely under gripper)
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep000_seg11.png,A3,165,,,D2,unsure,second clipper upright in E2
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep000_seg26.png,A3,165,,,D2,unsure,another small item in E2
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep001_seg06.png,C3,60,,,B3,unsure,larger clipper in B3
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep001_seg09.png,B3,,,,B3,unsure,occluded
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep002_seg08.png,B3,,,,,unsure,occluded; case not visible
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg09.png,B2,,,,B2,unsure,occluded
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg28.png,,,,,B2,unsure,not found
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg32.png,D3,135,,,B2,sure,lying on headphone case
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg35.png,D3,135,,,B2,sure,lying on headphone case
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep004_seg02.png,D2,,,,C3,unsure,occluded
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep005_seg04.png,D2,90,,,C2,unsure,on D2/D3 line

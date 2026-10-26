@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg00.png,C3,75,,4,D3,sure,leftmost of 4 loose bits
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg03.png,E3,60,,2,D3,unsure,arm may hide a bit near the box
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg06.png,D2,75,,1,D3,unsure,on D2/E2 line; other bits may be under the arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg09.png,,,,0,D3,unsure,not found; no loose bit visible
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep001_seg00.png,B2,15,,4,D3,sure,farthest from box
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep001_seg03.png,C3,30,,3,D3,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep001_seg06.png,F3,30,,2,D3,sure,near E3/F3 line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep001_seg09.png,E2,15,,1,D3,unsure,faint; possibly already taken
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg00.png,C3,75,,6,D3,unsure,several left-of-box candidates; picked upper C3 bit
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg03.png,C3,15,,4,D3,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg06.png,C3,15,,4,D3,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg09.png,A2,15,,3,D3,sure,farthest from box
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg12.png,E2,75,,1,D3,unsure,only loose bit visible
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg15.png,,,,0,D3,unsure,not found; no loose bit visible

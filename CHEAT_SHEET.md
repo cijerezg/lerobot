@@ -92,11 +92,11 @@ uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 MUJOCO_GL=egl uv run python -m lerobot.rl.inference_async --config_path=config_rl_sim.yaml [--env.robot.scene=ep1]
 uv run rerun "$(ls -dt outputs/train/$(date +%F)/*rebot-sim-nail* | head -1)/rerun.rrd"
 
-Every layout on one checkpoint (what the chase runs on the DGX): `<run>/validation/step_<step>/sim_nail/<layout>/{rerun.rrd,subtask_events.json}` + `sim_nail/summary.md` (successes, steps reached per episode). `LAYOUTS="ep0 ep2"` and `SIM_EVAL_ARGS="--env.robot.episodes=1 --env.processor.reset.control_time_s=20"` for a short run:
+Every layout on one checkpoint (what the chase runs on the DGX): `<run>/validation/step_<step>/sim/<layout>/{rerun.rrd,subtask_events.json}` + `sim/summary.md` (staged reward per episode, per-scene and easy/hard tier means; `sim_nail/` dirs are the pre-2026-10-22 nail-only eval). `LAYOUTS="ep0 ep2"` and `SIM_EVAL_ARGS="--env.robot.episodes=1 --env.processor.reset.control_time_s=20"` for a short run:
 
 lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
 
-Two checkpoints side by side in one rerun viewer (A top row, B bottom row, shared time axis: wrist, top, depth, joints, subtask events). Paths: checkpoint step dir, `validation/step_X`, `sim_nail`, layout dir or `.rrd`; `--layout ep2` picks the layout, `--save x.rrd` writes the merged file instead of opening the viewer:
+Two checkpoints side by side in one rerun viewer (A top row, B bottom row, shared time axis: wrist, top, depth, joints, subtask events). Paths: checkpoint step dir, `validation/step_X`, `sim`, layout dir or `.rrd`; `--layout ep2` picks the layout, `--save x.rrd` writes the merged file instead of opening the viewer:
 
 uv run python -m lerobot.scripts.compare_sim outputs/<run_a>/checkpoints/<step> outputs/<run_b>/checkpoints/<step> [--layout ep0] [--label a --label b]
 
@@ -190,7 +190,7 @@ Reattach to a detached run:
 
 lerobot/scripts/remote_validate.sh --attach outputs/molmoact2_offline_rebot_v4/checkpoints/000400
 
-Flags: `--dry-run`, `--keep-checkpoint`, `--force-delete`, `--out DIR`, `--config PATH`, `--host`, `--sim` (the MuJoCo nail-clipper eval, `run_sim_eval.sh` + `config_rl_sim.yaml`, instead of the probe suite; results in the same `validation/step_<step>/` as `sim_nail/`).
+Flags: `--dry-run`, `--keep-checkpoint`, `--force-delete`, `--out DIR`, `--config PATH`, `--host`, `--sim` (the MuJoCo tiered eval, `run_sim_eval.sh` + `config_rl_sim.yaml`, instead of the probe suite; results in the same `validation/step_<step>/` as `sim/`).
 
 ## Chase a run's checkpoints (overnight)
 

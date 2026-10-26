@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg00.png,B2,75,,5,F2,unsure,bits spread B2 B2 C3 E1 F3; B2 right bit and E1 bit about equally near base
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg03.png,C3,135,,5,E2,unsure,box partly occluded by arm at E2/F2; possible faint bit in B3
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg06.png,C3,135,,4,E2,unsure,left bits B2 and C3; box occluded by gripper
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg09.png,B2,75,,3,E2,sure,box mostly occluded by arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg12.png,F3,120,,2,E2,sure,remaining bits E1 and F3
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg15.png,E1,165,,1,E2,sure,only loose bit at E1/E2 line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg00.png,C3,165,,9,E4,unsure,cluster of bits around C2/C3/D2/D3
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg03.png,C3,0,,8,E4,unsure,arm hides part of D3 cluster
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg06.png,D3,45,,6,E4,unsure,cluster C2/C3/D2/D3
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg09.png,D3,105,,5,E4,unsure,box partly behind gripper
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg12.png,D3,105,,5,E4,unsure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg15.png,D2,90,,4,E4,unsure,bit near D2/D3 line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg18.png,C3,105,,2,E4,unsure,two bits left near C2/C3 line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg24.png,C2,150,,1,E4,unsure,only one loose bit visible at C2/C3 line

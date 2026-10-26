@@ -312,6 +312,7 @@ class ProbeConfig:
     # Enable / disable individual probes
     enable_actions: bool = True
     enable_representations: bool = False  # temporal native capture; opt in for supported adapters
+    enable_set_representations: bool = False  # val, external and diverse frames in one cosine matrix (probes/set_representations.py)
     enable_attention: bool = True
     enable_spatial_memorization: bool = True
     enable_action_drift_jacobian: bool = False  # subtask-conditioned action-output/token Jacobians
@@ -398,6 +399,18 @@ class ProbeConfig:
     # Store every frame against every frame (uint16, per panel) for the report's anchored
     # cross-episode grid; a few MB per panel at 1600 frames.
     repr_cross_matrices: bool = True
+    # Set representations: episodes of the val root, the external ReBot source and chosen
+    # diverse corpus episodes (source:embodiment pairs) through one forward each, read out
+    # as frame-by-frame and set-by-set cosine matrices. Independent of the repr_* probe.
+    setrep_view: str = "attention_input"
+    setrep_layers: str = "8,14,20,28,32"
+    setrep_groups: str = "img_external_0,img_wrist_0,state,subtask,action_output,action"
+    setrep_rebot_episodes: int = 3
+    setrep_rebot_frames: int = 40
+    setrep_external_episodes: int = 2
+    setrep_external_frames: int = 20
+    setrep_diverse_sources: str = "droid_success:Franka,robochallenge:ARX5"
+    setrep_diverse_frames: int = 20
     # Domain representations. Frames per ReBot episode (None inherits n_frames_per_episode);
     # the diverse side draws the same total, split evenly over its sources. k is the
     # cosine neighbourhood of the purity readout.
@@ -601,6 +614,9 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # Standalone inference refuses to create a policy unless this path (or the
     # policy's standard pretrained_path) names a complete saved checkpoint.
     inference_checkpoint_path: Path | None = None
+    # Standalone inference: a second complete checkpoint resident beside the first (same policy
+    # config, its own processor stats). Console keys o/p select model 0/1 while frozen (f); default 0.
+    inference_alt_checkpoint_path: Path | None = None
     probe_parameters: ProbeConfig = field(default_factory=ProbeConfig)
 
     # Validation

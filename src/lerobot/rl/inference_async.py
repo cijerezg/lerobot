@@ -17,6 +17,7 @@ from pathlib import Path
 import lerobot.rl.gym_manipulator  # noqa: F401 - registers robot/camera/teleop config choices
 import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 - registers MolmoAct2RLConfig
 import lerobot.rl.pi05.rl_pi05  # noqa: F401 - registers PI05RLConfig
+import lerobot.rl.flux3.rl_flux3  # noqa: F401 - registers Flux3RemoteConfig
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.rl.rl_trainer import Trainer
@@ -47,9 +48,10 @@ def _configure_inference_checkpoint(cfg) -> Path:
         "policy_postprocessor.json",
     }
     missing = sorted(name for name in required_files if not (checkpoint_path / name).is_file())
-    has_weights = (checkpoint_path / "model.safetensors").is_file() or (
-        checkpoint_path / "model.safetensors.index.json"
-    ).is_file()
+    has_weights = any(
+        (checkpoint_path / name).is_file()
+        for name in ("model.safetensors", "model.safetensors.index.json", "adapter_model.safetensors")
+    )  # adapter_model = a PEFT checkpoint (flux3 LoRA)
     if not has_weights:
         missing.append("model.safetensors[.index.json]")
     if missing:

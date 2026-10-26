@@ -5,7 +5,7 @@
 ``ep0_wrist_depth.mp4``), one file per episode at the env fps, from the raw robot observation the
 env worker steps from. A ``<cam>.depth`` view (uint16, 0.1 mm per level, 0 = invalid) is colorized
 with TURBO over the valid pixels' 2-98 percentile (render_review_videos). H.264 yuv420p through PyAV,
-so the files play in a browser ``<video>``: the sim eval's ``sim_nail/index.json`` lists them and
+so the files play in a browser ``<video>``: the sim eval's ``sim/index.json`` lists them and
 ``compare_probes`` plays them side by side. Encoding runs on a daemon thread fed by a bounded queue,
 the way the rerun worker does, so the control loop never waits on libx264; a full queue drops the
 frame and the count is logged at the episode end.

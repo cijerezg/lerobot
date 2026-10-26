@@ -253,6 +253,7 @@ _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_attention", "lerobot.probes.attention", "attention"),
     _ValidationProbeSpec("enable_critic_values_distribution", "lerobot.probes.critic", "critic"),
     _ValidationProbeSpec("enable_representations", "lerobot.probes.representations", "representations"),
+    _ValidationProbeSpec("enable_set_representations", "lerobot.probes.set_representations", "set_representations"),
     _ValidationProbeSpec(
         "enable_spatial_memorization",
         "lerobot.probes.spatial_memorization_attention",

@@ -5,10 +5,10 @@
 #
 #   lerobot/scripts/run_sim_eval.sh CHECKPOINT_PRETRAINED_MODEL [FRESH_OUTPUT_DIRECTORY] [CONFIG]
 #
-# Output: <run>/validation/step_<step>/sim_nail/<layout>/ per layout: subtask_events.json (stage events, reward per
+# Output: <run>/validation/step_<step>/sim/<layout>/ per layout: subtask_events.json (stage events, reward per
 # episode), logs/ and videos/ep<N>_{top,wrist,wrist_depth}.mp4 per episode (record_inference_videos; rerun.rrd only
-# with rerun_save), plus sim_nail/summary.{json,md} and index.json over all of them (reward per scene and tier), so
-# view_probes / compare_probes show them as the sim_nail probe. Each layout's task string and eval_subtasks script
+# with rerun_save), plus sim/summary.{json,md} and index.json over all of them (reward per scene and tier), so
+# view_probes / compare_probes show them as the sim probe (sim_nail = the pre-2026-10-22 nail-only eval). Each layout's task string and eval_subtasks script
 # come from the registry (robots/rebot_b601_sim/tasks.py) as CLI overrides of the config's nail-task values.
 # Env: LAYOUTS (default: the registry's LAYOUTS), SIM_EVAL_ARGS (extra inference_async flags, e.g.
 # "--env.robot.episodes=1 --env.processor.reset.control_time_s=20").
@@ -20,7 +20,7 @@ sim_config="${3:-config_rl_sim.yaml}"
 [[ -f "$sim_checkpoint/config.json" ]] || { echo "Missing checkpoint config: $sim_checkpoint" >&2; exit 1; }
 sim_step=0
 if [[ -n "${2:-}" ]]; then
-  # May already hold a probe pass (remote_validate.sh --with-sim); only sim_nail itself must be new.
+  # May already hold a probe pass (remote_validate.sh --with-sim); only sim itself must be new.
   sim_run_dir="$2"
 else
   # With no output override, write beside the checkpoint's training run.
@@ -32,7 +32,7 @@ else
   sim_run_dir="$(dirname "$(dirname "$sim_step_dir")")"
   sim_step="$((10#$sim_step_name))"
 fi
-printf -v sim_out '%s/validation/step_%08d/sim_nail' "$sim_run_dir" "$sim_step"
+printf -v sim_out '%s/validation/step_%08d/sim' "$sim_run_dir" "$sim_step"
 [[ ! -e "$sim_out" ]] || { echo "Sim output already exists: $sim_out" >&2; exit 1; }
 [[ -f "$sim_config" ]] || { echo "Missing sim config: $sim_config" >&2; exit 1; }
 echo "Sim config: $sim_config"

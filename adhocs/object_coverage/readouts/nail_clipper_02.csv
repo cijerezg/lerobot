@@ -1,0 +1,12 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep006_seg04.png,D4,105,,,D2,sure,lying alone below kit; lever end unclear
+frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep006_seg06.png,D4,105,,,D2,unsure,case partly under gripper
+frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg03.png,B2,,,,B2,unsure,clipper at case under gripper; occluded
+frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg14.png,B2,,,,,unsure,occluded; appears held in gripper; case not visible
+frames/nail_clipper/rebot_2026-10-17-merged-v1__ep001_seg13.png,E3,165,,,C3,sure,loose clipper right of headphone cases
+frames/nail_clipper/rebot_2026-10-17-merged-v1__ep001_seg24.png,C3,90,,,C3,unsure,no loose clipper; likely the one in the case
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep000_seg12.png,,,,,D4,unsure,not found; maybe object under gripper at A2
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep001_seg00.png,A2,90,,,A2,sure,small metallic clipper left of case
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep001_seg03.png,A2,,,,B2,unsure,occluded by gripper over case
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep002_seg03.png,D2,,,,D2,unsure,occluded by gripper over case
+frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep004_seg00.png,C2,0,,,D3,unsure,small item in C2 taken as clipper

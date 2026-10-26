@@ -28,20 +28,19 @@ matching data, normalization, and objective weights.
 Three sample-fit numbers sit beside the losses. Every measured frame also draws
 ``SAMPLE_COUNT`` action-expert chunks (seeded ``random_seed + global_idx + k``, one
 batched forward, normalized space, valid joints and unpadded chunk steps only), and
-an orthonormal DCT along the chunk axis splits the error of their mean against the
-GT chunk into a DC band and the bands above it. Energies are pooled over joints
-before any ratio is taken.
+an orthonormal DCT along the chunk axis splits the MSE of their mean against the
+GT chunk into a DC band and the bands above it. Both are plain mean squared errors
+in normalized action units, per step and per valid joint, and by Parseval they add
+up to the chunk MSE: ``offset + shape = action_mse``.
 
-``offset`` is the DC-band energy of (sample mean - GT) over the DC-band energy of
-(hold - GT), where hold repeats the current state across the chunk. 0 is exact; 1 is
-no better than holding still. It reads where the chunk is placed, not its motion.
-Both ``offset`` and ``shape`` headlines pool the energies over frames before dividing
-(bootstrap SEM); the per-frame ratios are kept for the distributions only.
+``offset`` is the DC-band part: the squared error of the chunk's mean position. It
+reads where the chunk is placed, not its motion.
 
-``shape`` is the energy of (sample mean - GT) in every band above DC over the GT
-chunk's own energy in those bands (hold has no motion, so that is the hold error).
-0 is exact; 1 is no better than a motionless chunk. It reads the motion profile
-independently of where the chunk sits.
+``shape`` is everything above DC: the squared error of the motion profile,
+independent of where the chunk sits.
+
+``hold_offset`` and ``hold_shape`` are the same two numbers for the hold-still chunk
+(the current state repeated), reported as a reference level, not as a divisor.
 
 ``collapse`` is the unbiased std over the samples, per joint per chunk step in
 normalized units, averaged over valid joints and steps. It is descriptive: low
@@ -184,33 +183,27 @@ def gap_z(val: np.ndarray, train: np.ndarray) -> float:
 
 
 def sample_fit(samples, gt, hold, valid_dims, n_steps: int) -> dict:
-    """``offset``, ``shape`` and ``collapse`` for one frame (module docstring).
+    """``offset``, ``shape``, ``collapse`` and the hold references for one frame.
 
     ``samples`` is ``[K, T, D]``, ``gt`` and ``hold`` are ``[T, D]``, all in normalized
     action space; ``valid_dims`` is a bool ``[D]`` mask and ``n_steps`` the unpadded
-    chunk length. Band energies are pooled over joints before the ratio, so a static
-    joint cannot blow the number up. A chunk with no GT motion has no ``shape``.
+    chunk length. ``offset`` and ``shape`` are MSEs (per step, per valid joint) and sum
+    to the sample mean's chunk MSE; ``hold_*`` is the same split for the hold chunk.
     """
     keep = torch.as_tensor(valid_dims, dtype=torch.bool)
     samples = torch.as_tensor(samples)[:, :n_steps, keep].double()
     gt = torch.as_tensor(gt)[:n_steps, keep].double()
     hold = torch.as_tensor(hold)[:n_steps, keep].double()
     dct = _orthonormal_dct_matrix(n_steps)
-    mean_energy = (dct @ (samples.mean(dim=0) - gt)).square().sum(dim=1)
-    hold_energy = (dct @ (hold - gt)).square().sum(dim=1)
-    dc = float(hold_energy[0])
-    motion = float(hold_energy[1:].sum())
-    # Numerator and denominator energies are kept per frame: the headline pools them
-    # over frames before dividing (pooled_ratio), so a near-motionless GT chunk, whose
-    # own ratio is huge, weighs in by its energy and not by its ratio.
+    cells = float(n_steps * int(keep.sum()))
+    mean_energy = (dct @ (samples.mean(dim=0) - gt)).square().sum(dim=1) / cells
+    hold_energy = (dct @ (hold - gt)).square().sum(dim=1) / cells
     return {
-        "offset": float(mean_energy[0]) / dc if dc > 0 else None,
-        "shape": float(mean_energy[1:].sum()) / motion if motion > 0 else None,
+        "offset": float(mean_energy[0]),
+        "shape": float(mean_energy[1:].sum()),
         "collapse": float(samples.std(dim=0).mean()),
-        "offset_num": float(mean_energy[0]),
-        "offset_den": dc,
-        "shape_num": float(mean_energy[1:].sum()),
-        "shape_den": motion,
+        "hold_offset": float(hold_energy[0]),
+        "hold_shape": float(hold_energy[1:].sum()),
     }
 
 
@@ -408,31 +401,6 @@ def group_mean(rows: list[dict], group_key: str, value_key: str) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def pooled_ratio(val_rows: list[dict], train_rows: list[dict], key: str, n_boot: int = 500) -> dict:
-    """``compare`` for a ratio metric: sum of numerators over sum of denominators per split.
-
-    The SEM is a bootstrap over frames. Frames whose own ratio is undefined (zero
-    denominator) still contribute their numerator energy.
-    """
-    entry: dict = {}
-    for split, rows in (("val", val_rows), ("train", train_rows)):
-        num, den = column(rows, f"{key}_num"), column(rows, f"{key}_den")
-        if num.size == 0:
-            continue
-        rng = np.random.RandomState(0)
-        draws = rng.randint(0, num.size, size=(n_boot, num.size))
-        boots = num[draws].sum(axis=1) / den[draws].sum(axis=1)
-        entry[split] = float(num.sum() / den.sum())
-        entry[f"{split}_sem"] = float(boots.std(ddof=1))
-        entry[f"{split}_n"] = int(num.size)
-    if "val" not in entry or "train" not in entry:
-        return entry
-    entry["gap"] = entry["val"] - entry["train"]
-    entry["ratio"] = entry["val"] / entry["train"] if entry["train"] != 0 else None
-    entry["z"] = entry["gap"] / float(np.sqrt(entry["val_sem"] ** 2 + entry["train_sem"] ** 2))
-    return entry
-
-
 def compare(val_rows: list[dict], train_rows: list[dict], key: str) -> dict:
     """Val and train means for one loss, with the standard errors and the gap."""
     val, train = column(val_rows, key), column(train_rows, key)
@@ -526,9 +494,8 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
         "loss_total": compare(val_rows, train_rows, "loss_total"),
     }
     summary.update({key: compare(val_rows, train_rows, key) for key in AUXILIARY_LOSS_KEYS})
-    summary["offset"] = pooled_ratio(val_rows, train_rows, "offset")
-    summary["shape"] = pooled_ratio(val_rows, train_rows, "shape")
-    summary["collapse"] = compare(val_rows, train_rows, "collapse")
+    summary.update({key: compare(val_rows, train_rows, key) for key in SAMPLE_FIT_KEYS})
+    summary.update({key: compare(val_rows, train_rows, key) for key in ("hold_offset", "hold_shape")})
 
     splits = (("val", val_rows), ("train", train_rows))
 
@@ -792,13 +759,18 @@ def render_sample_fit(summary, output_dir: str) -> None:
     for ax, (key, title, ylabel) in zip(
         axes,
         (
-            ("offset", "Offset — DC error / hold DC error", "ratio (0 exact, 1 hold)"),
-            ("shape", "Shape — non-DC error / GT motion energy", "ratio (0 exact, 1 motionless)"),
+            ("offset", "Offset — DC-band MSE of the sample mean", "MSE, normalized units"),
+            ("shape", "Shape — above-DC MSE of the sample mean", "MSE, normalized units"),
             ("collapse", f"Collapse — std over {SAMPLE_COUNT} samples", "normalized units"),
         ),
         strict=True,
     ):
         _pair_points(ax, summary[key], title, ylabel)
+        hold = summary.get(f"hold_{key}") or {}
+        if "val" in hold:
+            ax.axhline(hold["val"], color=VAL_COLOR, linestyle=":", linewidth=1)
+            ax.axhline(hold.get("train", hold["val"]), color=TRAIN_COLOR, linestyle=":", linewidth=1)
+            ax.annotate("hold", (1.45, hold["val"]), fontsize=8, va="center", color=VAL_COLOR)
     fig.suptitle(
         f"Sample fit — mean of {SAMPLE_COUNT} flow samples against the GT chunk, "
         "valid joints and unpadded steps only",
@@ -1385,13 +1357,14 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 )
                 for key, label, good, baseline, note in (
                     ("offset", "Sample offset (val)", "low", 0.0,
-                     f"DC-band energy of (mean of {SAMPLE_COUNT} flow samples $-$ GT) over the "
-                     "DC-band energy of (hold $-$ GT), orthonormal DCT along the chunk, energies "
-                     "pooled over valid joints and over frames. 0 exact, 1 no better than holding still."),
+                     f"DC-band MSE of (mean of {SAMPLE_COUNT} flow samples $-$ GT): orthonormal DCT "
+                     "along the chunk, per step and valid joint, normalized action units. The "
+                     "squared error of the chunk's mean position; offset + shape = chunk MSE. "
+                     "Compare with hold_offset.val, the same number for holding still."),
                     ("shape", "Sample shape (val)", "low", 0.0,
-                     "Energy of (sample mean $-$ GT) in every DCT band above DC over the GT "
-                     "chunk's energy in those bands (the hold error, since hold has no motion), "
-                     "pooled over frames. 0 exact, 1 no better than a motionless chunk."),
+                     "MSE of (sample mean $-$ GT) in every DCT band above DC, per step and valid "
+                     "joint, normalized action units: the squared error of the motion profile "
+                     "independent of placement. Compare with hold_shape.val, the GT motion energy."),
                     ("collapse", "Sample collapse (val)", "none", None,
                      f"Unbiased std over the {SAMPLE_COUNT} samples per joint per step, "
                      "normalized units, mean over valid joints and steps. Descriptive: low "
@@ -1401,10 +1374,18 @@ def _write_index(summary: dict, output_dir: str) -> None:
             ],
             *[
                 Metric(
+                    f"hold_{key}.val", f"Hold-still {key} (val)", good="none", fmt=3,
+                    note=f"The {key} MSE of the hold chunk (current state repeated) on the same "
+                    "frames: the level a policy that does not move would score.",
+                )
+                for key in ("offset", "shape")
+            ],
+            *[
+                Metric(
                     f"{key}.z", f"Sample {key} gap (standard errors)",
                     good="none" if key == "collapse" else "low", fmt=1, baseline=0.0,
                     note=f"Held-out minus training {key} in pooled SEM units"
-                    + (" (bootstrap over frames)." if key != "collapse" else ".") + provisional,
+                    + "." + provisional,
                 )
                 for key in SAMPLE_FIT_KEYS
             ],
@@ -1485,10 +1466,10 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 "Sample fit: offset, shape and collapse",
                 f"Mean of {SAMPLE_COUNT} seeded flow samples per frame against the GT chunk, "
                 "split by an orthonormal DCT along the chunk into the DC band (**left**, "
-                "placement; divided by the hold chunk's DC error) and the bands above it "
-                "(**middle**, motion profile; divided by the GT motion energy). 0 exact, 1 "
-                "no better than holding still. **Right** — std across the samples: read it "
-                "against the two ratios, since a tight fan on a wrong chunk is collapse, "
+                "placement MSE) and the bands above it (**middle**, motion-profile MSE); "
+                "normalized units, the two sum to the chunk MSE. The dotted level is the "
+                "hold-still chunk's value. **Right** — std across the samples: read it "
+                "against the two MSEs, since a tight fan on a wrong chunk is collapse, "
                 "not confidence. Train/val means with SEM.",
                 primary=True,
             ),

@@ -13,9 +13,11 @@ the camera's own uint8 frame), not from the online replay buffer, whose bf16 low
 storage would round the joint angles.
 
 Per-frame labels the recorded schema has no column for go to ``meta/online_labels.parquet``
-(episode_index, frame_index, index, is_intervention, subtask_index, subtask, truncated): a
-sidecar in the style of the annotation files, invisible to the loaders. The subtask text rides
-next to its index because the subtask vocabulary may be revised. ``truncated`` marks every
+(episode_index, frame_index, index, is_intervention, subtask_index, subtask, policy_index,
+truncated): a sidecar in the style of the annotation files, invisible to the loaders. The subtask
+text rides next to its index because the subtask vocabulary may be revised. ``policy_index`` is
+the resident model that produced the frame (console keys o/p; 0 unless a second checkpoint is
+loaded). ``truncated`` marks every
 frame of an episode that ended without ``done`` (a hardware fault or Ctrl-C mid-episode):
 ``finalize`` saves such an episode instead of discarding it, because the frames up to the
 fault are valid data (the follower stops the loop within 60 ms of a motor going silent).
@@ -69,7 +71,7 @@ class OnlineEpisodeRecorder:
         logger.info("[RECORDER] Recording online episodes to %s", self.root)
 
     def add_frame(
-        self, raw_obs: dict, action, *, is_intervention: bool, subtask_index: int, subtask: str
+        self, raw_obs: dict, action, *, is_intervention: bool, subtask_index: int, subtask: str, policy_index: int = 0
     ) -> None:
         """One frame = the robot observation the step was taken from + the executed action.
 
@@ -100,6 +102,7 @@ class OnlineEpisodeRecorder:
             "is_intervention": bool(is_intervention),
             "subtask_index": int(subtask_index),
             "subtask": subtask,
+            "policy_index": int(policy_index),
         })
 
     def save_episode(self, *, truncated: bool = False) -> None:

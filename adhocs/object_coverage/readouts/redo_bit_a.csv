@@ -1,0 +1,12 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg03_early.png,E3,60,,2,D3,unsure,bit right of box; second bit on D2/E2 line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg09_early.png,,,,0,D3,unsure,not found; no loose bit visible (arm over box)
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg15_early.png,,,,0,D3,unsure,not found; no loose bit visible (arm over box)
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg03_early.png,C3,75,,4,E2,unsure,left bit nearest box; on B3/C3 line
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg06_early.png,B2,105,,3,E2,unsure,on A2/B2 line; only left bit visible
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg09_early.png,B2,105,,3,E2,unsure,on A2/B2 line; only left bit
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg03_early.png,C3,15,,8,E4,unsure,lowest bit of loose cluster in C2-D3
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg03_early.png,E2,105,,3,B4,unsure,group unclear; may be under arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg06_early.png,A2,105,,3,B4,unsure,nearest visible bit; others may be under arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg09_early.png,A2,105,,3,B4,unsure,nearest visible bit; others may be under arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg12_early.png,A2,105,,3,B4,unsure,nearest visible bit; others may be under arm

@@ -1,0 +1,5 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/headphone_case/rebot_2026-10-21-annotated-v1__ep000_seg25.png,E3,30,NE,open,,sure,lid lies flat in F3; closed case in C4 ignored
+frames/headphone_case/rebot_2026-10-21-annotated-v1__ep001_seg08.png,F3,135,NW,open,,unsure,body with headphones in F3; lid lies flat in E2
+frames/headphone_case/rebot_2026-10-21-annotated-v1__ep005_seg00.png,E1,120,SE,open,,unsure,body with headphones in E1; lid flat in E2; arm near top
+frames/headphone_case/rebot_2026-10-21-annotated-v1__ep008_seg00.png,E2,120,NW,open,,unsure,body on E1/E2 line; lid flat in D1 at table edge

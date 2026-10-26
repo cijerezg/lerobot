@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg27.png,C2,30,,1,E4,unsure,single loose bit on C2/C3 line; box under gripper
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg00.png,B3,135,,6,B4,unsure,two touching bits in B3; slanted one hard to tell apart
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg03.png,B3,,,5,B4,unsure,occluded; group under arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg06.png,B3,,,4,B4,unsure,occluded; nearest bit likely under arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg09.png,B3,,,4,B4,unsure,occluded; nearest bit likely under arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg12.png,B3,,,4,B4,unsure,occluded; nearest bit likely under arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg15.png,A2,150,,3,B4,unsure,leftmost visible bit on A2/A3 line next to arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg18.png,A2,,,4,B4,unsure,occluded; left bits hidden by arm
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg19.png,A2,,,3,B4,unsure,occluded; gripper over A2
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg22.png,F2,150,,2,B4,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep006_seg00.png,B3,90,,8,B4,unsure,tape roll in C3
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep006_seg03.png,D4,165,,7,B4,unsure,bit on D3/D4 line right of tape roll
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep006_seg06.png,E3,150,,6,B4,sure,
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg03.png,B3,,,4,B4,unsure,occluded; tape roll at B2/C2 under arm

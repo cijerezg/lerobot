@@ -375,6 +375,10 @@ class Trainer(ABC):
             )
 
             return MolmoAct2Trainer()
+        if policy_type == "flux3_remote":
+            from lerobot.rl.flux3.rl_flux3_trainer import Flux3RemoteTrainer
+
+            return Flux3RemoteTrainer()
         raise ValueError(
             f"No Trainer registered for policy type {policy_type!r}. "
             f"Add a new rl_<model>.py and register it in Trainer.for_config()."

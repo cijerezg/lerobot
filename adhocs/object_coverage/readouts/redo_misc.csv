@@ -1,0 +1,9 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03_early.png,D3,60,,,,unsure,"small metallic clipper near D3 label; clipper case not seen"
+frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03_early.png,B3,0,,,D3,unsure,"tiny object at B3 label taken as clipper; extra_cell = metal tin guess"
+frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04_early.png,C3,,,,C4,unsure,occluded by arm; white case below gripper
+frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24_early.png,B2,90,,,B2,unsure,"blurry; clipper likely seated in case at B2"
+frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11_early.png,B2,90,,,B2,unsure,clipper likely seated in case at B2
+frames/bit_kit/rebot_additions_2026-10-04-annotated-v12-tasks1__ep020_seg02_early.png,,,,,,unsure,"not found; scene has cardboard boxes and books, no bit kit"
+frames/bit_kit/rebot_2026-10-14-annotated-v4__ep009_seg00_early.png,C3,165,,one_folded,,unsure,"partly occluded by arm; white card flap visible at B3"
+frames/headphone_case/rebot_2026-10-16-annotated-v1__ep006_seg11_early.png,E2,0,,open,,unsure,"blurry; dark case under arm at E2, lid not distinguishable"

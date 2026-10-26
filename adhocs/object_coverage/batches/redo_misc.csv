@@ -1,0 +1,9 @@
+object,image,clause,orig_image
+large_clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03_early.png,grasp the large nail clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03.png
+large_clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03_early.png,grasp the large nail clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03.png
+large_clipper,frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04.png
+large_clipper,frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24.png
+large_clipper,frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11.png
+bit_kit,frames/bit_kit/rebot_additions_2026-10-04-annotated-v12-tasks1__ep020_seg02_early.png,lift the flap with the shipping label,frames/bit_kit/rebot_additions_2026-10-04-annotated-v12-tasks1__ep020_seg02.png
+bit_kit,frames/bit_kit/rebot_2026-10-14-annotated-v4__ep009_seg00_early.png,grasp the outer edge of the flap with the white card,frames/bit_kit/rebot_2026-10-14-annotated-v4__ep009_seg00.png
+headphone_case,frames/headphone_case/rebot_2026-10-16-annotated-v1__ep006_seg11_early.png,grasp the headphone case lid,frames/headphone_case/rebot_2026-10-16-annotated-v1__ep006_seg11.png

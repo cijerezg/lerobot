@@ -1,0 +1,15 @@
+object,image,clause
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg27.png,grasp the bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg00.png,grasp the slanted bit of the two touching bits
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg03.png,grasp the bottom-left bit of the group
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg06.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg09.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg12.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg15.png,grasp the leftmost bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg18.png,grasp the right bit of the two bits on the left
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg19.png,grasp the leftmost bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg22.png,grasp the bit farthest from the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep006_seg00.png,grasp the bit nearest the tape roll on its left
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep006_seg03.png,grasp the bit nearest the tape roll on its right
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep006_seg06.png,grasp the bit right of the tape roll
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg03.png,"grasp the bit between the tape roll and the box, nearer the tape roll"

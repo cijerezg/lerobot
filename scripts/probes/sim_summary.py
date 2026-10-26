@@ -1,7 +1,7 @@
 """Closed-loop sim eval: the policy runs in the MuJoCo scenes of the eval set (run_sim_eval.sh, one task per scene from
 robots/rebot_b601_sim/tasks.py), and this summary turns one pass into a probe the viewers show.
 
-    python lerobot/scripts/probes/sim_summary.py <...>/validation/step_XXXXXXXX/sim_nail
+    python lerobot/scripts/probes/sim_summary.py <...>/validation/step_XXXXXXXX/sim
 
 Writes summary.json, summary.md and index.json next to the layout folders: one row per layout and episode from
 subtask_events.json (``reward`` = cumulative value of the furthest stage the scorer reached, ``success`` = its last
@@ -50,7 +50,7 @@ reward["mean"] = round(sum(tiers_present) / len(tiers_present), 3) if tiers_pres
 summary = dict(episodes=len(done), successes=sum(r["success"] for r in done), success_rate=round(sum(r["success"] for r in done) / len(done), 3) if done else None,
                reward=reward, layouts=per_layout, rows=rows)
 (args.sim_dir / "summary.json").write_text(json.dumps(summary, indent=1))
-lines = [f"# sim_nail: reward easy {reward['easy']} / hard {reward['hard']} / mean {reward['mean']}; {summary['successes']}/{summary['episodes']} episodes succeeded", "",
+lines = [f"# sim: reward easy {reward['easy']} / hard {reward['hard']} / mean {reward['mean']}; {summary['successes']}/{summary['episodes']} episodes succeeded", "",
          "| layout | tier | episodes | mean reward | success rate |", "|---|---|---|---|---|"]
 lines += [f"| {name} | {v['tier']} | {v['episodes']} | {v['mean_reward']} | {v['success_rate']} |" for name, v in per_layout.items()]
 lines += ["", "| layout | episode | reward | stage | success | steps done | furthest step | last event |", "|---|---|---|---|---|---|---|---|"]
@@ -72,6 +72,6 @@ metrics = [Metric("reward.mean", "Staged reward, mean of tiers", good="high", fm
            Metric("successes", "Episodes succeeded", good="high", fmt=0),
            Metric("episodes", "Episodes run", fmt=0)]
 metrics += [Metric(f"reward.{name}", f"Staged reward, {name} ({v['tier']})", good="high", fmt=3, note=v["task"]) for name, v in per_layout.items()]
-write_index(str(args.sim_dir), sys.modules[__name__], title="Sim Nail", group="Actions",
+write_index(str(args.sim_dir), sys.modules[__name__], title="Sim eval", group="Actions",
             claim="How far does the policy get on the sim tasks (easy and hard tiers) when it closes the loop?",
             metrics=metrics, panels=panels, summary=summary)

@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep000_seg00.png,D2,0,,,D3,sure,larger of two clippers; small one vertical in C2
+frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg00.png,D3,0,,,D3,unsure,larger clipper near C3/D3 line; small one angled in D3
+frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03.png,D2,,,,D2,unsure,occluded; large clipper not on table (held or under gripper at case)
+frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg00.png,B2,0,,,E2,sure,only loose clipper visible
+frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03.png,E2,,,,E2,unsure,occluded; gripper over case area
+frames/large_clipper/rebot_2026-10-14-annotated-v4__ep000_seg00.png,D4,15,,,B2,unsure,on D3/D4 line; other clipper in E3 at ~30
+frames/large_clipper/rebot_2026-10-14-annotated-v4__ep002_seg00.png,D2,150,,,A3,unsure,only loose clipper; another already in case
+frames/large_clipper/rebot_2026-10-14-annotated-v4__ep002_seg02.png,D2,150,,,A3,unsure,arm at case in A2-A3
+frames/large_clipper/rebot_2026-10-14-annotated-v4__ep004_seg00.png,D2,45,,,E1,unsure,other clipper horizontal near E1/E2
+frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg00.png,D3,90,,,C4,unsure,other clipper vertical in C3
+frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04.png,C3,,,,C4,unsure,occluded by arm
+frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg06.png,A3,150,,,B2,unsure,on A2/A3 line; small item near B2
+frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24.png,,,,,B2,unsure,not found
+frames/large_clipper/rebot_2026-10-16-annotated-v1__ep004_seg00.png,D2,105,,,C3,unsure,two similar clippers; other at C2/C3 line ~150

@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit_kit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep013_seg00.png,D3,15,E,flat,,sure,
+frames/bit_kit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep014_seg00.png,D2,60,NE,flat,,sure,center near D2/D3/E line
+frames/bit_kit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep015_seg00.png,B2,90,S,flat,,sure,
+frames/bit_kit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep016_seg00.png,C3,0,W,flat,,sure,
+frames/bit_kit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep017_seg04.png,C3,165,E,flat,,sure,
+frames/bit_kit/rebot_additions_2026-10-04-annotated-v12-tasks1__ep020_seg02.png,,,,,,unsure,not found; scene is a cardboard box with shipping label at C3-D3 under the arm
+frames/bit_kit/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg08.png,B3,15,W,one_folded,,unsure,bits flap appears folded; card flap open on right
+frames/bit_kit/rebot_teleop_2026-10-08-annotated-v1-tasks1__ep006_seg02.png,E2,90,N,one_folded,,unsure,bits flap appears folded; card flap open
+frames/bit_kit/rebot_teleop_2026-10-08-annotated-v1-tasks1__ep007_seg10.png,C3,45,NE,one_folded,,unsure,bits flap appears folded; card flap open
+frames/bit_kit/rebot_2026-10-14-annotated-v4__ep004_seg13.png,C3,0,E,flat,,sure,
+frames/bit_kit/rebot_2026-10-14-annotated-v4__ep006_seg00.png,C3,120,SE,flat,,sure,
+frames/bit_kit/rebot_2026-10-14-annotated-v4__ep009_seg00.png,C3,165,E,one_folded,,unsure,partly occluded by arm; no bits visible
+frames/bit_kit/rebot_2026-10-16-annotated-v1__ep000_seg37.png,C3,150,SE,flat,,sure,
+frames/bit_kit/rebot_2026-10-16-annotated-v1__ep002_seg00.png,D2,45,NE,flat,,sure,

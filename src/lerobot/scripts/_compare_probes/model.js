@@ -85,7 +85,7 @@ L.setBaseline=i=>{L.baseline=Number(i);L.emit();};
 L.setShared=value=>{L.shared=!!value;L.emit();};L.setArchived=value=>{L.archived=!!value;L.emit();};
 L.copyLink=async function(){save();try{await navigator.clipboard.writeText(location.href);L.flash('Comparison link copied');}catch(_){L.flash('Copy the current browser address to share this comparison.');}};
 L.flash=function(message){let el=document.getElementById('compare-toast');if(!el){el=document.createElement('div');el.id='compare-toast';el.setAttribute('role','status');document.body.append(el);}el.textContent=message;el.hidden=false;clearTimeout(L._toast);L._toast=setTimeout(()=>el.hidden=true,3500);};
-L.jumpSim=function(){const rows=L.probes().filter(p=>/sim/i.test(p.id));const p=rows.find(p=>L.panels(p.id,true).some(x=>x.kind==='video'))||rows.find(p=>p.id==='sim_nail')||rows[0];if(!p){L.flash('No simulation output at these checkpoints');return;}L.shared=false;L.view='aligned';L.probeId=p.id;L.panelKey=L.panels(p.id,true).find(x=>x.kind==='video')?.key||null;L.emit();};
+L.jumpSim=function(){const rows=L.probes().filter(p=>/sim/i.test(p.id));const p=rows.find(p=>L.panels(p.id,true).some(x=>x.kind==='video'))||rows.find(p=>p.id==='sim')||rows.find(p=>p.id==='sim_nail')||rows[0];if(!p){L.flash('No simulation output at these checkpoints');return;}L.shared=false;L.view='aligned';L.probeId=p.id;L.panelKey=L.panels(p.id,true).find(x=>x.kind==='video')?.key||null;L.emit();};
 L.metricTable=function(host,rows=L.metrics()){
  if(typeof host==='string')host=document.querySelector(host);if(!host)return;
  if(!rows.length){host.innerHTML='<p class="evidence-empty">No scalar metrics recorded at these checkpoints.</p>';return;}

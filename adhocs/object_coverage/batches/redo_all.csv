@@ -1,0 +1,44 @@
+object,image,clause,orig_image
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg03_early.png,grasp the bit next to the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg09_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg09.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg15_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg15.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg03_early.png,grasp the bit on the left nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg06_early.png,grasp the bit on the left farther from the robot base,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg06.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg09_early.png,grasp the bit on the left,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg09.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg03_early.png,grasp the bit farthest from the robot base,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg03_early.png,grasp the bottom-left bit of the group,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg06_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg06.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg09_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg09.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg12_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg12.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg18_early.png,grasp the right bit of the two bits on the left,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg18.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg19_early.png,grasp the leftmost bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg19.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg03_early.png,"grasp the bit between the tape roll and the box, nearer the tape roll",frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg12_early.png,grasp the bit next to the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg12.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg03_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg12_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg12.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg15_early.png,grasp the bit left of the box nearer the robot base,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg15.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg08_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg08.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg05_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg05.png
+bit_kit,frames/bit_kit/rebot_additions_2026-10-04-annotated-v12-tasks1__ep020_seg02_early.png,lift the flap with the shipping label,frames/bit_kit/rebot_additions_2026-10-04-annotated-v12-tasks1__ep020_seg02.png
+nail_clipper,frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep001_seg04_early.png,grasp the nail clipper,frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep001_seg04.png
+nail_clipper,frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep002_seg03_early.png,grasp the nail clipper,frames/nail_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep002_seg03.png
+large_clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03_early.png,grasp the large nail clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep003_seg03.png
+large_clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03_early.png,grasp the large nail clipper,frames/large_clipper/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep004_seg03.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep007_seg08_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-14-annotated-v4__ep007_seg08.png
+large_clipper,frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-14-annotated-v4__ep010_seg04.png
+bit_kit,frames/bit_kit/rebot_2026-10-14-annotated-v4__ep009_seg00_early.png,grasp the outer edge of the flap with the white card,frames/bit_kit/rebot_2026-10-14-annotated-v4__ep009_seg00.png
+bit,frames/bit/rebot_2026-10-14-annotated-v4__ep012_seg02_early.png,grasp the bit,frames/bit/rebot_2026-10-14-annotated-v4__ep012_seg02.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep001_seg09_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep001_seg09.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep002_seg08_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep002_seg08.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg09_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg09.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg28_early.png,grasp the small nail clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep003_seg28.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep004_seg02_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-16-annotated-v1__ep004_seg02.png
+large_clipper,frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-16-annotated-v1__ep003_seg24.png
+headphone_case,frames/headphone_case/rebot_2026-10-16-annotated-v1__ep006_seg11_early.png,grasp the headphone case lid,frames/headphone_case/rebot_2026-10-16-annotated-v1__ep006_seg11.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg03_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg03.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg14_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-17-merged-v1__ep000_seg14.png
+large_clipper,frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11_early.png,grasp the large nail clipper,frames/large_clipper/rebot_2026-10-17-merged-v1__ep000_seg11.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep000_seg12_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep000_seg12.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep001_seg03_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep001_seg03.png
+nail_clipper,frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep002_seg03_early.png,grasp the nail clipper,frames/nail_clipper/rebot_2026-10-21-annotated-v1__ep002_seg03.png
+bit,frames/bit/rebot_2026-10-21-annotated-v1__ep007_seg00_early.png,grasp the bit,frames/bit/rebot_2026-10-21-annotated-v1__ep007_seg00.png

@@ -182,3 +182,27 @@ def test_subtask_console_freeze_toggle():
     assert shared.frozen is False
     # The script cursor is untouched by the freeze key.
     assert shared.subtask_cursor == 0
+
+
+def test_subtask_console_model_swap_requires_freeze():
+    from types import SimpleNamespace
+
+    from lerobot.rl.subtask_console import SubtaskConsole
+
+    shared = RTCSharedState()
+    shared.policy_names = ["ckpt_a", "ckpt_b"]
+    console = SubtaskConsole(["grasp the cup"], "return to home", ["grasp the cup"], shared)
+    console._on_press(SimpleNamespace(char="p"))
+    assert shared.active_policy == 0  # not frozen: ignored
+    console._on_press(SimpleNamespace(char="f"))
+    console._on_press(SimpleNamespace(char="p"))
+    assert shared.active_policy == 1
+    console._on_press(SimpleNamespace(char="o"))
+    assert shared.active_policy == 0
+    console._on_press(SimpleNamespace(char="f"))
+    assert shared.frozen is False and shared.active_policy == 0
+    # A key for a model that is not loaded is a no-op.
+    shared.policy_names = ["ckpt_a"]
+    console._on_press(SimpleNamespace(char="f"))
+    console._on_press(SimpleNamespace(char="p"))
+    assert shared.active_policy == 0

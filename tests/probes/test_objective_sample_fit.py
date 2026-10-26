@@ -38,19 +38,22 @@ def test_exact_samples_score_zero():
     assert out["collapse"] == pytest.approx(0.0, abs=1e-12)
 
 
-def test_hold_samples_score_one_on_both_ratios():
+def test_hold_samples_score_the_hold_reference_and_sum_to_the_chunk_mse():
     gt, hold = _chunks()
     out = sample_fit(_samples(hold), gt, hold, VALID, T)
-    assert out["offset"] == pytest.approx(1.0)
-    assert out["shape"] == pytest.approx(1.0)
+    assert out["offset"] == pytest.approx(out["hold_offset"])
+    assert out["shape"] == pytest.approx(out["hold_shape"])
+    chunk_mse = float(((hold - gt)[:, VALID] ** 2).mean())
+    assert out["offset"] + out["shape"] == pytest.approx(chunk_mse)
 
 
-def test_motionless_chunk_at_the_right_level_scores_shape_one_offset_zero():
+def test_motionless_chunk_at_the_right_level_has_zero_offset_and_the_gt_motion_as_shape():
     gt, hold = _chunks()
     level = gt.mean(dim=0, keepdim=True).repeat(T, 1)  # right DC, no motion
     out = sample_fit(_samples(level), gt, hold, VALID, T)
     assert out["offset"] == pytest.approx(0.0, abs=1e-12)
-    assert out["shape"] == pytest.approx(1.0)
+    assert out["shape"] == pytest.approx(out["hold_shape"])
+    assert out["shape"] == pytest.approx(float(((gt - level)[:, VALID] ** 2).mean()))
 
 
 def test_collapse_is_the_unbiased_std_over_samples():
@@ -74,26 +77,8 @@ def test_padded_steps_and_dims_are_excluded():
     assert out["collapse"] == pytest.approx(0.0, abs=1e-12)
 
 
-def test_one_step_chunk_has_no_shape():
+def test_one_step_chunk_has_zero_shape():
     gt, hold = _chunks()
     out = sample_fit(_samples(gt), gt, hold, VALID, 1)
-    assert out["shape"] is None
+    assert out["shape"] == pytest.approx(0.0, abs=1e-12)
     assert out["offset"] == pytest.approx(0.0, abs=1e-12)
-
-
-def test_pooled_ratio_weighs_frames_by_energy_not_by_ratio():
-    from lerobot.probes.objective import pooled_ratio
-
-    # One frame with a big denominator and a modest ratio, one near-motionless frame
-    # whose own ratio is huge: the pooled headline must stay near the big frame's ratio.
-    val = [
-        {"offset_num": 0.5, "offset_den": 1.0, "offset": 0.5},
-        {"offset_num": 0.1, "offset_den": 0.001, "offset": 100.0},
-    ]
-    train = [{"offset_num": 0.25, "offset_den": 1.0, "offset": 0.25}]
-    entry = pooled_ratio(val, train, "offset", n_boot=50)
-    assert entry["val"] == pytest.approx(0.6 / 1.001)
-    assert entry["train"] == pytest.approx(0.25)
-    assert entry["val_n"] == 2 and entry["train_n"] == 1
-    assert entry["gap"] == pytest.approx(entry["val"] - entry["train"])
-    assert entry["train_sem"] == 0.0 and entry["val_sem"] > 0.0

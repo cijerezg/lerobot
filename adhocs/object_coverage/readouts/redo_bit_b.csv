@@ -1,0 +1,12 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg18_early.png,,,,2,B4,unsure,"not found: target likely under arm (B2-B3); visible loose bits only at E2 and F2, both still present next segment"
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg19_early.png,E2,75,,2,B4,unsure,leftmost of the two loose bits (other at F2)
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg03_early.png,,,,3,B4,unsure,"not found: tape roll and box under arm (B2-B4); visible bits E2, F2, E3"
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg12_early.png,,,,2,B4,unsure,"occluded: area next to box hidden by arm; visible bits E2, F2"
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg03_early.png,D4,45,,4,E3,sure,"other bits at A2, A3/B3 line, C4"
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg12_early.png,D4,45,,3,E3,sure,"other bits at B3, C4"
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg15_early.png,B3,15,,3,E3,unsure,"ambiguous: three bits left of box (B3, C4, D4); B3 closest to base"
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg08_early.png,,,,0,D3,unsure,not found: no loose bit visible; arm blurred at E1-F1
+frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg05_early.png,,,,0,D3,unsure,not found: no loose bit visible; arm at E1-F1
+frames/bit/rebot_2026-10-14-annotated-v4__ep012_seg02_early.png,E3,165,,1,B2,unsure,only small dark rod visible right of E3 label
+frames/bit/rebot_2026-10-21-annotated-v1__ep007_seg00_early.png,,,,0,D4,unsure,not found: no loose bit visible; arm over C2-C4 may hide it

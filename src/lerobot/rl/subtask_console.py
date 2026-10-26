@@ -22,6 +22,10 @@ and "The contact is ..." together with the step (r uses ``eval_home_precision`` 
 holds with it, the policy idles and nothing is recorded until the next press. It is
 for rearranging the scene mid-episode; the runtime clears it on episode start.
 
+``o`` / ``p`` select resident model 0 / 1 (``inference_alt_checkpoint_path`` loads model 1
+beside the primary; default 0). Only accepted while frozen: the unfreeze already resets the
+policy and clears the action queue, so the new model starts from a fresh observation.
+
 The listener is a global hook (no terminal focus required) and fires on its own
 thread, so neither the 30Hz executor nor the inference thread polls for input.
 
@@ -40,6 +44,7 @@ NEXT_KEY = "n"
 BACK_KEY = "b"
 HOME_KEY = "r"
 FREEZE_KEY = "f"
+MODEL_KEYS = {"o": 0, "p": 1}  # resident checkpoint to run; accepted only while frozen
 
 
 class SubtaskConsole:
@@ -86,6 +91,12 @@ class SubtaskConsole:
             FREEZE_KEY,
             steps,
         )
+        names = self.shared_state.policy_names
+        if len(names) > 1:
+            logger.info(
+                "[MODEL] %s. Freeze (f) first, then select; the swap takes effect on unfreeze.",
+                ", ".join(f"[{k}] model {i}: {names[i]}" for k, i in MODEL_KEYS.items() if i < len(names)),
+            )
 
     def stop(self) -> None:
         if self.listener is not None:
@@ -105,6 +116,8 @@ class SubtaskConsole:
         elif char == FREEZE_KEY:
             frozen = self.shared_state.toggle_freeze()
             logger.info("[FREEZE] %s", "freeze requested" if frozen else "unfreeze requested")
+        elif char in MODEL_KEYS:
+            logger.info("[MODEL] %s", self.shared_state.select_policy(MODEL_KEYS[char]))
 
     def _move(self, delta: int) -> None:
         cursor = self.shared_state.advance_subtask(delta)

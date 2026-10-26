@@ -1,0 +1,15 @@
+object,image,clause
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg00.png,grasp the bit nearest the robot base
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg03.png,grasp the bit on the left nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg06.png,grasp the bit on the left farther from the robot base
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg09.png,grasp the bit on the left
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg12.png,grasp the bit farthest from the robot base
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg15.png,grasp the bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg00.png,grasp the bit farthest from the robot base on the side away from the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg03.png,grasp the bit farthest from the robot base
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg06.png,grasp the bit farthest from the robot base
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg09.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg12.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg15.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg18.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg24.png,grasp the bit farther from the robot base

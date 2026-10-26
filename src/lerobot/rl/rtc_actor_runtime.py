@@ -243,6 +243,11 @@ class RTCSharedState:
         # Operator freeze (console key f): the follower holds its last target, the leader
         # holds with it, the policy idles and nothing is recorded until the next press.
         self.frozen = False
+        # Resident policies (console keys o/p): the inference worker rebinds to
+        # policies[active_policy] every cycle. A swap is accepted only while frozen, so
+        # the unfreeze reset (policy.reset + queue clear) lands on the new model.
+        self.active_policy = 0
+        self.policy_names: list[str] = []
         self.history_offsets: dict[str, list[int]] | None = None
         self.history_entries: deque | None = None
         # Current subtask: decoded by the high-level query, or walked by the operator
@@ -390,6 +395,16 @@ class RTCSharedState:
         with self.lock:
             self.frozen = not self.frozen
             return self.frozen
+
+    def select_policy(self, index: int) -> str:
+        """Console keys o/p. Returns the operator log line."""
+        with self.lock:
+            if index >= len(self.policy_names):
+                return f"no model {index} loaded"
+            if not self.frozen:
+                return f"model {index} ignored: freeze first (f), then select"
+            self.active_policy = index
+            return f"model {index} ({self.policy_names[index]}) active on unfreeze"
 
     def request_reset(self) -> None:
         with self.lock:
@@ -638,8 +653,13 @@ def rtc_inference_worker(
     device: torch.device,
     cfg,
     post_inference_hook=None,
+    policies: list[tuple] | None = None,
 ) -> None:
     """Background inference worker using RTC ActionQueue semantics.
+
+    ``policies`` ([(policy, preprocessor, postprocessor), ...], optional) are the resident
+    models; each cycle runs ``policies[shared_state.active_policy]``. Default: the single
+    ``policy``/``preprocessor``/``postprocessor`` passed positionally.
 
     ``post_inference_hook(latest_obs)`` (optional) is called once per cycle, in
     this thread, after the action chunk is merged. It runs in-thread on purpose:
@@ -648,7 +668,10 @@ def rtc_inference_worker(
     """
     try:
         logger.info("[RTC_INFERENCE] Thread started.")
-        _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state)
+        if policies is None:
+            policies = [(policy, preprocessor, postprocessor)]
+        for policy, preprocessor, _ in policies:
+            _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state)
         shared_state.policy_ready_event.set()
         latency_tracker = LatencyTracker()
         inference_step = 0
@@ -668,6 +691,7 @@ def rtc_inference_worker(
         inference_metadata = _constant_inference_metadata(cfg)
 
         while shared_state.running:
+            policy, preprocessor, postprocessor = policies[shared_state.active_policy]
             if shared_state.check_and_clear_parameter_update():
                 if parameters_queue is not None:
                     pull_new_policy_weights(policy, parameters_queue, device)
@@ -1243,6 +1267,7 @@ def rtc_env_worker(
                 recorder.add_frame(
                     raw_obs, executed_action,
                     is_intervention=is_intervening, subtask_index=subtask_idx_now, subtask=subtask_name_now or "",
+                    policy_index=shared_state.active_policy,
                 )
             if videos is not None and not frozen:
                 videos.put(raw_obs)
@@ -1304,6 +1329,9 @@ def rtc_env_worker(
                     interaction_step, sum_reward_episode, done, truncated, info_success, info_terminate,
                 )
                 shared_state.set_episode_active(False)
+                if auto_subtasks is not None:
+                    # Snapshot before the park: the sim's park resets the scene and with it the scorer.
+                    episode_record = dict(episode=shared_state.episode_counter, success=bool(info_success), reward=auto_subtasks.reward, stage=auto_subtasks.stage_name, events=list(auto_subtasks.events))
                 _return_to_rest(online_env, teleop_device, cfg.env.fps, leader_torqued)
                 leader_torqued = False
                 if recorder is not None:
@@ -1313,7 +1341,7 @@ def rtc_env_worker(
                 if auto_subtasks is not None:
                     events_path = Path(cfg.output_dir) / "subtask_events.json"
                     past = json.loads(events_path.read_text()) if events_path.exists() else []
-                    events_path.write_text(json.dumps(past + [dict(episode=shared_state.episode_counter, success=bool(info_success), reward=auto_subtasks.reward, stage=auto_subtasks.stage_name, events=auto_subtasks.events)], indent=1))
+                    events_path.write_text(json.dumps(past + [episode_record], indent=1))
 
                 if standalone:
                     if shared_state.is_logging_episode:
@@ -1547,6 +1575,37 @@ def _merge_subtask_metadata(constants: dict | None, shared_state: RTCSharedState
     return {**constants, **shared_state.subtask_metadata_snapshot()}
 
 
+def _build_inference_policy(cfg, trainer, device, should_init_critic: bool) -> tuple:
+    """Policy + processors from ``cfg.policy.pretrained_path``, on ``device``, compiled when asked."""
+    logger.info("[RTC_INFERENCE] Building policy and processors from %s...", cfg.policy.pretrained_path)
+    policy = trainer.make_policy(cfg)
+    if should_init_critic and not hasattr(policy, "critic"):
+        init_critic = getattr(policy, "init_critic", None)
+        if callable(init_critic):
+            init_critic()
+    policy = policy.to(device).eval()
+    preprocessor, postprocessor = trainer.make_processors(cfg)
+    policy.preprocessor = preprocessor
+    policy.postprocessor = postprocessor
+
+    if getattr(cfg.policy, "torch_compile", False):
+        import torch._dynamo as _dynamo
+        _dynamo.config.suppress_errors = True
+        try:
+            action_expert = policy._action_expert()
+            action_expert.forward_with_context = torch.compile(
+                action_expert.forward_with_context,
+                mode="reduce-overhead",
+                fullgraph=False,
+            )
+            logger.info("[RTC_INFERENCE] torch.compile applied to action expert.")
+        except Exception as e:
+            logger.warning("[RTC_INFERENCE] Could not compile action expert: %s", e)
+    if getattr(policy.config, "rtc_config", None) is None or not policy.config.rtc_config.enabled:
+        raise RuntimeError("RTC inference requires policy.config.rtc_config.enabled=True")
+    return policy, preprocessor, postprocessor
+
+
 def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTCSharedState, n_calls: int = 2) -> None:
     """First forwards on a deployment-shaped batch before the operator can start an
     episode: lazy CUDA init, cudnn autotune and (when enabled) compile/graph capture land
@@ -1621,33 +1680,23 @@ def act_with_policy_rtc_inference(
         rerun_queue = queue.Queue(maxsize=2)
         Thread(target=_rerun_log_worker, args=(rerun_queue,), daemon=True, name="rerun_log").start()
 
-    logger.info("[RTC_INFERENCE] Building policy and processors...")
-    policy = trainer.make_policy(cfg)
     should_init_critic = not bool(getattr(cfg, "skip_critic", False)) and int(getattr(cfg, "episode_logging_freq", 0) or 0) > 0
-    if should_init_critic and not hasattr(policy, "critic"):
-        init_critic = getattr(policy, "init_critic", None)
-        if callable(init_critic):
-            init_critic()
-    policy = policy.to(device).eval()
-    preprocessor, postprocessor = trainer.make_processors(cfg)
-    policy.preprocessor = preprocessor
-    policy.postprocessor = postprocessor
-
-    if getattr(cfg.policy, "torch_compile", False):
-        import torch._dynamo as _dynamo
-        _dynamo.config.suppress_errors = True
-        try:
-            action_expert = policy._action_expert()
-            action_expert.forward_with_context = torch.compile(
-                action_expert.forward_with_context,
-                mode="reduce-overhead",
-                fullgraph=False,
-            )
-            logger.info("[RTC_INFERENCE] torch.compile applied to action expert.")
-        except Exception as e:
-            logger.warning("[RTC_INFERENCE] Could not compile action expert: %s", e)
-    if getattr(policy.config, "rtc_config", None) is None or not policy.config.rtc_config.enabled:
-        raise RuntimeError("RTC inference requires policy.config.rtc_config.enabled=True")
+    policy, preprocessor, postprocessor = _build_inference_policy(cfg, trainer, device, should_init_critic)
+    policies = [(policy, preprocessor, postprocessor)]
+    policy_names = [str(cfg.policy.pretrained_path)]
+    alt_path = getattr(cfg, "inference_alt_checkpoint_path", None)
+    if alt_path is not None:
+        # Model 1 (console key p). Same policy config, so the architecture matches by
+        # construction; its own processor stats, else _saved_processor_path would fall
+        # back to another checkpoint's silently.
+        alt_path = Path(alt_path).expanduser().resolve()
+        if not (alt_path / "policy_preprocessor.json").is_file():
+            raise FileNotFoundError(f"inference_alt_checkpoint_path has no policy_preprocessor.json: {alt_path}")
+        primary_path = cfg.policy.pretrained_path
+        cfg.policy.pretrained_path = alt_path
+        policies.append(_build_inference_policy(cfg, trainer, device, should_init_critic=False))
+        cfg.policy.pretrained_path = primary_path
+        policy_names.append(str(alt_path))
 
     logger.info("[RTC_INFERENCE] Setting up environment...")
     send_actions_to_robot = bool(getattr(cfg, "inference_send_actions_to_robot", True))
@@ -1669,6 +1718,7 @@ def act_with_policy_rtc_inference(
 
         shared = RTCSharedState()
         shared.running = not shutdown_event.is_set()
+        shared.policy_names = policy_names
         memory_cfg = getattr(cfg.policy, "memory", None)
         history_offsets = _rig_history_offsets(
             ReplayBuffer._normalize_history_offsets(
@@ -1700,6 +1750,8 @@ def act_with_policy_rtc_inference(
         # vocabulary where they match (else -1) for the buffer's subtask_index column.
         subtask_console = make_subtask_console(cfg, trainer, preprocessor, shared)
         auto_subtasks = getattr(online_env.robot, "subtask_scorer", None)  # sim robot with auto_subtasks: no console keys needed
+        if len(policies) > 1 and (subtask_console is None or auto_subtasks is not None):
+            raise RuntimeError("inference_alt_checkpoint_path needs the operator console (policy.eval_subtasks) for the o/p keys")
 
         post_inference_hook = None
         if post_inference_hook_factory is not None:
@@ -1721,6 +1773,7 @@ def act_with_policy_rtc_inference(
                 cfg,
                 post_inference_hook,
             ),
+            kwargs={"policies": policies},
             daemon=True,
             name="rtc_inference",
         )

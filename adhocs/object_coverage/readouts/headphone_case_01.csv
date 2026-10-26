@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/headphone_case/rebot_2026-10-16-annotated-v1__ep000_seg09.png,A1,165,SW,open,,unsure,body on A1/B1 line; lid lies flat in A2
+frames/headphone_case/rebot_2026-10-16-annotated-v1__ep002_seg02.png,B3,0,S,open,,sure,lid lies flat in B3/B4
+frames/headphone_case/rebot_2026-10-16-annotated-v1__ep002_seg04.png,B3,135,SW,open,,sure,lid in A4/B4; arm partly over body
+frames/headphone_case/rebot_2026-10-16-annotated-v1__ep003_seg12.png,D3,90,W,open,,sure,lid lies flat in C3
+frames/headphone_case/rebot_2026-10-16-annotated-v1__ep006_seg09.png,F1,135,SW,open,,unsure,case in E1/F1/E2 near arm; body vs lid unclear
+frames/headphone_case/rebot_2026-10-16-annotated-v1__ep006_seg11.png,E2,135,SW,open,,unsure,partly occluded by arm base; lid in D3; body vs lid unclear
+frames/headphone_case/rebot_2026-10-17-merged-v1__ep000_seg06.png,D2,90,W,open,,sure,lid lies flat in C2/C3
+frames/headphone_case/rebot_2026-10-17-merged-v1__ep000_seg20.png,D2,,,half,,unsure,lid appears raised; hinge side unclear
+frames/headphone_case/rebot_2026-10-17-merged-v1__ep001_seg09.png,B2,45,NW,open,,unsure,two open cases; chose left one (later closed); other open case with headphones at E2
+frames/headphone_case/rebot_2026-10-17-merged-v1__ep001_seg11.png,B2,45,NW,open,,unsure,two open cases; chose left one (later closed); other open case with headphones at E2
+frames/headphone_case/rebot_2026-10-17-merged-v1__ep001_seg19.png,E2,90,E,open,,sure,lid flat in F2/F3; left case now closed in C2
+frames/headphone_case/rebot_2026-10-21-annotated-v1__ep000_seg03.png,B4,45,NW,open,,sure,case with headphones; lid in A3; second empty open case at E3/F3 ignored
+frames/headphone_case/rebot_2026-10-21-annotated-v1__ep000_seg21.png,E3,135,NE,open,,unsure,body on E3/E4/F boundary; lid in F2; closed case at C4 ignored
+frames/headphone_case/rebot_2026-10-21-annotated-v1__ep000_seg23.png,E3,105,E,open,,sure,lid in F3 near gripper; closed case at C4 ignored

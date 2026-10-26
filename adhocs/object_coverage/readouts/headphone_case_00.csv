@@ -1,0 +1,15 @@
+image,cell,angle,facing,state,extra_cell,confidence,note
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep000_seg00.png,D3,150,NE,open,,unsure,body on D3/E3 line; lid in E2
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep001_seg00.png,B2,165,SW,open,,unsure,body spans B2-C3; lid in B3/B4
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep001_seg02.png,B3,0,S,open,,unsure,gripper over body top; lid in B4
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep002_seg00.png,E3,0,N,open,,unsure,body on D3/E3 line; lid in E2
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep003_seg00.png,C3,90,W,open,,sure,lid in B3
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep003_seg02.png,D3,90,W,open,,sure,lid in B3/C3
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep004_seg00.png,E3,165,NE,open,,unsure,lid in E2/F2
+frames/headphone_case/rebot_additions_2026-10-04-annotated-v12-tasks1__ep004_seg02.png,E3,165,NE,open,,unsure,arm near body; lid in E2/F2
+frames/headphone_case/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep002_seg07.png,E2,0,S,open,,sure,lid in E3
+frames/headphone_case/rebot_teleop_2026-10-08-annotated-v1-tasks1__ep008_seg02.png,E2,135,W,open,,unsure,lid in D2
+frames/headphone_case/rebot_teleop_2026-10-08-annotated-v1-tasks1__ep009_seg02.png,C3,0,NW,open,,unsure,body on B/C line; lid in A2/B2
+frames/headphone_case/rebot_teleop_2026-10-08-annotated-v1-tasks1__ep009_seg04.png,C3,90,W,open,,sure,lid in A3/B3
+frames/headphone_case/rebot_2026-10-14-annotated-v4__ep008_seg25.png,F1,90,W,open,,unsure,body on F1/F2 line; lid in E1/E2
+frames/headphone_case/rebot_2026-10-14-annotated-v4__ep012_seg00.png,D3,90,W,open,,sure,lid in C3

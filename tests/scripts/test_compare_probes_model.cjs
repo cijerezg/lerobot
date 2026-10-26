@@ -27,7 +27,7 @@ function viewer(hash = '', explicit = false) {
           400: [{ file: 'plot.png', kind: 'image', primary: true }],
           800: [{ file: 'plot.png', kind: 'image', primary: true }],
         } },
-        { id: 'sim_nail', title: 'Simulation', group: 'Actions', metrics: [], panels: {
+        { id: 'sim', title: 'Simulation', group: 'Actions', metrics: [], panels: {
           400: [{ file: 'ep0/videos/ep0_top.mp4', kind: 'video', primary: true }],
           800: [{ file: 'ep0/videos/ep0_top.mp4', kind: 'video', primary: true }],
         } },
@@ -62,9 +62,9 @@ test('URL state restores the selected view, baseline, metric, and locked steps',
 
 test('same-tab links restore state and discard a lock inconsistent with their checkpoints', () => {
   const { model, location, events } = viewer();
-  location.hash = '#probe=sim_nail&view=aligned&steps=400,800&locked=1&baseline=1';
+  location.hash = '#probe=sim&view=aligned&steps=400,800&locked=1&baseline=1';
   events.hashchange();
-  assert.equal(model.probeId, 'sim_nail');
+  assert.equal(model.probeId, 'sim');
   assert.equal(model.view, 'aligned');
   assert.equal(model.baseline, 1);
   assert.equal(model.locked, false);
@@ -98,6 +98,6 @@ test('simulation shortcut opens playable aligned evidence and archive is opt-in'
   assert.equal(model.probes().some(p => p.id === 'old_jacobian'), true);
   model.jumpSim();
   assert.equal(model.view, 'aligned');
-  assert.equal(model.probeId, 'sim_nail');
+  assert.equal(model.probeId, 'sim');
   assert.equal(model.panelKey, 'ep0/videos/ep0_top.mp4');
 });

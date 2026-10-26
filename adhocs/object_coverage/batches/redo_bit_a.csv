@@ -1,0 +1,12 @@
+object,image,clause,orig_image
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg03_early.png,grasp the bit next to the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg09_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep000_seg09.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg15_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep002_seg15.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg03_early.png,grasp the bit on the left nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg06_early.png,grasp the bit on the left farther from the robot base,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg06.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg09_early.png,grasp the bit on the left,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep003_seg09.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg03_early.png,grasp the bit farthest from the robot base,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep004_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg03_early.png,grasp the bottom-left bit of the group,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg06_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg06.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg09_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg09.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg12_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg12.png

@@ -96,12 +96,14 @@ def _fallback_panels(probe_dir: Path) -> list[dict]:
 
     Subdirectories are kept in the path: probes fan out as ``ep0000_L00/*.mp4``
     or ``ep0000_t0p50/L28/*.mp4``, and the UI turns those levels into selectors.
+    ``cache/`` is a probe's scratch space (representation thumbnails, activation
+    arrays), not output, so it is skipped.
     """
     found = []
     for path in probe_dir.rglob("*"):
         if path.is_file() and path.suffix.lower() in MEDIA_SUFFIXES:
             rel = path.relative_to(probe_dir)
-            if len(rel.parts) <= MAX_PANEL_DEPTH:
+            if rel.parts[0] != "cache" and len(rel.parts) <= MAX_PANEL_DEPTH:
                 found.append(rel.as_posix())
     found.sort(key=_natural_key)
     # Without a manifest, the only signal for what matters is layout: probes put

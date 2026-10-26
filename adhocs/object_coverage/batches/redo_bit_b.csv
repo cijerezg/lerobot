@@ -1,0 +1,12 @@
+object,image,clause,orig_image
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg18_early.png,grasp the right bit of the two bits on the left,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg18.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg19_early.png,grasp the leftmost bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep005_seg19.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg03_early.png,"grasp the bit between the tape roll and the box, nearer the tape roll",frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg12_early.png,grasp the bit next to the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep007_seg12.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg03_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg03.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg12_early.png,grasp the bit nearest the box,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg12.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg15_early.png,grasp the bit left of the box nearer the robot base,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep008_seg15.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg08_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg08.png
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg05_early.png,grasp the bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg05.png
+bit,frames/bit/rebot_2026-10-14-annotated-v4__ep012_seg02_early.png,grasp the bit,frames/bit/rebot_2026-10-14-annotated-v4__ep012_seg02.png
+bit,frames/bit/rebot_2026-10-21-annotated-v1__ep007_seg00_early.png,grasp the bit,frames/bit/rebot_2026-10-21-annotated-v1__ep007_seg00.png

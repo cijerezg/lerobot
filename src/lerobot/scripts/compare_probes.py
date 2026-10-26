@@ -43,7 +43,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
+import os
 import re
 import threading
 import webbrowser
@@ -52,11 +54,57 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from lerobot.scripts.view_probes import _json_response, _send_file, build_index, resolve_validation_dir
 
 MAX_RUNS = 4
+
+# The two cameras the Objective page's frame panel shows, by the dataset column they read.
+FRAME_CAMERAS = {"top": "observation.images.external_0", "wrist": "observation.images.wrist_0"}
+
+
+class FrameStore:
+    """Single dataset frames, decoded on demand for the Objective page's frame panel.
+
+    Roots are restricted to the ``source_root`` values in the compared runs' objective
+    ``per_frame`` rows, read once on first use; datasets are opened once per root and
+    kept for the server's lifetime; one frame is decoded per request, nothing is preloaded.
+    """
+
+    def __init__(self, sources: list[CompareSource]):
+        self._sources = sources
+        self._roots: set[str] | None = None
+        self._datasets: dict[str, object] = {}
+        self._lock = threading.Lock()
+
+    def allowed_roots(self) -> set[str]:
+        if self._roots is None:
+            roots: set[str] = set()
+            for source in self._sources:
+                for path in source.val_dir.glob("step_*/objective/objective.json"):
+                    with path.open() as file:
+                        roots.update(row["source_root"] for row in json.load(file).get("per_frame", []))
+            self._roots = roots
+        return self._roots
+
+    def jpeg(self, root: str, idx: int, cam: str) -> bytes:
+        from PIL import Image
+
+        from lerobot.probes.utils import as_image, load_extra_dataset
+
+        if root not in self.allowed_roots():
+            raise FileNotFoundError(f"{root} is not a source of the compared runs' objective probes")
+        key = FRAME_CAMERAS[cam]
+        with self._lock:
+            dataset = self._datasets.get(root)
+            if dataset is None:
+                dataset = load_extra_dataset(os.path.basename(os.path.normpath(root)), root)
+                self._datasets[root] = dataset
+            frame = dataset[idx]
+        buffer = io.BytesIO()
+        Image.fromarray(as_image(frame[key])).save(buffer, format="JPEG", quality=85)
+        return buffer.getvalue()
 
 # ``frame_p10_ep0002_fr004248.png`` — the trailing episode and frame are what makes an
 # otherwise identical panel unique to its run.
@@ -217,14 +265,18 @@ def build_compare_index(sources: list[CompareSource]) -> dict:
 
 
 def make_compare_handler(sources: list[CompareSource]) -> type[BaseHTTPRequestHandler]:
+    frames = FrameStore(sources)
+
     def asset_path(source_index: int, relative: str) -> Path:
         if not 0 <= source_index < len(sources):
             raise FileNotFoundError(relative)
         root = sources[source_index].val_dir
-        path = (root / unquote(relative)).resolve()
-        if not path.is_relative_to(root) or not path.is_file():
+        # Containment is checked on the unresolved path: a probe dir may be a symlink to
+        # another run's validation tree (sim results linked beside an objective step).
+        path = root / unquote(relative)
+        if ".." in path.relative_to(root).parts or not path.is_file():
             raise FileNotFoundError(relative)
-        return path
+        return path.resolve()
 
     class CompareRequestHandler(BaseHTTPRequestHandler):
         server_version = "ProbeCompare/1.0"
@@ -252,10 +304,35 @@ def make_compare_handler(sources: list[CompareSource]) -> type[BaseHTTPRequestHa
                 self._handle_ui(path, head_only=False)
             elif path == "/api/index":
                 _json_response(self, build_compare_index(sources))
+            elif path == "/api/frame":
+                self._handle_frame(parse_qs(urlparse(self.path).query))
             elif path.startswith("/asset/"):
                 self._handle_asset(path.removeprefix("/asset/"), head_only=False)
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
+
+        def _handle_frame(self, query: dict[str, list[str]]) -> None:
+            """One camera frame as JPEG; 404 with the reason when the root cannot be served."""
+            try:
+                body = frames.jpeg(query["root"][0], int(query["idx"][0]), query["cam"][0])
+            except Exception as exc:  # noqa: BLE001 — the reason is the response
+                reason = f"{type(exc).__name__}: {exc}"
+                payload = json.dumps({"error": reason}).encode("utf-8")
+                self.send_response(HTTPStatus.NOT_FOUND)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "max-age=3600")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
         def _handle_ui(self, path: str, head_only: bool) -> None:
             try:

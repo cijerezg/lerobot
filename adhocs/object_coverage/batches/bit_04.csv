@@ -1,0 +1,15 @@
+object,image,clause
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep009_seg01.png,grasp the bit nearest the box
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep009_seg02.png,grasp the bit right of the bit nearest the robot base
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep010_seg00.png,grasp the leftmost bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg00.png,grasp the blue bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg03.png,grasp the yellow bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg06.png,grasp the bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep011_seg08.png,grasp the bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg00.png,grasp the blue bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg03.png,grasp the bit
+bit,frames/bit/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1__ep012_seg05.png,grasp the bit
+bit,frames/bit/rebot_teleop_2026-10-07-annotated-v1-tasks1__ep002_seg09.png,grasp the bit
+bit,frames/bit/rebot_2026-10-14-annotated-v4__ep003_seg00.png,grasp the bit
+bit,frames/bit/rebot_2026-10-14-annotated-v4__ep008_seg00.png,grasp the bit
+bit,frames/bit/rebot_2026-10-14-annotated-v4__ep012_seg02.png,grasp the bit
