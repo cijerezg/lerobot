@@ -18,6 +18,7 @@ from lerobot.datasets.diverse_actor_selection import (
     open_federated_corpus,
     select_actor_anchors,
 )
+from lerobot.datasets.diverse_corpus import SPEED_ATOMS_VIEW
 from lerobot.rl.buffer import concatenate_variable_dim_batch_transitions
 from lerobot.rl.data_sources.diverse_actor_buffer import DiverseActorBuffer, DiverseSampleSpec
 from lerobot.rl.data_sources.diverse_actor_cache import (
@@ -375,10 +376,10 @@ def _write_yam_corpus(root: Path, height: int, width: int) -> None:
             "atom_index": 0, "start_timestep": 0, "end_timestep_exclusive": YAM_FRAMES,
             "subtask": "grasp the duster", "speed": 3}
     for name, rows in (("episodes.jsonl", [record]), ("actor_anchors_5hz.jsonl", anchors),
-                       ("subtask_atoms.jsonl", [atom]), ("speed_atoms_hybrid_v1.jsonl", [atom])):
+                       ("subtask_atoms.jsonl", [atom]), (SPEED_ATOMS_VIEW, [atom])):
         (common / name).write_text("".join(json.dumps(row) + "\n" for row in rows))
     (root / "fmb").mkdir()
-    for name in ("episodes.jsonl", "actor_anchors_5hz.jsonl", "subtask_atoms.jsonl", "speed_atoms_hybrid_v1.jsonl"):
+    for name in ("episodes.jsonl", "actor_anchors_5hz.jsonl", "subtask_atoms.jsonl", SPEED_ATOMS_VIEW):
         (root / "fmb" / name).write_text("")
 
 

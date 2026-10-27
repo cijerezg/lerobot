@@ -2,6 +2,8 @@
 
 The speed scale remains anchored to v5 training states. Duration can move the
 continuous score by at most 0.35 of one bucket; task quality is never an input.
+frame_runs turns the per-frame score into the frame-level label the trainer reads
+(2026-10-26): the rounded score, with no run shorter than MIN_RUN_SECONDS.
 """
 from __future__ import annotations
 
@@ -13,6 +15,8 @@ LOCAL_SECONDS=1.0
 DURATION_WEIGHT=0.2
 MAX_DURATION_ADJUSTMENT=0.35
 FINAL_SECONDS=0.4
+# One action chunk (30 steps at 30 Hz): a shorter run is absorbed by a neighbour.
+MIN_RUN_SECONDS=1.0
 
 
 def quantize(scores):
@@ -66,3 +70,23 @@ def hybrid_trace(q, rate, atoms, sorted_training_values):
         motion[start:end]=uniform_filter1d(motion[start:end],size=max(1,round(FINAL_SECONDS*rate)),mode='nearest')
     return {'joint_speed_rad_s':local,'motion_score':motion,'duration_score':prior,'speed_score':score,
             'valid':np.isfinite(score),'supervision_mask':mask}
+
+
+def frame_runs(scores, rate):
+    """Frame-level label of one contiguous stretch as runs [(start, end_exclusive, speed, mean_score)].
+
+    scores holds one continuous score per frame (the trace's t -> t+1 score sits on frame
+    t); a frame without a finite score counts as 3, the default for unscorable motion. Each
+    frame takes quantize(score); then, shortest first, every run under MIN_RUN_SECONDS takes
+    the label of the neighbouring run closer to its mean score, so no run is shorter than
+    one action chunk unless the whole stretch is.
+    """
+    x=np.where(np.isfinite(scores),scores,3.)
+    label=quantize(x).astype(int);n=max(1,round(MIN_RUN_SECONDS*rate))
+    while True:
+        cuts=np.r_[0,np.flatnonzero(np.diff(label))+1,len(label)];lengths=np.diff(cuts)
+        if len(lengths)==1 or lengths.min()>=n:break
+        i=int(np.argmin(lengths));a,b=cuts[i],cuts[i+1]
+        neighbours=([label[a-1]] if i>0 else [])+([label[b]] if i<len(lengths)-1 else [])
+        label[a:b]=min(neighbours,key=lambda v:abs(v-x[a:b].mean()))
+    return [(int(a),int(b),int(label[a]),float(x[a:b].mean())) for a,b in zip(cuts[:-1],cuts[1:])]

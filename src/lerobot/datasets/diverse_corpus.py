@@ -53,9 +53,12 @@ FUTURE_FPS = 30.0
 #                                (fast failed attempts read as slow)
 #   speed_atoms_state_v1.jsonl   v5, joint-motion quintiles per robot group — diverse only
 #   speed_atoms_hybrid_v1.jsonl  v6, 1 s smoothed motion nudged <= 0.35 bucket toward the
-#                                duration label — ADOPTED 2026-09-09, the only method that
-#                                also exists for ReBot (meta/speed_hybrid_v1.parquet, v7)
-SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"
+#                                duration label, one median per atom — adopted 2026-09-09,
+#                                rejected 2026-10-26 (one speed over a whole atom)
+#   speed_runs_hybrid_v1.jsonl   the same v6 trace per frame: rounded score, runs under 1 s
+#                                absorbed (hybrid_motion_speed.frame_runs); rows are runs, not
+#                                atoms — ADOPTED 2026-10-26, as ReBot (meta/speed_hybrid_v1_runs.parquet)
+SPEED_ATOMS_VIEW = "speed_runs_hybrid_v1.jsonl"
 # Precision (1-5) and contact (code 0-14, annotation/vocab.py) sidecars, same row
 # shape as the speed atoms. Optional: a store without the file reads as no rows, every
 # anchor gets -1 and its prompt omits the clause. Not part of the cache key.
@@ -197,9 +200,8 @@ class DiverseCorpus:
         return self._subtask_atom_rows
 
     def speed_atoms(self) -> list[dict[str, Any]]:
-        """Speed labels per reviewed subtask atom: one row per (episode_id,
-        parent_interval_index, atom_index) with the atom's native ``start_timestep`` /
-        ``end_timestep_exclusive`` and ``speed`` 1-5 (file: SPEED_ATOMS_VIEW)."""
+        """Frame-level speed labels: runs of one ``speed`` 1-5 with native ``start_timestep`` /
+        ``end_timestep_exclusive``, tiling every stretch of reviewed atoms (file: SPEED_ATOMS_VIEW)."""
         if self._speed_rows is None:
             self._speed_rows = _read_jsonl(self.root / SPEED_ATOMS_VIEW)
         return self._speed_rows

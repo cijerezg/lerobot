@@ -476,12 +476,13 @@ class ReplayBuffer:
         contact_rows: list[dict] | None = None,
     ) -> None:
         """π0.7-style metadata columns from meta/episode_metadata.parquet +
-        meta/mistakes.parquet + meta/speed.parquet (offline buffers; written by
-        the annotation pass, lerobot/annotation; loaded via load_metadata_rows),
+        meta/mistakes.parquet + the speed table (REBOT_SPEED_TABLE; offline buffers;
+        written by the annotation pass, lerobot/annotation; loaded via load_metadata_rows),
         plus the optional meta/precision.parquet and meta/contact.parquet.
 
-        quality (1-5), speed (1-5), precision (1-5) and contact (CONTACT_VOCAB code
-        0-14) broadcast per subtask segment, mistake (boolean) per subtask window;
+        quality (1-5), precision (1-5) and contact (CONTACT_VOCAB code 0-14) broadcast
+        per row (subtask segment, quality piece or precision window), speed (1-5) per
+        frame-level speed run, mistake (boolean) per subtask window;
         row from_index/to_index are global dataset frame ranges (== buffer
         positions, as with summaries). -1 is the "no row covers this frame"
         sentinel for quality, speed, precision and contact; the prompt omits that

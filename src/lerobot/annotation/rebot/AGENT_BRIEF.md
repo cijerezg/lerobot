@@ -77,18 +77,20 @@ episodes; the rules below come from it.
   its frames, not cut.
 
 **Task string.** A short, high-level description of the goal of the episode, sentence case, the way a person would ask
-for it: "Tidy up the table", "Stand the bottle upright", "Put the nail clippers in the clipper case". It is not a list
+for it: "Stand the bottle upright", "Put the nail clippers in the clipper case". It is not a list
 of the steps; the segment texts carry the steps (user 2026-10-14: "the task is a high level description, not a list of
 everything that happens"). One goal: name it with its object and destination ("Put the cup in the basket"). Two or
-three goals of different kinds: join them with "and" ("Close the bit kit and the headphone case"). More than that, or a
-scene cleaned up object by object: "Tidy up the table". Objects and containers get the words the segment texts use; a
+three goals of different kinds: join them with "and" ("Close the bit kit and the headphone case"). More than that: group the
+goals by destination or kind, at most three clauses, a plural for objects of one kind ("Put the nail clippers in the
+clipper case, put the bottles in the basket and close the bit kit"). Not "Tidy up the table" (user 2026-10-26: the mix
+already holds it many times; name what was put away). Objects and containers get the words the segment texts use; a
 colour, size or position word only when the task itself must tell two apart, otherwise the plural ("the nail
 clippers"; audit 2026-10-07: 57 tasks kept "brown basket", "navy shirt" after the segment texts dropped them). A goal
 that was attempted and failed still counts; a goal never attempted does not.
 
 | rejected | accepted |
 |---|---|
-| Put the large nail clipper in the clipper case, move the yellow pill bottle aside, pick up the water bottle, close the bit kit, move the orange pill bottle aside and put the small nail clipper in the clipper case | Tidy up the table |
+| Put the large nail clipper in the clipper case, move the yellow pill bottle aside, pick up the water bottle, close the bit kit, move the orange pill bottle aside and put the small nail clipper in the clipper case | Put the nail clippers in the clipper case, move the pill bottles aside and close the bit kit |
 | Put the large nail clipper and then the nail clipper in the clipper case, and move the orange pill bottle next to the water bottle | Put the nail clippers in the clipper case and move the pill bottle aside |
 | Stand the orange bottle and the purple bottle upright | Stand the bottles upright |
 

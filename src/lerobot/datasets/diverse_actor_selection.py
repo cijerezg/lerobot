@@ -29,9 +29,10 @@ is spelled out:
   physical view differently land in the same model slot and an unmapped camera is a
   hard error rather than a silently dropped view;
 * the per-anchor ``mistake`` flag recomputed from the reviewed event spans;
-* the per-anchor ``subtask`` text and ``speed`` label (1-5) read off the reviewed
-  one-action atom the anchor instant falls in (``subtask_atoms.jsonl`` and the speed
-  sidecar beside it). The stored anchor ``subtask`` is the parent interval's
+* the per-anchor ``subtask`` text read off the reviewed one-action atom the anchor
+  instant falls in (``subtask_atoms.jsonl``) and the ``speed`` label (1-5) off the
+  frame-level speed run that holds the anchor's frame (the speed sidecar beside it,
+  SPEED_ATOMS_VIEW). The stored anchor ``subtask`` is the parent interval's
   description — for RoboChallenge the whole task string — and is kept as
   ``parent_subtask``; the prompt's "current step" is the atom, the same grammar ReBot's
   segments already use;
@@ -568,7 +569,7 @@ def _prepare_rows(
             raise ValueError(f"{episode_id}: anchor {row['anchor_s']}s falls in no reviewed subtask atom.")
         if speed_atom is None:
             raise ValueError(
-                f"{episode_id}: anchor {row['anchor_s']}s falls in no speed atom — regenerate the "
+                f"{episode_id}: anchor {row['anchor_s']}s falls in no speed run — regenerate the "
                 "speed sidecar after the subtask atoms change."
             )
 

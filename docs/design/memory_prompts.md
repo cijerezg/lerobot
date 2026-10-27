@@ -287,7 +287,7 @@ Registered in the validation loop (each runs only when its enable flag is set):
 | `mem_temporal_attention` | when and where is history read? | past-attention mass against the uniform-over-time baseline $T/(T+1)$ of the temporal softmax; enrichment ~1 means no selective read survives |
 | `subtask_sweep` | does the subtask clause move the actions at all? | vocabulary spread over a same-clause seed floor; this was P3 of the plan doc, and it gates every claim that memory reaches behaviour |
 | `subtask_scene_sweep` | does the clause move the actions when every label offered is plausible for the scene? | the same sweep on hand-reviewed empty-handed frames (a reach before its close, or return to home) with only `grasp <class>` for classes on the table with one instance plus `return to home`, and the absent classes as a control population on the same frame. Separations $S_p$ / $S_g$ (object-only) / $S_a$ over the seed floor; displacement off the true-label chunk by group (other present object, home, absent) in seed-floor units; normalized GT rank; FK target agreement $\Delta(X)$ = extra approach toward object $X$ when named, against a reseed null, with $p_X$ = tool position at $X$'s next close. Frame list from `migration/subtask_scene_sweep_frames.py` (scene inventory is hand-written: `the dark shirt` excluded as ambiguous, multi-instance classes skipped). Added 2026-09-13 (`probes/subtask_scene_sweep.py`) |
-| `precision_contact_sweep` | do the precision and contact clauses move the chunk in the second before the gripper commits, with only plausible alternatives offered? | `metadata_steering` sweeps both clauses on evenly sampled frames, mostly transport, where the true precision is 1 and the true contact is "not applicable" and a one-second chunk should not change; its null is the right answer there, not evidence. This probe runs on hand-reviewed pre-commit frames (1.0 / 0.5 / 0.2 s before the last close of a grasp or the first open of a release; `migration/precision_contact_sweep_frames.py`, sheets in `migration/precision_contact_sweep_frames/`) with the deployment prompt plus the frame's TRUE precision and contact as the reference, and changes one sentence at a time: the precision ramp 1-5, the contact codes plausible for the object (top vs side pinch on a bottle, cloth vs top pinch on a shirt, set-down vs drop over a bin; hand table in the builder) and two control codes implausible everywhere (strike, pour). Readouts: displacement off the truthful chunk in seed-floor units ($D_p$, $D_{pl}$, $D_{ctl}$; plausible $\approx$ control = lexical read), the precision ramp's projection + Kendall $\tau$ and range, and three FK readouts against the reseed null: approach angle side minus top pinch (rubric definition, 0 top-down / 90 horizontal), release height set-down minus drop, end-effector path length $L(p_5)/L(p_1)$. Never scored against the demonstration. Added 2026-10-05 (`probes/precision_contact_sweep.py`) |
+| `precision_contact_sweep` | do the precision and contact clauses move the chunk in the second before the gripper commits, with only plausible alternatives offered? | `metadata_steering` swept both clauses (until 2026-10-26, when it dropped them) on evenly sampled frames, mostly transport, where the true precision is 1 and the true contact is "not applicable" and a one-second chunk should not change; its null is the right answer there, not evidence. This probe runs on hand-reviewed pre-commit frames (1.0 / 0.5 / 0.2 s before the last close of a grasp or the first open of a release; `migration/precision_contact_sweep_frames.py`, sheets in `migration/precision_contact_sweep_frames/`) with the deployment prompt plus the frame's TRUE precision and contact as the reference, and changes one sentence at a time: the precision ramp 1-5, the contact codes plausible for the object (top vs side pinch on a bottle, cloth vs top pinch on a shirt, set-down vs drop over a bin; hand table in the builder) and two control codes implausible everywhere (strike, pour). Readouts: displacement off the truthful chunk in seed-floor units ($D_p$, $D_{pl}$, $D_{ctl}$; plausible $\approx$ control = lexical read), the precision ramp's projection + Kendall $\tau$ and range, and three FK readouts against the reseed null: approach angle side minus top pinch (rubric definition, 0 top-down / 90 horizontal), release height set-down minus drop, end-effector path length $L(p_5)/L(p_1)$. Never scored against the demonstration. Added 2026-10-05 (`probes/precision_contact_sweep.py`) |
 | `input_swap` | which input stream does the chunk follow — state, images, or subtask text? | $2^3$ cube per anchor (S/I/T; the state-history switch was removed 2026-09-09; since 2026-09-24 a stream's MEM history rides with its switch — image history with I, state history with S — and depth history stays the anchor's): each switch taken from the anchor or from a donor frame, all 8 cells in one stacked forward at one flow seed; depth, the task string and metadata stay the anchor's. Donors are `same_episode` (≥4 s away), `matched` (nearest state in another episode — scene changes, pose roughly does not) and `random`. Readouts are per-cell displacement distributions with the three donors side by side, the cube's variance shares, the state-only cell's absolute shift over the state shift, and the policy's all-donor displacement against the demonstrations' own gap over the same pairs. Added 2026-09-05 (`probes/input_swap.py`); `--pairs=anchor:donor,...` runs chosen pairs only and writes an action-inspector dashboard (`trace.html`) of every pair, also written for the full run's nine example pairs |
 
 The rest of [archive/memory_probes_plan.md](../archive/memory_probes_plan.md) (retired
@@ -425,7 +425,7 @@ Design (revised 2026-07-18):
 - **Mistake** — boolean per 4 s subtask window. Produced by a recall-tuned LLM
   suspicion pass (evidence-first score 0–10, thresholded at review time) followed
   by human confirm/reject of flagged windows only; unflagged = clean by definition.
-- **Speed** — per subtask segment / reviewed atom, integer 1–5; inference asks for 5.
+- **Speed** — per frame (runs of at least 1 s since 2026-10-26; per subtask segment / reviewed atom before), integer 1–5; inference asks for 5.
   Three methods were generated and none overwrites another, so the adopted one is named
   by two constants that must agree: `SPEED_ATOMS_VIEW` (`datasets/diverse_corpus.py`) for
   the corpus and `REBOT_SPEED_TABLE` (`rl/offline_dataset_utils.py`) for the ReBot roots.
@@ -449,17 +449,28 @@ Design (revised 2026-07-18):
      references `speed_reference_joint_motion{,_rebot}_v1.json` and
      `speed_reference_hybrid_motion_duration_v1.json`; passes
      `migration/subtask_atoms_2026-09-08/speed_hybrid_{pass,rebot_pass}.py`.
+  4. *Hybrid, frame-level* — **ADOPTED 2026-10-26**, replacing the per-segment / per-atom
+     median of 3 (a brisk reach and a slow fumble in one 38 s grasp read as one speed): the
+     same trace per frame, $k_f = \operatorname{clip}(\lfloor s_f + 0.5 \rfloor, 1, 5)$, then
+     every run shorter than 1 s (one action chunk) takes the label of the neighbouring run
+     closer to its mean score, shortest first (`hybrid_motion_speed.frame_runs`). 0.31 label
+     changes per second, median run 2.3 s over the 14 ReBot roots (0.77 / 0.73 s for the bare
+     rounded trace). Files `meta/speed_hybrid_v1_runs.parquet` per ReBot root and
+     `speed_runs_hybrid_v1.jsonl` per diverse store, rows = runs with from/to (start/end)
+     frames; `migration/speed_frame_level_2026-10-26`.
   **Consumed since 2026-09-09:** `load_metadata_rows` requires all three parquets and
-  `materialize_metadata` broadcasts `metadata_speed` per segment (-1 sentinel where no
-  row covers a frame, omitted from the prompt like unknown quality); the diverse
-  selection (`select_actor_anchors`) attaches each anchor's atom speed **and the atom's
-  own step text** by native timestep, and `DiverseActorBuffer.collate` emits the same
+  `materialize_metadata` broadcasts `metadata_speed` per row (a run since 2026-10-26; -1
+  sentinel where no row covers a frame, omitted from the prompt like unknown quality); the
+  diverse selection (`select_actor_anchors`) attaches the speed of the run (the atom before
+  2026-10-26) holding each anchor **and the atom's own step text** by native timestep, and `DiverseActorBuffer.collate` emits the same
   columns, so both halves of the mixture render `The speed is N of 5.` and name one
   action in the step clause. The diverse memmap cache is untouched
   (speed rides the selection rows, not the cache). Inference and every probe's
   deployment prompt ask `{quality: 5, mistake: false, speed: 5}`; `metadata_steering`
-  adds an `s1..s5` ramp (quality 5, no mistake) with its own separation, ordering and
-  per-step-motion metrics.
+  adds an `s1..s5` ramp (quality 5, no mistake) with its own separation and
+  per-step-motion metrics. Since 2026-10-26 it reads only the floor (quality / mistake /
+  speed vs flow seed), the mistake sentence split by GT mistake (extra frames sampled
+  inside every flagged window) and per-frame examples.
 
 Storage mirrors the summaries pattern (window-range parquets, no dataset rewrite):
 `meta/episode_metadata.parquet`, `meta/mistakes.parquet`, `meta/metadata_info.json`.

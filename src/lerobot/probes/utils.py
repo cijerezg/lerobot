@@ -285,9 +285,9 @@ def frame_metadata_lookup(dataset) -> dict[int, dict]:
     ``"precision": int`` and ``"contact": int`` (CONTACT_VOCAB code) where a row covers
     the frame.
 
-    Same spans training uses (`ReplayBuffer.materialize_metadata`): quality, speed,
-    precision and contact broadcast over the subtask segment, mistake over its 4 s
-    window. Returns ``{}`` when the dataset has not been through the annotation and
+    Same spans training uses (`ReplayBuffer.materialize_metadata`): quality, precision
+    and contact broadcast over their rows, speed over its frame-level run, mistake over
+    its 4 s window. Returns ``{}`` when the dataset has not been through the annotation and
     speed passes (`lerobot/annotation`).
     """
     from lerobot.rl.offline_dataset_utils import load_metadata_rows
@@ -840,6 +840,50 @@ def sample_episodes_evenly(
                 continue
             seen.add(global_idx)
             samples.append((ep_idx, fr_idx, global_idx))
+
+    return samples
+
+
+def sample_mistake_windows(
+    dataset,
+    gt_metadata: dict[int, dict],
+    per_window: int,
+    episodes: list[int],
+    stride: int,
+    taken: set[int],
+) -> list[tuple[int, int, int]]:
+    """
+    Sample *per_window* evenly-spaced frames inside every flagged mistake window.
+
+    ``gt_metadata`` is `frame_metadata_lookup`; a window is a contiguous run of frames
+    with ``mistake`` true. Only frames on the image/depth stride grid inside the window
+    are candidates (see `_snap_position`); one already in ``taken`` is dropped.
+
+    Returns list of (episode_idx, frame_idx_in_episode, global_idx).
+    """
+    ep_to_indices = build_episode_index(dataset)
+    taken = set(taken)
+    samples: list[tuple[int, int, int]] = []
+    for ep_idx in episodes:
+        indices = ep_to_indices[ep_idx]
+        flags = [gt_metadata.get(idx, {}).get("mistake", False) for idx in indices] + [False]
+        start = None
+        for pos, flag in enumerate(flags):
+            if flag and start is None:
+                start = pos
+            elif not flag and start is not None:
+                frame_index = {
+                    global_idx: int(dataset.hf_dataset[global_idx]["frame_index"].item())
+                    for global_idx in indices[start:pos]
+                }
+                on_grid = [idx for idx, fr_idx in frame_index.items() if fr_idx % stride == 0]
+                for k in np.linspace(0, len(on_grid) - 1, min(per_window, len(on_grid)), dtype=int):
+                    global_idx = on_grid[k]
+                    if global_idx in taken:
+                        continue
+                    taken.add(global_idx)
+                    samples.append((ep_idx, frame_index[global_idx], global_idx))
+                start = None
 
     return samples
 

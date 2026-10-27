@@ -22,6 +22,7 @@ import pandas as pd
 import yaml
 
 from lerobot.annotation.vocab import CONTACT_VOCAB
+from lerobot.rl.offline_dataset_utils import REBOT_SPEED_TABLE
 
 PRECISION_LEGEND = {
     1: "> 10 cm slack or no external target (return to home, drop a sock in a basket)",
@@ -54,7 +55,14 @@ def load_segments(root: str) -> pd.DataFrame:
     df = pd.read_parquet(meta / "episode_metadata.parquet")
     df = df.merge(pd.read_parquet(meta / "precision.parquet")[keys + ["precision"]], on=keys)
     df = df.merge(pd.read_parquet(meta / "contact.parquet")[keys + ["contact_slug"]], on=keys)
-    df = df.merge(pd.read_parquet(meta / "speed_hybrid_v1.parquet")[keys + ["speed"]], on=keys)
+    # speed is frame-level: the step shows the range of the runs it overlaps ("1-3")
+    runs = pd.read_parquet(meta / REBOT_SPEED_TABLE)
+
+    def speed_range(a, b):
+        hit = runs.speed[(runs.from_index < b) & (runs.to_index > a)]
+        return f"{hit.min()}" if hit.min() == hit.max() else f"{hit.min()}-{hit.max()}"
+
+    df["speed"] = [speed_range(a, b) for a, b in zip(df["from_index"], df["to_index"])]
     df["task"] = df["episode_index"].map(episode_task)
     df["frames"] = df["episode_index"].map(episode_frames)
     # from_index/to_index are global dataset indices; show episode-local frames
@@ -136,8 +144,9 @@ def main(config_path: str, out_path: str) -> None:
     out.append("\n| quality | meaning |\n|---|---|")
     out += [f"| {k} | {v} |" for k, v in QUALITY_LEGEND.items()]
     out.append(
-        "\nSpeed: `speed_hybrid_v1` bucket 1 (slowest) to 5 (fastest), 1 s smoothed joint motion against the ReBot "
-        "training distribution. Frames are indices inside the root's episode.\n"
+        "\nSpeed: frame-level `speed_hybrid_v1` bucket 1 (slowest) to 5 (fastest), 1 s smoothed joint motion against the "
+        "ReBot training distribution, in runs of at least 1 s; a step shows the lowest-highest bucket of its frames. "
+        "Frames are indices inside the root's episode.\n"
     )
 
     out.append("## Roots\n")

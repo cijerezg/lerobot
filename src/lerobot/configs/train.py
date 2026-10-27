@@ -529,11 +529,13 @@ class ProbeConfig:
     task_sweep_max_labels: int | None = None
     task_sweep_n_seeds: int | None = None
 
-    # Metadata steering: n_frames x (8 clauses + gt + n_seeds - 1) forwards. n_frames is
-    # per episode and falls back to n_frames_per_episode; the conditionality panel splits
-    # those frames by their true quality, so cutting it thins the columns, not the lines.
+    # Metadata steering: frames x (12 clauses + gt + n_seeds - 1) forwards. n_frames is
+    # per episode (evenly spaced) and falls back to n_frames_per_episode; on top of those,
+    # mistake_frames_per_window frames from every flagged mistake window feed the
+    # mistake-split panel only (0 = none).
     metadata_steering_n_frames: int | None = None
     metadata_steering_n_seeds: int | None = None
+    metadata_steering_mistake_frames_per_window: int = 4
 
     # Embodiment swap: nine names at the home mode plus two mode interventions,
     # paired under three seeds. Global frame cap: 96 x 11 x 3 decoded chunks.

@@ -5,7 +5,15 @@
 Same arithmetic as the first hybrid pass (v6, migration/subtask_atoms_2026-09-08), without the
 v4 -> v5 -> v6 chain: the motion pools are fit here from the training atoms of this root, the
 duration labels come from this root's speed_atoms.jsonl. Writes only new files: the reference,
-speed_hybrid_v1/<episode>.npz and speed_atoms_hybrid_v1.jsonl per store.
+speed_hybrid_v1/<episode>.npz, speed_atoms_hybrid_v1.jsonl (one row per atom) and
+speed_runs_hybrid_v1.jsonl (the frame-level label the trainer reads, SPEED_ATOMS_VIEW) per store.
+
+The runs sidecar alone, for a store that already has the atom sidecar (2026-10-26):
+
+    uv run python -m lerobot.annotation.speed.hybrid_diverse runs <store root> [<trace map .json>]
+
+traces default to <store>/<corpus|fmb>/speed_hybrid_v1/<episode>.npz; the map ({"corpus/<episode>": path, ...})
+names them for a store assembled without that folder.
 """
 from __future__ import annotations
 import collections, hashlib, json, os, sys
@@ -18,6 +26,7 @@ from lerobot.annotation.speed import speed_annotate as speed
 DATA = Path(os.environ.get("DIVERSE_DATASET_ROOT", "outputs/diverse_robot_dataset_v3"))
 REF = Path(os.environ.get("SPEED_HYBRID_REF", "outputs/stats/speed_reference_hybrid_motion_duration_v1_diverse-v3.json"))
 SIDE = "speed_atoms_hybrid_v1.jsonl"
+RUNS = "speed_runs_hybrid_v1.jsonl"
 
 
 def sha(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -86,6 +95,7 @@ def main():
     for sub in ("corpus", "fmb"):
         picked = [row for s, row in rows if s == sub]; target = DATA / sub / SIDE; assert not target.exists(), target
         target.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in picked))
+        write_runs(DATA / sub / RUNS, picked, lambda eid: DATA / sub / "speed_hybrid_v1" / f"{eid}.npz")
         by_source = collections.defaultdict(collections.Counter)
         for r in picked: by_source[r["source"]][r["speed"]] += 1
         report["stores"][sub] = {"rows": len(picked), "defaults": sum(r["speed_source"] == "default_unclear" for r in picked),
@@ -93,5 +103,41 @@ def main():
     print(json.dumps(report, indent=1))
 
 
+def runs_rows(atom_rows, trace_of):
+    """Frame-level speed (hybrid.frame_runs) over every stretch of contiguous atoms of each episode. Frame t carries the
+    trace's t -> t+1 score; the stretch's last frame has none (counted as 3, absorbed by its run)."""
+    by_episode = collections.defaultdict(list)
+    for r in atom_rows: by_episode[r["episode_id"]].append(r)
+    out = []
+    for eid, members in by_episode.items():
+        members = sorted(members, key=lambda r: r["start_timestep"]); path = trace_of(eid); trace = np.load(path)
+        stretches = []
+        for r in members:
+            if stretches and stretches[-1][1] == r["start_timestep"]: stretches[-1][1] = r["end_timestep_exclusive"]
+            else: stretches.append([r["start_timestep"], r["end_timestep_exclusive"]])
+        k = 0
+        for a, b in stretches:
+            for s, e, label, mean in hybrid.frame_runs(np.append(trace["speed_score"][a:b - 1], np.nan), float(trace["native_rate_hz"])):
+                out.append({**{f: members[0][f] for f in ("episode_id", "source", "embodiment", "group")}, "run_index": k,
+                            "start_timestep": a + s, "end_timestep_exclusive": a + e, "speed": label, "speed_score": mean,
+                            "method": hybrid.METHOD, "speed_source": "frame_runs", "state_speed_file": str(path)}); k += 1
+    return out
+
+
+def write_runs(target, atom_rows, trace_of):
+    assert not target.exists(), target
+    rows = runs_rows(atom_rows, trace_of)
+    target.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in rows))
+    print(f"{target}: {len(rows)} runs over {len({r['episode_id'] for r in rows})} episodes")
+
+
+def runs_main(store, trace_map=None):
+    paths = json.loads(Path(trace_map).read_text()) if trace_map else {}
+    for sub in ("corpus", "fmb"):
+        atom_rows = [json.loads(line) for line in open(store / sub / SIDE)]
+        write_runs(store / sub / RUNS, atom_rows, lambda eid: Path(paths.get(f"{sub}/{eid}", store / sub / "speed_hybrid_v1" / f"{eid}.npz")))
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["runs"]: runs_main(Path(sys.argv[2]), *sys.argv[3:4])
+    else: main()

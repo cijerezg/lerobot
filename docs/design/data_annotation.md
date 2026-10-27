@@ -143,6 +143,9 @@ Speed adoption on 2026-09-09 selected the hybrid motion/duration method for both
 corpus halves: `SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"` in
 `datasets/diverse_corpus.py`, and `REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"`
 in `rl/offline_dataset_utils.py`. Both constants were checked during cleanup.
+On 2026-10-26 both moved to the frame-level label from the same traces
+(`speed_runs_hybrid_v1.jsonl`, `speed_hybrid_v1_runs.parquet`; runs of at least 1 s,
+`hybrid_motion_speed.frame_runs`); the per-segment / per-atom files stay on disk.
 Duration-only speed was rejected because rapid failed attempts could be labeled
 slow. The diverse prompt step changed to the reviewed atom, while the parent
 subtask remained provenance. Parent quality was deliberately retained at that

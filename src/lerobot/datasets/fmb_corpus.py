@@ -145,7 +145,7 @@ class FMBCorpus:
         return self._subtask_atom_rows
 
     def speed_atoms(self) -> list[dict[str, Any]]:
-        """Speed per primitive interval (the FMB atoms), same row shape as the common store."""
+        """Frame-level speed runs over the primitive intervals, same row shape as the common store."""
         if self._speed_rows is None:
             self._speed_rows = _read_jsonl(self.root / SPEED_ATOMS_VIEW)
         return self._speed_rows

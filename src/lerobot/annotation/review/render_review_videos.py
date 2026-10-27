@@ -9,8 +9,9 @@ buffer (subtask / quality / speed / mistake). Timeline strip: retained anchors g
 mistake spans red.
 
 ReBot merged root (rebot_all-annotated-v1): top | wrist at 2x (every other frame at 30 fps), the
-subtask window (meta/subtask_windows.json), segment quality (episode_metadata.parquet), hybrid speed
-(speed_hybrid_v1.parquet = REBOT_SPEED_TABLE), mistakes.parquet spans, online_labels is_intervention.
+subtask window (meta/subtask_windows.json), segment quality (episode_metadata.parquet), the frame's hybrid speed
+(the run of REBOT_SPEED_TABLE the trainer reads, with the frame's trace score; the rejected per-segment
+speed_hybrid_v1.parquet value beside it), mistakes.parquet spans, online_labels is_intervention.
 
     uv run python -m lerobot.annotation.review.render_review_videos [--seed 20260919]
     -> migration/annotation_review_2026-09-19/videos/*.mp4 + picks.json
@@ -228,13 +229,15 @@ def render_rebot(ep, step=2):
     row = eps[eps.episode_index == ep].iloc[0]; off = int(row.dataset_from_index); n = int(row.length)
     segs = pd.read_parquet(f"{R}/meta/episode_metadata.parquet"); segs = segs[segs.episode_index == ep]
     mist = pd.read_parquet(f"{R}/meta/mistakes.parquet"); mist = mist[(mist.episode_index == ep) & mist.mistake]
-    speed = pd.read_parquet(f"{R}/meta/speed_hybrid_v1.parquet"); speed = speed[speed.episode_index == ep]
+    speed = pd.read_parquet(f"{R}/meta/speed_hybrid_v1.parquet"); speed = speed[speed.episode_index == ep]  # per segment, rejected 2026-10-26
+    trace = np.load(f"{R}/meta/speed_hybrid_v1_trace.npz")
     ol = pd.read_parquet(f"{R}/meta/online_labels.parquet") if os.path.exists(f"{R}/meta/online_labels.parquet") else pd.DataFrame(columns=["episode_index", "frame_index", "is_intervention"])  # external roots carry no online labels
     ol = ol[ol.episode_index == ep].set_index("frame_index").is_intervention
     windows = json.load(open(f"{R}/meta/subtask_windows.json"))["episodes"].get(str(ep), [])
     # 2026-10-04: rubric v2 roots (rebot_additions) also carry precision / contact per segment, quality spans and precision windows
     # q printed on the segment line = the grade the trainer reads (load_metadata_rows: split by quality_spans when present)
-    pieces = pd.DataFrame(load_metadata_rows(R)[0]); pieces = pieces[pieces.episode_index == ep]
+    trained = load_metadata_rows(R); pieces = pd.DataFrame(trained[0]); pieces = pieces[pieces.episode_index == ep]
+    runs = pd.DataFrame(trained[2]); runs = runs[runs.episode_index == ep]  # frame-level speed the trainer reads (REBOT_SPEED_TABLE)
     extra = {k: (lambda t: t[t.episode_index == ep])(pd.read_parquet(f"{R}/meta/{k}.parquet")) for k in ("precision", "contact", "quality_spans", "precision_windows") if os.path.exists(f"{R}/meta/{k}.parquet")}
     prov = next(p for p in json.load(open(f"{R}/meta/provenance.json")) if p["episode_index"] == ep)
     block = prov.get("merged_from") or f"{prov.get('kind', '')} {prov.get('source_dataset', '')}".strip()
@@ -270,7 +273,9 @@ def render_rebot(ep, step=2):
         pq = pieces[(pieces.from_index <= g) & (pieces.to_index > g)]
         if len(r): lines.append((f"seg{int(r.iloc[0].segment_index)} [{int(r.iloc[0].from_index - off)}-{int(r.iloc[0].to_index - off)}): \"{r.iloc[0].subtask}\"   q{int(pq.iloc[0].quality)}   note: {r.iloc[0].note}"[:220], CYAN))
         else: lines.append(("segment: none", GREY))
-        if len(sp): lines.append((f"SPEED {int(sp.iloc[0].speed)} (motion {int(sp.iloc[0].motion_speed)} @ {sp.iloc[0].motion_median_deg_s:.1f} deg/s, duration {int(sp.iloc[0].duration_speed)} @ {sp.iloc[0].duration_s:.1f}s)   {'; '.join(sp.iloc[0].speed_flags) if len(sp.iloc[0].speed_flags) else ''}"[:220], WHITE))
+        ru = runs[(runs.from_index <= g) & (runs.to_index > g)]; t = min(g, len(trace["speed_score"]) - 1)
+        seg_txt = f"   segment label {int(sp.iloc[0].speed)} (rejected)" if len(sp) else ""
+        if len(ru): lines.append((f"SPEED {int(ru.iloc[0].speed)} (run f{int(ru.iloc[0].from_index - off)}-{int(ru.iloc[0].to_index - off)}, frame score {trace['speed_score'][t]:.2f} @ {trace['joint_speed_deg_s'][t]:.1f} deg/s){seg_txt}"[:220], WHITE))
         else: lines.append(("SPEED: none", GREY))
         if "precision" in extra:
             pr = extra["precision"][(extra["precision"].from_index <= g) & (extra["precision"].to_index > g)]; co = extra["contact"][(extra["contact"].from_index <= g) & (extra["contact"].to_index > g)]

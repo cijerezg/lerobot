@@ -55,7 +55,7 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 | `quality_v2/` | The rubric v2 class pass, shared by every pool: class rules, side-by-side material, dense strips, grading batches, second read, label compiler, checks. |
 | `precision_contact/` | Frame grabbing, approach angle, row sheets and strips (used by `quality_v2`), and the text-rule priors for precision and contact. |
 | `atoms/` | Subtask-atom pipeline over the diverse corpus: propose, sheets, verdict, agent_check, assemble, manual editor, validator; its reviewer briefs. |
-| `speed/` | Speed label: `hybrid_motion_speed` (the adopted method), `speed_annotate`, `joint_motion_speed`, and the runners `rebot_speed_pass` and `hybrid_diverse`. |
+| `speed/` | Speed label: `hybrid_motion_speed` (the adopted method; `frame_runs` turns its per-frame score into the frame-level label the trainer reads: rounded, no run under 1 s), `speed_annotate`, `joint_motion_speed`, and the runners `rebot_speed_pass` (ReBot: trace, per-segment table, and `meta/speed_hybrid_v1_runs.parquet` = `REBOT_SPEED_TABLE`) and `hybrid_diverse` (diverse: traces, per-atom sidecar, and `speed_runs_hybrid_v1.jsonl` = `SPEED_ATOMS_VIEW`; `hybrid_diverse runs <store>` writes the runs alone). |
 | `gripper_events/` | Depth gripper-event labels and their review videos. |
 | `review/` | Review videos of training episodes with the labels the trainer consumes burned in; `audit_material` (one episode's labels, episode-local, and approach lines, for an audit checker). |
 | `segments/` | Proprio segmentation (`semantic_segment`). |
@@ -100,7 +100,7 @@ uv run python -m $M.rebot.idle_scan <work>                                   # w
 # 5. final root: build, tables, speed, gripper events, verify (each step refuses to overwrite)
 uv run python -m $M.rebot.build_root <work> --out outputs/<root> --split train
 uv run python -m $M.rebot.finalize <work> outputs/<root>
-uv run python -m $M.speed.rebot_speed_pass outputs/<root>
+uv run python -m $M.speed.rebot_speed_pass outputs/<root>                   # trace + per-segment table + frame-level runs (the trained label)
 uv run python -m $M.rebot.manual_speed <work> outputs/<root>
 uv run python -m $M.gripper_events.depth_gripper_event_annotate --data-dir outputs/<root> --rule relative_travel
 uv run python -m $M.rebot.verify_root outputs/<root>
@@ -354,7 +354,9 @@ kept. Agent summaries or a long launch prompt are not substitutes for those arti
   `paths.QUALITY_V2`. Reuse them as evidence; write audit-specific resolutions in the new pass. Existing `F_`
   resolve-row machinery can represent quality/mistake/precision fixes when compatible; text, boundary, contact
   and retention edits need the corresponding versioned sources too. Check the compiler's actual output coverage.
-- Store sidecars are `subtask_atoms.jsonl`, `contact_atoms.jsonl`, `speed_atoms_hybrid_v1.jsonl`, and the v2
+- Store sidecars are `subtask_atoms.jsonl`, `contact_atoms.jsonl`, `speed_atoms_hybrid_v1.jsonl` (per atom) with
+  `speed_runs_hybrid_v1.jsonl` (frame-level runs from the same traces, the trained label; regenerate it with
+  `speed.hybrid_diverse runs` whenever atoms or traces change), and the v2
   `quality_spans.jsonl`, `mistakes_v2.jsonl`, `precision_windows.jsonl`. `precision_atoms.jsonl` is the older
   per-atom precision layer. Readers in `datasets/{diverse_corpus,fmb_corpus,diverse_actor_selection}.py` establish
   which file governs each channel; these paths are consumer references, not locations for new annotation code.

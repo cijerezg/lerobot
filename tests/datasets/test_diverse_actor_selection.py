@@ -155,34 +155,30 @@ def test_holdout_episodes_are_absent_and_accounted_for() -> None:
     assert sum(selection.held_out.values()) == 1460
 
 
-def test_every_anchor_carries_the_speed_of_its_reviewed_atom() -> None:
-    """Subtask text and speed are read off the reviewed atom by native timestep: the
-    anchor's own frame (``anchor_frame`` common, ``anchor_timestep`` FMB) must land inside
-    exactly one atom, and the row keeps that atom's text and 1-5 bucket (the speed
-    sidecar is joined to the atom by (episode, parent, atom) index here, independently
-    of the selection's span lookup)."""
+def test_every_anchor_carries_its_atom_step_and_the_speed_of_its_frame() -> None:
+    """Subtask text is read off the reviewed atom and speed off the frame-level speed run,
+    both by native timestep: the anchor's own frame (``anchor_frame`` common,
+    ``anchor_timestep`` FMB) must land inside exactly one atom and exactly one run, and
+    the row keeps that atom's text and that run's 1-5 bucket (looked up here
+    independently of the selection's span lookup)."""
     selection = _selection()
-    atoms: dict[tuple[str, str], list[dict]] = {}
+    atoms: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    runs: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for key, store in (("common", selection.corpus.common), ("fmb", selection.corpus.fmb)):
-        speeds = {
-            (str(a["episode_id"]), int(a["parent_interval_index"]), int(a["atom_index"])): int(a["speed"])
-            for a in store.speed_atoms()
-        }
         for atom in store.subtask_atoms():
-            key_ = (str(atom["episode_id"]), int(atom["parent_interval_index"]), int(atom["atom_index"]))
-            atoms.setdefault((key, str(atom["episode_id"])), []).append({**atom, "speed": speeds[key_]})
+            atoms[(key, str(atom["episode_id"]))].append(atom)
+        for run in store.speed_atoms():
+            runs[(key, str(run["episode_id"]))].append(run)
     for row in selection.rows:
         frame = int(row["anchor_timestep"] if row["corpus_key"] == "fmb" else row["anchor_frame"])
-        hits = [
-            atom
-            for atom in atoms[(row["corpus_key"], str(row["episode_id"]))]
-            if int(atom["start_timestep"]) <= frame < int(atom["end_timestep_exclusive"])
-        ]
-        assert len(hits) == 1, (row["episode_id"], frame)
-        assert row["speed"] == int(hits[0]["speed"])
+        key = (row["corpus_key"], str(row["episode_id"]))
+        atom_hits = [a for a in atoms[key] if int(a["start_timestep"]) <= frame < int(a["end_timestep_exclusive"])]
+        run_hits = [r for r in runs[key] if int(r["start_timestep"]) <= frame < int(r["end_timestep_exclusive"])]
+        assert len(atom_hits) == 1 and len(run_hits) == 1, (row["episode_id"], frame)
+        assert row["speed"] == int(run_hits[0]["speed"])
         assert 1 <= row["speed"] <= 5
         # The step text is the atom's, not the parent interval's (kept as parent_subtask).
-        assert row["subtask"] == hits[0]["subtask"]
+        assert row["subtask"] == atom_hits[0]["subtask"]
         assert row["parent_subtask"] != "" and "subtask" in row
     per_source = audit_selection(selection)
     assert all(sum(audit.speed_values.values()) == audit.anchors for audit in per_source.values())

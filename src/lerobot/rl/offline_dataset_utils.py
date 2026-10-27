@@ -225,9 +225,13 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
 # one "The speed is N of 5." clause.
 #   speed.parquet            v4, work-normalized duration — rejected 2026-09-09
 #   speed_hybrid_v1.parquet  v7, 1 s smoothed arm motion against the ReBot training
-#                            percentiles nudged <= 0.35 bucket toward the duration label
-#                            — ADOPTED 2026-09-09 (same method as the corpus' v6)
-REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"
+#                            percentiles nudged <= 0.35 bucket toward the duration label,
+#                            one median per segment — adopted 2026-09-09, rejected 2026-10-26
+#                            (a brisk reach and a slow fumble in one segment read as one speed)
+#   speed_hybrid_v1_runs.parquet  the same v7 trace per frame: rounded score, runs under 1 s
+#                            absorbed (hybrid_motion_speed.frame_runs) — ADOPTED 2026-10-26
+#                            (same method as the corpus' speed_runs_hybrid_v1.jsonl)
+REBOT_SPEED_TABLE = "speed_hybrid_v1_runs.parquet"
 # Per-subtask precision (1-5) and contact (CONTACT_VOCAB code 0-14) tables. Optional,
 # unlike speed: a root without them renders today's prompt (no clause, column -1).
 REBOT_PRECISION_TABLE = "precision.parquet"

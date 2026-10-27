@@ -70,21 +70,23 @@ def video(root, e, cam):
 def inventory(runs, work):
     """One row per episode of the runs: id, run, episode, frames, seconds, task, interventions, review video path."""
     rows = []
+    runs = [Path(run).resolve() for run in runs]
+    short = len({run.name[:8] for run in runs}) == len(runs)  # rollout runs start HH-MM-SS; teleop roots share a prefix
     for run in runs:
-        run = Path(run).resolve()
+        tag = run.name[:8] if short else run.name
         root = dataset(run)
         for _, e in episodes(root).iterrows():
             ep, n = int(e.episode_index), int(e.length)
             rows.append(
                 {
-                    "id": f"{run.name[:8]} ep{ep}",
+                    "id": f"{tag} ep{ep}",
                     "run": str(run),
                     "episode": ep,
                     "frames": n,
                     "seconds": n / FPS,
                     "task": list(e.tasks)[0],
                     "interventions": intervention_spans(root, ep),
-                    "video": work / "videos" / f"{run.name[:8]}_ep{ep}.mp4",
+                    "video": work / "videos" / f"{tag}_ep{ep}.mp4",
                     "_e": e,
                 }
             )

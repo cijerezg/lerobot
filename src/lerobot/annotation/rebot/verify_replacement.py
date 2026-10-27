@@ -105,7 +105,7 @@ def check(root, report, config):
                 assert ((dst.frame_index >= 0) & (dst.frame_index < length)).all()
             if f.name == 'episode_metadata.parquet':
                 manual_counts[str(ep)] = len(dst)
-            if ep in added and f.name in ('episode_metadata.parquet', 'contact.parquet', 'precision.parquet', 'speed.parquet', 'speed_hybrid_v1.parquet'):
+            if ep in added and f.name in ('episode_metadata.parquet', 'contact.parquet', 'precision.parquet', 'speed.parquet', 'speed_hybrid_v1.parquet', 'speed_hybrid_v1_runs.parquet'):
                 cov = np.zeros(length, dtype=np.int8)
                 for r in dst.itertuples():
                     cov[int(r.from_index) - start:int(r.to_index) - start] += 1

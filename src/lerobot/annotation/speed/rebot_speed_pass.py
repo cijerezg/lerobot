@@ -1,8 +1,11 @@
-"""Speed labels for a new ReBot root, same two files the training roots carry:
+"""Speed labels for a new ReBot root, same files the training roots carry:
   meta/speed.parquet          v4 work-normalized duration (speed_annotate annotate, reference rebot-annot-v3-diverse)
   meta/speed_hybrid_v1.parquet + _trace.npz + _info.json   v7 hybrid motion+duration against the frozen ReBot training pool
-                                (outputs/stats/speed_reference_joint_motion_rebot_v1_pool.npz), the table the loader reads.
-The reference pool is NOT refit (the new root is an applied root, like rebot_val-annotated-v4 was).
+                                (outputs/stats/speed_reference_joint_motion_rebot_v1_pool.npz), one row per segment
+  meta/speed_hybrid_v1_runs.parquet + _runs_info.json   the frame-level label from that trace (hybrid.frame_runs), runs of
+                                one speed tiling each episode; the table the loader reads (REBOT_SPEED_TABLE)
+The reference pool is NOT refit (the new root is an applied root, like rebot_val-annotated-v4 was). Each stage runs only
+when its files are missing, so on a root that already has the trace this writes only the runs table.
     uv run python -m lerobot.annotation.speed.rebot_speed_pass <root> [<root> ...]
 """
 import collections, json, subprocess, sys
@@ -64,6 +67,28 @@ def hybrid_root(root: Path, pool):
               open(root / 'meta/speed_hybrid_v1_info.json', 'w'), indent=2)
     print(f"{root.name}: hybrid {len(rows)} rows, buckets {dict(sorted(collections.Counter(r['speed'] for r in rows).items()))}")
 
+def runs_root(root: Path):
+    """Frame-level speed of every episode (episode span = its segments) from the root's trace: frame f carries the
+    f -> f+1 score, the episode's last frame has none (counted as 3, absorbed by its run)."""
+    fps = float(json.loads((root / 'meta/info.json').read_text())['fps'])
+    score = np.load(root / 'meta/speed_hybrid_v1_trace.npz')['speed_score']
+    segments = pd.read_parquet(root / 'meta/episode_metadata.parquet'); rows = []
+    for episode, seg in segments.groupby('episode_index'):
+        start, stop = int(seg['from_index'].min()), int(seg['to_index'].max())
+        for i, (a, b, label, mean) in enumerate(hybrid.frame_runs(np.append(score[start:stop - 1], np.nan), fps)):
+            rows.append({'episode_index': int(episode), 'run_index': i, 'from_index': start + a, 'to_index': start + b, 'speed': label, 'speed_score': mean})
+    table = pd.DataFrame(rows); path = root / 'meta/speed_hybrid_v1_runs.parquet'
+    assert not path.exists(), f'{root.name}: {path.name} already exists'
+    table.to_parquet(path, engine='pyarrow')
+    frames = table.to_index - table.from_index
+    json.dump({'method': hybrid.METHOD + ' frame runs', 'trace': 'speed_hybrid_v1_trace.npz', 'rule': 'round(score) per frame; a run shorter than min_run_seconds takes the neighbour closer to its mean score; unscored frames count as 3',
+               'min_run_seconds': hybrid.MIN_RUN_SECONDS,
+               'generated': datetime.now(timezone.utc).isoformat(timespec='seconds'), 'rows': len(table), 'frames': int(frames.sum()),
+               'changes_per_second': round((len(table) - table.episode_index.nunique()) / (frames.sum() / fps), 4),
+               'frame_shares': {str(k): int(v) for k, v in frames.groupby(table.speed).sum().items()}},
+              open(root / 'meta/speed_hybrid_v1_runs_info.json', 'w'), indent=2)
+    print(f"{root.name}: {len(table)} runs, frames per speed {dict(frames.groupby(table.speed).sum())}")
+
 if __name__ == '__main__':
     roots = [Path(r) for r in sys.argv[1:]]
     for root in roots:
@@ -71,4 +96,6 @@ if __name__ == '__main__':
             subprocess.run([sys.executable, '-m', 'lerobot.annotation.speed.speed_annotate', 'annotate', '--reference', DURATION_REF, '--root', str(root)], check=True)
     pool = np.load(POOL)['training_values_deg_s']
     for root in roots:
-        hybrid_root(root, pool)
+        if not (root / 'meta/speed_hybrid_v1_trace.npz').exists():
+            hybrid_root(root, pool)
+        runs_root(root)

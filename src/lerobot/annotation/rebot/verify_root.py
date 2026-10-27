@@ -4,7 +4,7 @@ Every root: kept-frame action/state equal to the source; online_labels aligned; 
 from_timestamp, or re-encoded when spliced and matched to the source frame on both sides of every splice; depth
 PNGs hardlinked, renumbered through the cut map, one every third frame; the actual reader on three frames per
 episode. A root that carries the annotation tables (meta/quality_spans.parquet) also gets: dense subtask
-coverage, speed / precision / contact row-aligned, spans and windows inside their episode, every mistake inside
+coverage, precision / contact row-aligned, speed runs tiling every frame, spans and windows inside their episode, every mistake inside
 a grade 1-2 span and a quality <= 2 segment, ReplayBuffer materialization.
 
     uv run python -m lerobot.annotation.rebot.verify_root outputs/<root>     -> <root>/meta/cleanup_verification.json
@@ -48,9 +48,13 @@ def check_annotations(root, n, eps, dataset):
     keys = ["episode_index", "segment_index", "from_index", "to_index"]
     # the loader rebuilds its precision rows from the windows, so alignment is checked on the table itself
     precision = pd.read_parquet(meta / "precision.parquet").to_dict("records")
-    for table in (speed, precision, cont):
+    for table in (precision, cont):
         assert len(table) == len(segments)
         assert all(all(a[k] == b[k] for k in keys) for a, b in zip(segments, table, strict=True))
+    speed_coverage = np.zeros(n, np.int8)  # frame-level speed runs tile every frame once
+    for r in speed:
+        speed_coverage[r["from_index"] : r["to_index"]] += 1
+    assert (speed_coverage == 1).all()
     assert all(1 <= r["speed"] <= 5 for r in speed) and all(1 <= r["precision"] <= 5 for r in precision + prec)
     spans = pd.read_parquet(meta / "quality_spans.parquet")
     windows = pd.read_parquet(meta / "precision_windows.parquet")
