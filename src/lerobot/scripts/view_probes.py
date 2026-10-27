@@ -318,6 +318,10 @@ def _parse_range(range_header: str | None, size: int) -> tuple[int, int, bool]:
 
 
 def _send_file(handler: BaseHTTPRequestHandler, path: Path, head_only: bool = False) -> None:
+    if path.name == "sets.html":
+        from lerobot.probes.set_representations import refresh_report
+
+        refresh_report(path)
     size = path.stat().st_size
     content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     try:

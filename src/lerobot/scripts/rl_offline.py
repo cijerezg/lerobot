@@ -1092,6 +1092,7 @@ def run_offline_training(
 
     # Held-out flow + FAST CE at log_freq. Only rank 0 owns its packed CPU cache.
     val_loss_frames = int(getattr(cfg, "val_loss_frames", 0) or 0)
+    val_loss_freq = int(getattr(cfg, "val_loss_freq", 0) or cfg.log_freq)
     val_loss = None
     if runtime.is_main_process and val_loss_frames > 0:
         from lerobot.rl.molmoact2.val_loss import ValLoss
@@ -1266,7 +1267,7 @@ def run_offline_training(
             training_infos["Optimization step"] = optimization_step
             training_infos = runtime.reduce_metrics(training_infos)
             runtime.wait_for_everyone()
-            if runtime.is_main_process and val_loss is not None:
+            if runtime.is_main_process and val_loss is not None and optimization_step % val_loss_freq == 0:
                 training_infos.update(val_loss(raw_policy))
             runtime.wait_for_everyone()
             if runtime.is_main_process:

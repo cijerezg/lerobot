@@ -443,7 +443,7 @@ _HTML = r"""<!doctype html><html><head><meta charset="utf-8"><title>Set represen
 <style>
 body{font-family:system-ui,sans-serif;margin:0;padding:0 16px 16px;background:#f4f6f9;color:#202631}
 h1{font-size:18px;margin:14px 0 4px}h2{font-size:14px;margin:0 0 6px}.muted{color:#667085;font-size:12px}
-.controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:8px 0}select{font-size:13px;padding:3px 6px}
+.controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:8px 0}select,input,button{font-size:13px;padding:3px 6px}input[type=number]{width:80px}
 .box{background:white;border:1px solid #e0e4eb;border-radius:8px;padding:12px;min-width:0;margin-top:14px}
 .grid{display:grid;grid-template-columns:minmax(520px,3fr) minmax(320px,2fr);gap:14px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -457,6 +457,7 @@ details{font-size:12px;color:#444;margin-top:8px}
 <h1>Set representations</h1><p class="muted" id="info"></p>
 <div class="controls">
  group <select id="group"></select> layer <select id="layer"></select> geometry <select id="geometry"></select> measure <select id="measure"></select>
+ color range <input id="zlo" type="number" step="0.01"> to <input id="zhi" type="number" step="0.01"> <button id="zauto">auto</button>
  <span class="muted" id="loading"></span>
 </div>
 <div class="grid">
@@ -478,6 +479,9 @@ function fill(id,values,labels){const s=$(id);s.replaceChildren();values.forEach
 fill('group',DATA.groups);fill('layer',DATA.layers,DATA.layers.map(l=>'L'+l));fill('geometry',DATA.geometries);fill('measure',DATA.measures,['Cosine','L2 distance']);
 $('layer').value=DATA.layers[DATA.layers.length-1];$('geometry').value='centered';
 const q=new URLSearchParams(location.hash.slice(1));for(const k of ['group','layer','geometry','measure'])if(q.get(k))$(k).value=q.get(k);
+// One color range for all three heatmaps. Auto = data range of the current panel; typing a limit pins it until auto is pressed.
+let manualRange=q.get('zlo')!=null&&q.get('zhi')!=null;if(manualRange){$('zlo').value=q.get('zlo');$('zhi').value=q.get('zhi');}
+function colorRange(lo,hi,centered){if(!manualRange){const m=Math.max(Math.abs(lo),Math.abs(hi));$('zlo').value=(centered?-m:lo).toFixed(3);$('zhi').value=(centered?m:hi).toFixed(3);}return [Number($('zlo').value),Number($('zhi').value)];}
 // One stored cosine serves both measures: distance follows from the two norms.
 function cell(P,i,j){const c=P.cosine[i][j];if($('measure').value==='cosine')return c;const a=P.norms[i],b=P.norms[j];return Math.sqrt(Math.max(0,a*a+b*b-2*a*b*c));}
 $('info').textContent=`${DATA.rows.length} frames · view ${DATA.view} · ${DATA.checkpoint}`;
@@ -487,30 +491,31 @@ function card(r){const n=String(r.row).padStart(4,'0');return `<div class="card"
 function showPair(P,i,j){const a=DATA.rows[P.ids[i]],b=DATA.rows[P.ids[j]];$('pair').innerHTML=`<p class="muted" style="margin:0 0 6px">cosine ${fmt(P.cosine[i][j])} · L2 ${fmt(Math.sqrt(Math.max(0,P.norms[i]**2+P.norms[j]**2-2*P.norms[i]*P.norms[j]*P.cosine[i][j])))}</p><div class="pair">${card(a)}${card(b)}</div>`;}
 function boundaries(rows){const eps=[],sets=[];for(let i=1;i<rows.length;i++){if(rows[i].episode!==rows[i-1].episode)eps.push(i-0.5);if(rows[i].set!==rows[i-1].set)sets.push(i-0.5);}return {eps,sets};}
 function centers(rows,keyOf){const out=[];let start=0;for(let i=1;i<=rows.length;i++){if(i===rows.length||keyOf(rows[i])!==keyOf(rows[start])){out.push({pos:(start+i-1)/2,label:keyOf(rows[start])});start=i;}}return out;}
-async function update(){const g=$('group').value,l=$('layer').value,geo=$('geometry').value,meas=$('measure').value;const key=`${g}.L${l}.${geo}`;location.hash=new URLSearchParams({group:g,layer:l,geometry:geo,measure:meas}).toString();
+async function update(){const g=$('group').value,l=$('layer').value,geo=$('geometry').value,meas=$('measure').value;const key=`${g}.L${l}.${geo}`;const h={group:g,layer:l,geometry:geo,measure:meas};if(manualRange){h.zlo=$('zlo').value;h.zhi=$('zhi').value;}location.hash=new URLSearchParams(h).toString();
  $('loading').textContent='loading…';const P=await loadPanel(key);$('loading').textContent='';
  const rows=P.ids.map(i=>DATA.rows[i]);const b=boundaries(rows);const n=rows.length;
  const Z=P.cosine.map((row,i)=>row.map((_,j)=>cell(P,i,j)));
  const flat=Z.flat().filter(v=>v!=null);const lo=Math.min(...flat),hi=Math.max(...flat);
- const dist=meas==='distance';const centered=geo==='centered'&&!dist;const zmax=centered?Math.max(Math.abs(lo),Math.abs(hi)):hi;
+ const dist=meas==='distance';const centered=geo==='centered'&&!dist;const [zlo,zhi]=colorRange(lo,hi,centered);
  const scale=dist?'Viridis':centered?'RdBu':'Viridis';const label=dist?'L2 distance':'cosine';
  const ticks=centers(rows,r=>r.set+' · '+r.episode.split('/').pop());
  const shapes=[...b.eps.map(p=>({type:'line',x0:p,x1:p,y0:-0.5,y1:n-0.5,line:{color:'white',width:1}})),...b.eps.map(p=>({type:'line',y0:p,y1:p,x0:-0.5,x1:n-0.5,line:{color:'white',width:1}})),
   ...b.sets.map(p=>({type:'line',x0:p,x1:p,y0:-0.5,y1:n-0.5,line:{color:'black',width:3}})),...b.sets.map(p=>({type:'line',y0:p,y1:p,x0:-0.5,x1:n-0.5,line:{color:'black',width:3}}))];
- Plotly.react('matrix',[{type:'heatmap',z:Z,colorscale:scale,reversescale:dist,zmin:centered?-zmax:lo,zmax:zmax,zmid:centered?0:undefined,hovertemplate:'row %{y} · col %{x}<br>'+label+' %{z:.3f}<extra></extra>'}],
+ Plotly.react('matrix',[{type:'heatmap',z:Z,colorscale:scale,reversescale:dist,zmin:zlo,zmax:zhi,zauto:false,hovertemplate:'row %{y} · col %{x}<br>'+label+' %{z:.3f}<extra></extra>'}],
   {margin:{l:150,r:10,t:10,b:120},xaxis:{tickvals:ticks.map(t=>t.pos),ticktext:ticks.map(t=>t.label),tickangle:-45,tickfont:{size:10},constrain:'domain'},yaxis:{tickvals:ticks.map(t=>t.pos),ticktext:ticks.map(t=>t.label),tickfont:{size:10},autorange:'reversed',scaleanchor:'x'},shapes},{responsive:true});
  const m=$('matrix');m.removeAllListeners?.('plotly_hover');m.removeAllListeners?.('plotly_click');
  const onCell=e=>{const p=e.points[0];if(p)showPair(P,p.y,p.x);};m.on('plotly_hover',onCell);m.on('plotly_click',onCell);
  const B=P.blocks[meas];const E=B.episode;const eLabels=E.names.map(name=>{const r=rows.find(r=>r.episode===name);return r.set+' · '+name.split('/').pop();});
- const eflat=E.means.flat().filter(v=>v!=null);const emax=Math.max(...eflat.map(Math.abs));
- Plotly.react('epblocks',[{type:'heatmap',z:E.means,x:eLabels,y:eLabels,text:E.means.map(r=>r.map(v=>fmt(v,2))),texttemplate:'%{text}',colorscale:scale,reversescale:dist,zmin:centered?-emax:Math.min(...eflat),zmax:centered?emax:Math.max(...eflat),hovertemplate:'%{y}<br>%{x}<br>mean '+label+' %{z}<extra></extra>'}],
+ Plotly.react('epblocks',[{type:'heatmap',z:E.means,x:eLabels,y:eLabels,text:E.means.map(r=>r.map(v=>fmt(v,2))),texttemplate:'%{text}',colorscale:scale,reversescale:dist,zmin:zlo,zmax:zhi,zauto:false,hovertemplate:'%{y}<br>%{x}<br>mean '+label+' %{z}<extra></extra>'}],
   {margin:{l:160,r:10,t:10,b:130},xaxis:{tickangle:-45,tickfont:{size:10}},yaxis:{autorange:'reversed',tickfont:{size:10}}},{responsive:true});
- const S=B.set;const sflat=S.means.flat().filter(v=>v!=null);const smax=Math.max(...sflat.map(Math.abs));
- Plotly.react('setblocks',[{type:'heatmap',z:S.means,x:S.names,y:S.names,text:S.means.map(r=>r.map(v=>fmt(v,3))),texttemplate:'%{text}',colorscale:scale,reversescale:dist,zmin:centered?-smax:Math.min(...sflat),zmax:centered?smax:Math.max(...sflat),hovertemplate:'%{y} vs %{x}<br>mean '+label+' %{z}<extra></extra>'}],
+ const S=B.set;
+ Plotly.react('setblocks',[{type:'heatmap',z:S.means,x:S.names,y:S.names,text:S.means.map(r=>r.map(v=>fmt(v,3))),texttemplate:'%{text}',colorscale:scale,reversescale:dist,zmin:zlo,zmax:zhi,zauto:false,hovertemplate:'%{y} vs %{x}<br>mean '+label+' %{z}<extra></extra>'}],
   {margin:{l:80,r:10,t:10,b:40},yaxis:{autorange:'reversed'}},{responsive:true});
  $('gaps').innerHTML='<table><thead><tr><th>Set pair</th><th>Within A</th><th>Within B</th><th>Between</th><th>Gap</th></tr></thead><tbody>'+Object.entries(B.gaps).map(([k,v])=>`<tr><td>${esc(k.replace('_',' vs '))}</td><td>${fmt(v.within_a)}</td><td>${fmt(v.within_b)}</td><td>${fmt(v.between)}</td><td><b>${fmt(v.gap)}</b></td></tr>`).join('')+'</tbody></table>';
 }
 for(const k of ['group','layer','geometry','measure'])$(k).onchange=update;
+for(const k of ['zlo','zhi'])$(k).onchange=()=>{manualRange=true;update();};
+$('zauto').onclick=()=>{manualRange=false;update();};
 update();
 </script></body></html>
 """
@@ -521,6 +526,24 @@ def write_report(payload, output_dir):
 
     html = _HTML.replace("__PLOTLY__", get_plotlyjs()).replace("__DATA__", json.dumps(payload).replace("</", "<\\/"))
     (Path(output_dir) / "sets.html").write_text(html)
+
+
+def refresh_report(path):
+    """Re-render a stored sets.html from its cache when this renderer is newer than the page.
+
+    The viewers call this before serving, so old probe folders pick up template changes
+    without a manual re-render. Layers and groups come from the cache's own metadata.
+    """
+    path = Path(path)
+    root = path.parent
+    meta_path = root / "cache" / "meta.json"
+    if path.name != "sets.html" or root.name != "set_representations" or not meta_path.exists():
+        return
+    if path.exists() and path.stat().st_mtime >= Path(__file__).stat().st_mtime:
+        return
+    meta, arrays, present = load_cache(root / "cache")
+    payload, _ = analyze(meta, arrays, present, meta["layers"], meta["requested_groups"], root)
+    write_report(payload, root)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
