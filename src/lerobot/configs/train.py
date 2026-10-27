@@ -631,8 +631,6 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # Frames are packed once at startup, so the per-call cost is ceil(n / batch_size)
     # forwards. 0 disables.
     val_loss_frames: int = 0
-    # Cadence of that measurement; 0 = every log_freq. Must be a multiple of log_freq.
-    val_loss_freq: int = 0
     skip_critic: bool = False  # skip all critic training (forward+backward)
     # Source-native diverse corpus, mixed against the LeRobot (ReBot) sources.
     # Disabled by default, so an existing config behaves exactly as before.
