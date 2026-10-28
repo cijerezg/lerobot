@@ -18,9 +18,14 @@ the calibration numbers and the rebuild order; the build scripts stay in that fo
 ## Eval set, tiers and staged reward (2026-10-22)
 
 `tasks.py` is the registry: scene -> tier, task string, `eval_subtasks` script, scorer, stages. `run_sim_eval.sh` runs
-`LAYOUTS` (easy: clippers_only, bottle_basket, close_lid, lift_bottle; hard: ep0, ep3; ep1/ep2 stay on disk) with
-`episodes: 4` per layout and `control_time_s: 90.0` (`terminate_on_success` ends an episode at the last stage; the real
-nail episodes run 78-102 s, so 90 s truncates some). The episode reward is the cumulative value of the furthest stage
+`LAYOUTS` (easy: clippers_only, bottle_basket, close_lid; hard: ep0, ep3; lift_bottle, ep1 and ep2 stay on disk) with
+`episodes: 8` per layout (2026-10-28, was 4) and `control_time_s: 60.0` (`terminate_on_success` ends an episode at the
+last stage; the real nail episodes run 78-102 s, so 60 s truncates some). Since 2026-10-28 the eval runs on a sim clock
+(`env.robot.inference_delay_steps`, rl/rtc_actor_runtime): the env steps in lockstep with the inference worker instead
+of at wall-clock fps, the RTC delay is fixed at 6 control steps (the local wall-clock eval's p95 cycle latency, 0.18 s;
+the real robot here runs at 0.30 s = 9), and the env executes exactly 6 queued actions per chunk, so
+`PARALLEL=N run_sim_eval.sh` can run N layouts on one GPU without
+changing the policy's regime. The episode reward is the cumulative value of the furthest stage
 reached (sequential walk, success reachable directly, never decreases); `sim/index.json` carries `reward.<scene>`,
 `reward.easy`, `reward.hard` (tier mean over scenes of the per-scene episode mean) and `reward.mean` (mean of the tiers).
 

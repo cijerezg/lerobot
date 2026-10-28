@@ -69,10 +69,12 @@ def view_filename(episode: int, view: str) -> str:
 class EpisodeVideos:
     """One mp4 per view per episode under ``root``; ``put`` takes the raw robot observation of a step."""
 
-    def __init__(self, root: Path, views: list[str], fps: int) -> None:
+    def __init__(self, root: Path, views: list[str], fps: int, block: bool = False) -> None:
         self.root = Path(root)
         self.views = list(views)
         self.fps = fps
+        # block: wait for the encoder instead of dropping frames (the sim clock has no real-time constraint)
+        self.block = block
         self.queue: queue.Queue = queue.Queue(maxsize=64)
         self.dropped = 0
         self.episode = 0
@@ -86,6 +88,9 @@ class EpisodeVideos:
         for view in self.views:
             source = raw_obs[view] if view.endswith(".depth") else raw_obs["pixels"][view]
             frames[view] = source.numpy() if hasattr(source, "numpy") else np.asarray(source)
+        if self.block:
+            self.queue.put(frames)
+            return
         try:
             self.queue.put_nowait(frames)
         except queue.Full:

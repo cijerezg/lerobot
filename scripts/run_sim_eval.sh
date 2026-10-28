@@ -3,20 +3,24 @@
 # Sibling of run_probes.sh: same arguments, same output place, so chase_validate.sh / remote_validate.sh --sim
 # drive it on every new checkpoint.
 #
-#   lerobot/scripts/run_sim_eval.sh CHECKPOINT_PRETRAINED_MODEL [FRESH_OUTPUT_DIRECTORY] [CONFIG]
+#   [PARALLEL=N] lerobot/scripts/run_sim_eval.sh CHECKPOINT_PRETRAINED_MODEL [FRESH_OUTPUT_DIRECTORY] [CONFIG]
 #
 # Output: <run>/validation/step_<step>/sim/<layout>/ per layout: subtask_events.json (stage events, reward per
 # episode), logs/ and videos/ep<N>_{top,wrist,wrist_depth}.mp4 per episode (record_inference_videos; rerun.rrd only
 # with rerun_save), plus sim/summary.{json,md} and index.json over all of them (reward per scene and tier), so
 # view_probes / compare_probes show them as the sim probe (sim_nail = the pre-2026-10-22 nail-only eval). Each layout's task string and eval_subtasks script
 # come from the registry (robots/rebot_b601_sim/tasks.py) as CLI overrides of the config's nail-task values.
+# The sim runs on a sim clock (config env.robot.inference_delay_steps, 2026-10-28): the env steps in lockstep with the
+# inference worker at a fixed RTC delay, so layouts can share the GPU without changing the policy's regime.
 # Env: LAYOUTS (default: the registry's LAYOUTS), SIM_EVAL_ARGS (extra inference_async flags, e.g.
-# "--env.robot.episodes=1 --env.processor.reset.control_time_s=20").
+# "--env.robot.episodes=1 --env.processor.reset.control_time_s=20"), PARALLEL (default 1; N runs up to N layouts at
+# once, each layout's console output then goes to <sim>/<layout>.console.log beside its folder).
 set -uo pipefail
 sim_workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sim_workspace"
 sim_checkpoint="${1:?Usage: run_sim_eval.sh CHECKPOINT_PRETRAINED_MODEL [FRESH_OUTPUT_DIRECTORY] [CONFIG]}"
 sim_config="${3:-config_rl_sim.yaml}"
+parallel="${PARALLEL:-1}"
 [[ -f "$sim_checkpoint/config.json" ]] || { echo "Missing checkpoint config: $sim_checkpoint" >&2; exit 1; }
 sim_step=0
 if [[ -n "${2:-}" ]]; then
@@ -35,18 +39,18 @@ fi
 printf -v sim_out '%s/validation/step_%08d/sim' "$sim_run_dir" "$sim_step"
 [[ ! -e "$sim_out" ]] || { echo "Sim output already exists: $sim_out" >&2; exit 1; }
 [[ -f "$sim_config" ]] || { echo "Missing sim config: $sim_config" >&2; exit 1; }
-echo "Sim config: $sim_config"
+echo "Sim config: $sim_config (PARALLEL=$parallel)"
 export PYTHONPATH="lerobot/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONSAFEPATH=1   # the Spark checkout has stray files under LeRobot/lerobot/ that shadow the package from the CWD
 export MUJOCO_GL=egl
 export PYTHONUNBUFFERED=1
 registry='from lerobot.robots.rebot_b601_sim.tasks import main; main()'
-failed=0
-for layout in ${LAYOUTS:-$(.venv/bin/python -c "$registry" layouts)}; do
-  echo "=== $layout -> $sim_out/$layout"
+
+run_layout() {
+  local layout="$1"
   mapfile -t task_overrides < <(.venv/bin/python -c "$registry" overrides "$layout")
   # The sim robot raises SIGINT after its last episode; the runtime treats it as the operator's Ctrl-C and exits 0.
-  # 1 h caps a stalled run (4 episodes x 90 s + resets per layout).
+  # 1 h caps a stalled run (8 episodes x 60 s of sim time + resets per layout; the sim clock runs faster than real time).
   # shellcheck disable=SC2086
   timeout 3600 .venv/bin/python -m lerobot.rl.inference_async \
     --config_path="$sim_config" \
@@ -58,8 +62,36 @@ for layout in ${LAYOUTS:-$(.venv/bin/python -c "$registry" layouts)}; do
     --aim.enable=false \
     "${task_overrides[@]}" \
     ${SIM_EVAL_ARGS:-}
-  rc=$?
-  [[ $rc -eq 0 && -f "$sim_out/$layout/subtask_events.json" ]] || { echo "$layout failed (rc=$rc)" >&2; failed=1; }
+}
+
+failed=0
+finish_layout() {  # layout, rc
+  [[ $2 -eq 0 && -f "$sim_out/$1/subtask_events.json" ]] || { echo "$1 failed (rc=$2)" >&2; failed=1; }
+}
+
+running_pids=()
+running_layouts=()
+for layout in ${LAYOUTS:-$(.venv/bin/python -c "$registry" layouts)}; do
+  echo "=== $layout -> $sim_out/$layout"
+  if [[ $parallel -le 1 ]]; then
+    run_layout "$layout"
+    finish_layout "$layout" $?
+    continue
+  fi
+  if [[ ${#running_pids[@]} -ge $parallel ]]; then  # a slot frees when the oldest job ends
+    wait "${running_pids[0]}"
+    finish_layout "${running_layouts[0]}" $?
+    running_pids=("${running_pids[@]:1}")
+    running_layouts=("${running_layouts[@]:1}")
+  fi
+  mkdir -p "$sim_out"  # the layout folder itself must not exist yet (inference_async refuses an existing output_dir)
+  run_layout "$layout" > "$sim_out/$layout.console.log" 2>&1 &
+  running_pids+=("$!")
+  running_layouts+=("$layout")
+done
+for i in "${!running_pids[@]}"; do
+  wait "${running_pids[$i]}"
+  finish_layout "${running_layouts[$i]}" $?
 done
 .venv/bin/python lerobot/scripts/probes/sim_summary.py "$sim_out" || failed=1
 exit $failed

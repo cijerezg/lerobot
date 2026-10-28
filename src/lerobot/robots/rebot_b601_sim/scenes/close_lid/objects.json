@@ -14,7 +14,27 @@
     0.075416,
     0.02
    ],
-   "note": "loaded base half, world-fixed body"
+   "note": "loaded base half, world-fixed body",
+   "loop_handle": {
+    "collision_geoms": [
+     "headphone_case_loop_0",
+     "headphone_case_loop_1",
+     "headphone_case_loop_2",
+     "headphone_case_loop_3",
+     "headphone_case_loop_4",
+     "headphone_case_loop_5"
+    ],
+    "shape": "6 capsules r=3 mm along the strap centreline of mesh hinged_nail_ep2_21",
+    "world_xy_apex": [
+     0.5303,
+     0.0174
+    ],
+    "world_z": [
+     0.019,
+     0.033
+    ],
+    "note": "added 2026-10-28; on the fixed base, the end away from the robot: pinchable, does not move the lid"
+   }
   },
   "headphone_lid": {
    "xy": [

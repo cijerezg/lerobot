@@ -232,6 +232,13 @@ def _rig_history_offsets(history_offsets: dict[str, list[int]] | None, cfg) -> d
     return kept or None
 
 
+def _sim_delay_steps(cfg) -> int | None:
+    """The sim clock's fixed RTC delay in control steps (robots/rebot_b601_sim ``inference_delay_steps``):
+    the env and inference workers run in lockstep and the env executes exactly this many queued actions
+    per chunk computed. None = wall clock (the hardware path)."""
+    return getattr(getattr(cfg.env, "robot", None), "inference_delay_steps", None)
+
+
 class RTCSharedState:
     """Thread-safe state manager for the RTC actor runtime."""
 
@@ -290,6 +297,12 @@ class RTCSharedState:
         self.params_loaded_event = threading.Event()
         self.params_loaded_event.set()
         self.policy_ready_event = threading.Event()
+        # Sim clock: the env worker steps only on grants from the inference worker (sim_grant = steps it may
+        # still take, sim_done = steps taken since the last grant), so the policy sees the same delay whatever
+        # the wall clock does.
+        self.sim_grant = 0
+        self.sim_done = 0
+        self.sim_cv = threading.Condition(self.lock)
 
     def add_env_wait_time(self, wait_time: float) -> None:
         with self.lock:
@@ -390,6 +403,7 @@ class RTCSharedState:
     def set_episode_active(self, status: bool) -> None:
         with self.lock:
             self.episode_active = status
+            self.sim_cv.notify_all()
 
     def toggle_freeze(self) -> bool:
         with self.lock:
@@ -495,6 +509,35 @@ class RTCSharedState:
     def history_snapshot(self) -> list[dict]:
         with self.lock:
             return list(self.history_entries)
+
+    def sim_grant_steps(self, steps: int) -> None:
+        """Inference worker: let the env worker take ``steps`` steps (a leftover grant of an ended episode is dropped)."""
+        with self.sim_cv:
+            self.sim_grant = steps
+            self.sim_done = 0
+            self.sim_cv.notify_all()
+
+    def sim_wait_steps(self, steps: int) -> bool:
+        """Inference worker: block until the env has taken the granted steps; False when the episode ended first."""
+        with self.sim_cv:
+            while self.sim_done < steps and self.episode_active and self.running:
+                self.sim_cv.wait(0.1)
+            return self.sim_done >= steps
+
+    def sim_take_step(self) -> bool:
+        """Env worker: block until a step is granted; False when the runtime stopped."""
+        with self.sim_cv:
+            while self.sim_grant == 0 and self.running:
+                self.sim_cv.wait(0.1)
+            if not self.running:
+                return False
+            self.sim_grant -= 1
+            return True
+
+    def sim_step_done(self) -> None:
+        with self.sim_cv:
+            self.sim_done += 1
+            self.sim_cv.notify_all()
 
 
 def _rerun_log_worker(q) -> None:
@@ -677,6 +720,12 @@ def rtc_inference_worker(
         inference_step = 0
         execution_horizon = policy.config.rtc_config.execution_horizon
         time_per_chunk = 1.0 / cfg.env.fps
+        sim_delay = _sim_delay_steps(cfg)
+        if sim_delay is not None:
+            logger.info(
+                "[RTC_INFERENCE] Sim clock: fixed inference delay %d steps (%.0f ms at %d fps); the env runs in lockstep.",
+                sim_delay, sim_delay * time_per_chunk * 1000, cfg.env.fps,
+            )
         task_str = cfg.policy.task
         action_dim = _action_dim(cfg)
         # Operator-fed subtasks REPLACE generation: the console latches the current
@@ -711,8 +760,18 @@ def rtc_inference_worker(
                 time.sleep(0.01)
                 continue
 
-            current_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
-            if not action_queue.empty() and action_queue.qsize() > execution_horizon + current_delay:
+            current_delay = sim_delay if sim_delay is not None else math.ceil(latency_tracker.p95() / time_per_chunk)
+            if sim_delay is not None:
+                # Lockstep: the env runs ahead to where the wall-clock worker would start its next cycle.
+                idle_steps = action_queue.qsize() - (execution_horizon + current_delay)
+                if idle_steps > 0:
+                    wait_start = time.perf_counter()
+                    shared_state.sim_grant_steps(idle_steps)
+                    finished = shared_state.sim_wait_steps(idle_steps)
+                    shared_state.add_inference_wait_time(time.perf_counter() - wait_start)
+                    if not finished:
+                        continue
+            elif not action_queue.empty() and action_queue.qsize() > execution_horizon + current_delay:
                 wait_start = time.perf_counter()
                 time.sleep(0.01)
                 shared_state.add_inference_wait_time(time.perf_counter() - wait_start)
@@ -748,18 +807,20 @@ def rtc_inference_worker(
             robot_type = cfg.env.robot.type if hasattr(cfg.env, "robot") else ""
 
             current_time = time.perf_counter()
+            # The regeneration cadence runs on the sim clock (control steps) under the sim clock.
+            clock_now = shared_state.current_step * time_per_chunk if sim_delay is not None else current_time
             with torch.no_grad():
                 # Subtask generation at cadence (two-prompt design). Runs in THIS
                 # thread — generation is not safe against a concurrent worker.
                 if subtask_enabled and not operator_subtasks and (
                     last_subtask_time is None
-                    or (current_time - last_subtask_time) >= subtask_interval
+                    or (clock_now - last_subtask_time) >= subtask_interval
                 ):
                     raw_text, subtask_name, subtask_index = trainer.generate_subtask_text(
                         policy, obs_filtered, task_str, cfg, preprocessor=preprocessor,
                     )
                     shared_state.update_subtask(subtask_name, subtask_index)
-                    last_subtask_time = current_time
+                    last_subtask_time = clock_now
                     if subtask_index < 0:
                         logger.warning("[RTC_INFERENCE] Subtask snap missed vocab: %r", raw_text)
 
@@ -793,7 +854,13 @@ def rtc_inference_worker(
                 if prev_actions is not None:
                     prev_actions = _normalize_prev_actions_length(prev_actions, target_steps=execution_horizon)
 
-                inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
+                inference_delay = current_delay
+                during_steps = 0
+                if sim_delay is not None:
+                    # The env executes the delay's worth of queued actions while the chunk is computed. An empty
+                    # queue is the episode start, where the env holds for the first chunk (_wait_for_first_chunk).
+                    during_steps = 0 if action_queue.empty() else sim_delay
+                    shared_state.sim_grant_steps(during_steps)
 
                 if device.type == "cuda":
                     torch.cuda.synchronize()
@@ -870,7 +937,7 @@ def rtc_inference_worker(
                 processed_actions = bound_policy_actions(processed_actions, latest_obs, policy)
 
             new_latency = time.perf_counter() - current_time
-            new_delay = math.ceil(new_latency / time_per_chunk)
+            new_delay = sim_delay if sim_delay is not None else math.ceil(new_latency / time_per_chunk)
             latency_tracker.add(new_latency)
             shared_state.add_inference_latency(new_latency)
 
@@ -883,6 +950,9 @@ def rtc_inference_worker(
                 "[RTC_INFERENCE] chunk latency %.3fs [pre=%.3f gpu=%.3f post=%.3f] delay=%d model_delay=%d qsize=%d",
                 new_latency, dt_preproc, dt_gpu, dt_post, new_delay, inference_delay, action_queue.qsize(),
             )
+
+            if sim_delay is not None and not shared_state.sim_wait_steps(during_steps):
+                continue  # the episode ended under this chunk
 
             current_index = action_queue.get_action_index()
             actions_consumed = max(0, current_index - action_index_before)
@@ -938,6 +1008,7 @@ def rtc_env_worker(
     try:
         logger.info("[RTC_ENV] Thread started.")
         action_interval = 1.0 / cfg.env.fps
+        sim_clock = _sim_delay_steps(cfg) is not None
         action_dim = _action_dim(cfg)
         teleop_feedback_supported = _teleop_supports_feedback(teleop_device)
 
@@ -1051,6 +1122,12 @@ def rtc_env_worker(
                     _ramp_leader(teleop_device, online_env.get_raw_joint_positions(), cfg.env.fps)
                 _wait_for_first_chunk(action_queue, shared_state, cfg.env.fps)
 
+            grant_wait = 0.0
+            if sim_clock:
+                wait_start = time.perf_counter()
+                if not shared_state.sim_take_step():
+                    break
+                grant_wait = time.perf_counter() - wait_start
             start_time = time.perf_counter()
 
             if was_intervening != shared_state.is_intervening:
@@ -1322,6 +1399,8 @@ def rtc_env_worker(
                     cursor = shared_state.advance_subtask(want - shared_state.subtask_cursor)
                     why = auto_subtasks.events[-1]["why"] if auto_subtasks.events else "resync"
                     logger.info("[SUBTASK] auto %s -> [%d/%d] %s", why, cursor + 1, len(shared_state.subtask_script), shared_state.subtask_script[cursor][0])
+            if sim_clock:
+                shared_state.sim_step_done()
 
             if done or truncated:
                 logger.info(
@@ -1399,8 +1478,11 @@ def rtc_env_worker(
                 action_get=_t_action_end - _t_action_start,
                 step=_t_step_end - _t_step_start,
             )
-            shared_state.add_env_wait_time(max(0.0, action_interval - dt_s))
-            precise_sleep(max(0.0, action_interval - dt_s))
+            if sim_clock:
+                shared_state.add_env_wait_time(grant_wait)
+            else:
+                shared_state.add_env_wait_time(max(0.0, action_interval - dt_s))
+                precise_sleep(max(0.0, action_interval - dt_s))
 
         logger.info("[RTC_ENV] Thread shut down.")
     except Exception as exc:
@@ -1737,9 +1819,12 @@ def act_with_policy_rtc_inference(
                 # Depth PNGs land on the cache's read grid; a policy without a stride gets every frame.
                 depth_stride=getattr(cfg.policy, "image_stride", 1),
             )
+        sim_clock = _sim_delay_steps(cfg) is not None
+        if sim_clock:
+            online_env.reset_time_s = 0.0  # the sim resets its scene in park(); no operator reset window
         videos = None
         if getattr(cfg, "record_inference_videos", False):
-            videos = EpisodeVideos(Path(cfg.output_dir) / "videos", cfg.inference_video_views, cfg.env.fps)
+            videos = EpisodeVideos(Path(cfg.output_dir) / "videos", cfg.inference_video_views, cfg.env.fps, block=sim_clock)
         # Leader trace CSV muted 2026-09-13 (per-read targets/raw/mA/status); uncomment when
         # debugging the leader.
         # if _teleop_supports_feedback(teleop_device):

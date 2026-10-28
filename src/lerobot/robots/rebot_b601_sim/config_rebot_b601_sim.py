@@ -58,6 +58,12 @@ class RebotB601SimRobotConfig(RobotConfig):
     episodes: int | None = None
     # Subtask cursor and staged reward from the MuJoCo state (tasks.py scorer of the scene) instead of the operator console.
     auto_subtasks: bool = False
+    # Sim clock (rl/rtc_actor_runtime): the env steps in lockstep with the inference worker instead of at wall-clock fps,
+    # and the policy's RTC delay is fixed at this many control steps (the env executes exactly that many queued actions
+    # while a chunk is computed). 6 = the local wall-clock sim eval's p95 cycle latency, 0.18 s at 30 fps (RTX PRO 6000,
+    # mix40 10-18 ckpt 1200 bottle_basket log of 2026-10-22); the real-robot rollouts on the same machine run at 0.30 s
+    # (9 steps). Several eval processes can then share one GPU without changing the policy's regime. None = wall clock.
+    inference_delay_steps: int | None = 6
     park_pose: dict[str, float] = field(default_factory=lambda: dict(_FOLLOWER.park_pose))
     park_deg_per_s: float = _FOLLOWER.park_deg_per_s
     joint_limits: dict[str, tuple[float, float]] = field(default_factory=lambda: dict(_FOLLOWER.joint_limits))

@@ -85,7 +85,7 @@ TASKS: dict[str, Task] = {
 }
 
 # The default eval set (run_sim_eval.sh LAYOUTS): easy tier first, then the hard tier. ep1/ep2 stay on disk.
-LAYOUTS = ("clippers_only", "bottle_basket", "close_lid", "lift_bottle", "ep0", "ep3")
+LAYOUTS = ("clippers_only", "bottle_basket", "close_lid", "ep0", "ep3")
 
 
 def layout_name(scene: str) -> str:

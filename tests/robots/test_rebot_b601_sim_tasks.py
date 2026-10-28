@@ -70,7 +70,7 @@ def gripper_to(m, d, pos):
 
 
 def test_registry():
-    assert set(LAYOUTS) <= set(TASKS) and set(LAYOUTS) == {"clippers_only", "bottle_basket", "close_lid", "lift_bottle", "ep0", "ep3"}
+    assert set(LAYOUTS) <= set(TASKS) and set(LAYOUTS) == {"clippers_only", "bottle_basket", "close_lid", "ep0", "ep3"}
     for name, task in TASKS.items():
         assert task.tier in TIERS
         values = [v for _, v, _ in task.stages]
