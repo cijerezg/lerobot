@@ -1,47 +1,60 @@
-"""Play the Action Inspector's chunks on the MuJoCo reBot and record a rerun log.
+"""Play the Action Inspector's chunks on the MuJoCo reBot and write one video per anchor.
 
 Input is ``action_trace_records.npz``, written beside ``action_trace.html`` by
 ``action_trace_probe``: per anchor, the measured state, the demonstrated chunk, every
 filtered flow sample, and the follower states the demonstration actually produced.
 
     uv run python -m lerobot.probes.action_trace_sim --records <run>/validation/step_00001200/action_trace/action_trace_records.npz
-    rerun <run>/validation/step_00001200/action_trace/action_trace_sim.rrd
 
-By default everything drawn is a commanded action. Each flow sample is an arm posed
-straight from its chunk, tick by tick, next to the demonstrated chunk's end-effector path
-and marker, with the dataset's camera video playing over the same frames when the dataset
-root recorded in the npz exists on this machine. No physics, no servo lag: what the policy
-asked for, against what the demonstrator asked for.
+writes ``anchor000_ep0003_fr001234.mp4`` per anchor plus ``summary.json`` into ``--out``
+(default ``action_trace_sim/`` beside the records). Every video frame is one tick of the
+chunk: a panel per arm, the demonstrated chunk in grey first and then each flow sample in
+its Action Inspector colour, each with its own end-effector path and the demo's path for
+reference (and the FAST decode's path on an ``action_mode=both`` checkpoint); the
+dataset's camera frames over the same window when the dataset root recorded in the npz
+exists on this machine, the anchor's still frames otherwise; and the joint curves, demo
+against every sample, with a cursor at the current tick.
 
-``--execute`` instead drives the MuJoCo position actuators through each chunk from the
-measured demo state, one target per tick, and poses the arms from what the plant did.
-That adds the achieved trails, the real follower's path, the sim-vs-command joint curves,
-end-effector lag, and a table-contact flag. The scene is the Menagerie model retargeted
-to our DM geometry (``mjcf/retarget_to_dm.py``): end effector exact to a micron, meshes
-and inertials still RobStride-shaped, actuator gains inherited from the lighter RS arm
-and not identified against the DM motors. Read contact and the shape of the lag from
-it, not millimetres of lag.
+By default everything drawn is a commanded action: no physics, no servo lag, what the
+policy asked for against what the demonstrator asked for. ``--execute`` instead drives
+the MuJoCo position actuators through each chunk from the measured demo state, one
+target per tick, and poses the sample arms from what the plant did. The demo panel then
+poses the arm from the real follower's measured states, every panel draws its command
+target ahead of the arm and its achieved trail behind it, the joint curves add the
+simulated joints next to the commands and the real follower next to the demo command,
+and the caption counts the ticks with table contact. The scene is the Menagerie model
+retargeted to our DM geometry (``mjcf/retarget_to_dm.py``): end effector exact to a
+micron, meshes and inertials still RobStride-shaped, actuator gains inherited from the
+lighter RS arm and not identified against the DM motors. Read contact and the shape of
+the lag from it, not millimetres of lag.
 
-One ``time`` timeline runs through the anchors in order, with a pause between them; the
-``anchor`` timeline jumps between anchors. Chunks are one second long; ``--time-scale 2``
-stretches them to two timeline seconds so the viewer's 1x plays them at half speed.
+Chunks are one second long; ``--time-scale 2`` writes the video at half the chunk's fps
+so it plays at half speed. Rendering is offscreen through EGL (``MUJOCO_GL`` defaults
+to ``egl`` here).
 """
 
 from __future__ import annotations
 
-import argparse
-import io
 import os
-import re
-from pathlib import Path
 
-import mujoco
-import numpy as np
-import rerun as rr
-import rerun.blueprint as rrb
+os.environ.setdefault("MUJOCO_GL", "egl")
 
-from lerobot.probes.action_trace_probe import FAST_COLOR, SAMPLE_COLORS
-from lerobot.robots.rebot_b601_follower.kinematics import ARM_DOF
+import argparse  # noqa: E402
+import json  # noqa: E402
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import matplotlib  # noqa: E402
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import mujoco  # noqa: E402
+import numpy as np  # noqa: E402
+from PIL import Image, ImageDraw, ImageFont  # noqa: E402
+
+from lerobot.probes.action_trace_probe import FAST_COLOR, SAMPLE_COLORS  # noqa: E402
+from lerobot.rl.inference_video import VideoWriter  # noqa: E402
+from lerobot.robots.rebot_b601_follower.kinematics import ARM_DOF  # noqa: E402
 
 ROBOT_DIR = Path(__file__).resolve().parents[1] / "robots" / "rebot_b601_follower"
 SCENE = ROBOT_DIR / "mjcf" / "scene_dm.xml"
@@ -71,9 +84,22 @@ SOFT_LIMITS_DEG = {
 DEMO_COLOR = "#6b7280"
 MEASURED_COLOR = "#111827"
 
+# Frame layout, pixels. One square arm panel per arm in a row, the camera frames stacked
+# at the right end of that row, the joint strip across the full width underneath.
+PANEL = 360
+CAM_W, CAM_H = 240, 180
+TITLE_H = 36
+CAP_H = 34
+PLOT_H = 260
+FONT = ImageFont.load_default(size=13)
+
 
 def hex_rgb(color: str) -> tuple[float, float, float]:
     return tuple(int(color[i : i + 2], 16) / 255.0 for i in (1, 3, 5))
+
+
+def rgb255(rgb: tuple[float, float, float]) -> tuple[int, int, int]:
+    return tuple(int(round(c * 255)) for c in rgb)
 
 
 def load_model(table_z: float, gravcomp: bool) -> mujoco.MjModel:
@@ -122,75 +148,76 @@ def from_qpos(qpos: np.ndarray) -> np.ndarray:
     return np.concatenate([np.rad2deg(qpos[:ARM_DOF]), [gripper]])
 
 
-def vertex_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
-    face_normals = np.cross(
-        vertices[faces[:, 1]] - vertices[faces[:, 0]], vertices[faces[:, 2]] - vertices[faces[:, 0]]
-    )
-    normals = np.zeros_like(vertices)
-    for corner in range(3):
-        np.add.at(normals, faces[:, corner], face_normals)
-    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-    return normals / np.maximum(lengths, 1e-12)
+def anchor_camera(points: np.ndarray, table_z: float) -> mujoco.MjvCamera:
+    """A camera framed on this anchor's end-effector paths, still for the whole chunk.
+
+    ``points`` are every path drawn in the anchor (demo, samples, measured, achieved).
+    The camera looks at their centre, backs off until they fit with the forearm around
+    them, and sits at a three-quarter angle to the base-to-gripper direction (the base
+    is at the origin) so the arm never stands between the camera and the gripper. A
+    free camera's azimuth is the direction it looks along, so ``theta + 130`` puts it
+    off the gripper's far side.
+    """
+    centre = (points.min(axis=0) + points.max(axis=0)) / 2
+    radius = float(np.linalg.norm(points - centre, axis=1).max())
+    theta = float(np.degrees(np.arctan2(centre[1], centre[0])))
+    camera = mujoco.MjvCamera()
+    camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+    camera.lookat[:] = (centre[0], centre[1], max(centre[2], table_z + 0.03))
+    camera.distance = float(np.clip(2.6 * radius + 0.38, 0.45, 0.9))
+    camera.azimuth = theta + 130.0
+    camera.elevation = -25.0
+    return camera
 
 
-class ArmMeshes:
-    """The arm's visual geoms: logged once as static meshes under a prefix, posed per step."""
+def plain_lighting(model: mujoco.MjModel) -> None:
+    """A flat light floor and a brighter headlight: the scene file's dark checker is for the live viewer."""
+    floor = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, FLOOR_GEOM)
+    material = int(model.geom_matid[floor])
+    model.mat_texid[material, :] = -1
+    model.mat_rgba[material] = (0.86, 0.85, 0.82, 1.0)
+    model.mat_reflectance[material] = 0.0
+    model.vis.headlight.ambient[:] = (0.45, 0.45, 0.45)
+    model.vis.headlight.diffuse[:] = (0.7, 0.7, 0.7)
+
+
+class Arm:
+    """The model's one arm: posed kinematically and tinted per panel.
+
+    The visual meshes lose their material at construction so ``tint`` can recolour them
+    through ``geom_rgba``, keeping each part's light/dark contrast and taking the panel's hue.
+    """
 
     def __init__(self, model: mujoco.MjModel):
         self.model = model
-        self.geoms = []
-        for geom in range(model.ngeom):
-            if model.geom_group[geom] != 2 or model.geom_type[geom] != mujoco.mjtGeom.mjGEOM_MESH:
-                continue
-            mesh = int(model.geom_dataid[geom])
-            body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[geom]))
-            name = f"{body}/{mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH, mesh)}"
-            vert = model.mesh_vertadr[mesh]
-            face = model.mesh_faceadr[mesh]
-            vertices = model.mesh_vert[vert : vert + model.mesh_vertnum[mesh]].astype(np.float32)
-            faces = model.mesh_face[face : face + model.mesh_facenum[mesh]].astype(np.uint32)
+        self.data = mujoco.MjData(model)
+        self.ee_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, EE_BODY)
+        self.visual = [
+            geom
+            for geom in range(model.ngeom)
+            if model.geom_group[geom] == 2 and model.geom_type[geom] == mujoco.mjtGeom.mjGEOM_MESH
+        ]
+        self.luminance = []
+        for geom in self.visual:
             material = int(model.geom_matid[geom])
             rgba = model.mat_rgba[material] if material >= 0 else model.geom_rgba[geom]
-            self.geoms.append((geom, name, vertices, faces, vertex_normals(vertices, faces), rgba[:3].copy()))
-        self.scratch = mujoco.MjData(model)
-        self.ee_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, EE_BODY)
+            self.luminance.append(0.35 + 0.65 * float(rgba[:3].mean()))
+            model.geom_matid[geom] = -1
 
-    def log_static(self, prefix: str, tint: tuple[float, float, float] | None = None, alpha: float = 1.0) -> None:
-        for _, name, vertices, faces, normals, rgb in self.geoms:
-            color = rgb
-            if tint is not None:
-                # Keep the material's light/dark contrast, take the sample's hue.
-                luminance = 0.35 + 0.65 * float(rgb.mean())
-                color = np.asarray(tint) * luminance
-            rr.log(
-                f"{prefix}/{name}",
-                rr.Mesh3D(
-                    vertex_positions=vertices,
-                    triangle_indices=faces,
-                    vertex_normals=normals,
-                    albedo_factor=(float(color[0]), float(color[1]), float(color[2]), alpha),
-                ),
-                static=True,
-            )
+    def tint(self, rgb: tuple[float, float, float]) -> None:
+        for geom, luminance in zip(self.visual, self.luminance, strict=True):
+            self.model.geom_rgba[geom, :3] = np.asarray(rgb) * luminance
+            self.model.geom_rgba[geom, 3] = 1.0
 
-    def log_pose(self, prefix: str, qpos: np.ndarray) -> None:
-        """Pose the meshes at ``qpos`` kinematically."""
-        self.scratch.qpos[:] = qpos
-        mujoco.mj_kinematics(self.model, self.scratch)
-        for geom, name, *_ in self.geoms:
-            rr.log(
-                f"{prefix}/{name}",
-                rr.Transform3D(
-                    translation=self.scratch.geom_xpos[geom], mat3x3=self.scratch.geom_xmat[geom].reshape(3, 3)
-                ),
-            )
+    def pose(self, qpos: np.ndarray) -> None:
+        self.data.qpos[:] = qpos
+        mujoco.mj_kinematics(self.model, self.data)
 
     def ee_path(self, chunk_deg: np.ndarray) -> np.ndarray:
         points = []
         for action in chunk_deg:
-            self.scratch.qpos[:] = to_qpos(action)
-            mujoco.mj_kinematics(self.model, self.scratch)
-            points.append(self.scratch.xpos[self.ee_body].copy())
+            self.pose(to_qpos(action))
+            points.append(self.data.xpos[self.ee_body].copy())
         return np.stack(points)
 
 
@@ -223,7 +250,7 @@ def execute(model: mujoco.MjModel, data: mujoco.MjData, state_deg: np.ndarray, c
 
 
 class ChunkVideo:
-    """The dataset's camera frames over a chunk window, as half-res JPEG bytes per step.
+    """The dataset's camera frames over a chunk window, as uint8 arrays per step.
 
     Only built when the dataset root the probe recorded exists here; otherwise the
     anchor still frames from the npz are shown instead.
@@ -235,9 +262,7 @@ class ChunkVideo:
         self.dataset = LeRobotDataset(repo_id=repo_id, root=root)
         self.fps = fps
 
-    def frames(self, episode: int, frame: int, horizon: int, label: str) -> list[bytes]:
-        from PIL import Image
-
+    def frames(self, episode: int, frame: int, horizon: int, label: str) -> list[np.ndarray]:
         from lerobot.datasets.video_utils import decode_video_frames
 
         key = f"observation.images.{label}"
@@ -258,59 +283,103 @@ class ChunkVideo:
             backend=self.dataset._video_backend,
             return_uint8=True,
         )
-        encoded = []
-        for image in decoded.permute(0, 2, 3, 1).numpy()[:, ::2, ::2]:
-            buffer = io.BytesIO()
-            Image.fromarray(np.ascontiguousarray(image)).save(buffer, format="JPEG", quality=85)
-            encoded.append(buffer.getvalue())
-        return encoded
+        return list(decoded.permute(0, 2, 3, 1).numpy())
 
 
-def blueprint(camera_labels: list[str], joint_names: list[str], execute_mode: bool, time_scale: float = 1.0) -> rrb.Blueprint:
-    window = rrb.VisibleTimeRange(
-        "time",
-        start=rrb.TimeRangeBoundary.cursor_relative(seconds=-1.5 * time_scale),
-        end=rrb.TimeRangeBoundary.cursor_relative(seconds=1.5 * time_scale),
+def draw_path(scene: mujoco.MjvScene, points: np.ndarray, rgb: tuple[float, float, float], radius: float) -> None:
+    """Append a polyline of capsules to a scene already filled by ``update_scene``."""
+    rgba = np.array([*rgb, 1.0], dtype=np.float32)
+    for a, b in zip(points[:-1], points[1:], strict=True):
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.eye(3).ravel(), rgba)
+        mujoco.mjv_connector(geom, mujoco.mjtGeom.mjGEOM_CAPSULE, radius, a, b)
+        scene.ngeom += 1
+
+
+def draw_marker(scene: mujoco.MjvScene, point: np.ndarray, rgb: tuple[float, float, float], radius: float) -> None:
+    geom = scene.geoms[scene.ngeom]
+    mujoco.mjv_initGeom(
+        geom,
+        mujoco.mjtGeom.mjGEOM_SPHERE,
+        np.array([radius, 0.0, 0.0]),
+        np.asarray(point, dtype=np.float64),
+        np.eye(3).ravel(),
+        np.array([*rgb, 1.0], dtype=np.float32),
     )
-    joint_tabs = rrb.Tabs(
-        *[rrb.TimeSeriesView(origin=f"/plots/joints/{name}", name=name, time_ranges=window) for name in joint_names]
-    )
-    right = [joint_tabs]
-    shares = [1]
-    if execute_mode:
-        right += [
-            rrb.TimeSeriesView(origin="/plots/ee_lag_mm", name="EE lag, achieved vs commanded (mm)", time_ranges=window),
-            rrb.TimeSeriesView(origin="/plots/table_contact", name="table contact", time_ranges=window),
-        ]
-        shares = [2, 1, 0.7]
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial3DView(origin="/", name="actions", contents=["+ $origin/**", "- /plots/**", "- /cameras/**", "- /info"]),
-            rrb.Vertical(
-                rrb.Tabs(*[rrb.Spatial2DView(origin=f"/cameras/{label}", name=label) for label in camera_labels]),
-                rrb.TextDocumentView(origin="/info", name="anchor"),
-                row_shares=[2, 1.3],
-            ),
-            rrb.Vertical(*right, row_shares=shares),
-            column_shares=[3, 1.3, 1.7],
-        ),
-        collapse_panels=False,
-    )
+    scene.ngeom += 1
+
+
+def render_panel(renderer: mujoco.Renderer, arm: Arm, camera: mujoco.MjvCamera, qpos: np.ndarray, paths: list, markers: list) -> np.ndarray:
+    """One arm panel: the arm at ``qpos`` plus ``(points, rgb, radius)`` paths and ``(point, rgb, radius)`` markers."""
+    arm.pose(qpos)
+    renderer.update_scene(arm.data, camera)
+    for points, rgb, radius in paths:
+        draw_path(renderer.scene, points, rgb, radius)
+    for point, rgb, radius in markers:
+        draw_marker(renderer.scene, point, rgb, radius)
+    return renderer.render().copy()
+
+
+def joint_strip(
+    width: int,
+    joint_names: list[str],
+    fps: float,
+    gt_chunk: np.ndarray,
+    samples: list[np.ndarray],
+    sample_colors: list,
+    measured: np.ndarray | None,
+    achieved: list[np.ndarray] | None,
+) -> tuple[np.ndarray, list[tuple[float, float, int, int]]]:
+    """The joint curves of one anchor, drawn once, with the pixel geometry of every axis.
+
+    Returns the RGB strip and, per axis, ``(x0, x_per_s, y_top, y_bottom)`` so the cursor
+    at any tick is a column overlaid on the array: no second matplotlib draw per frame.
+    """
+    fig, axes = plt.subplots(1, len(joint_names), figsize=(width / 100, PLOT_H / 100), dpi=100)
+    fig.subplots_adjust(left=0.035, right=0.995, bottom=0.2, top=0.86, wspace=0.32)
+    horizon = len(gt_chunk)
+    time = np.arange(horizon) / fps
+    for j, (ax, name) in enumerate(zip(axes, joint_names, strict=True)):
+        ax.plot(time, gt_chunk[:, j], color=DEMO_COLOR, linewidth=2.0)
+        if measured is not None and len(measured):
+            ax.plot(time[: len(measured)], measured[:, j], color=MEASURED_COLOR, linewidth=2.5)
+        for k, chunk in enumerate(samples):
+            ax.plot(time[: len(chunk)], chunk[:, j], color=sample_colors[k], linewidth=1.5)
+            if achieved is not None:
+                ax.plot(time[: len(achieved[k])], achieved[k][:, j], color=sample_colors[k], linewidth=0.8, linestyle="--")
+        ax.set_title(name, fontsize=8)
+        ax.set_xlim(0.0, max(time[-1], 1.0 / fps))
+        ax.tick_params(labelsize=7)
+        ax.grid(True, alpha=0.3)
+    axes[0].set_ylabel("deg", fontsize=7)
+    axes[len(axes) // 2].set_xlabel("s", fontsize=7)
+    fig.canvas.draw()
+    image = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+    height = image.shape[0]
+    geometry = []
+    for ax in axes:
+        x0 = ax.transData.transform((0.0, 0.0))[0]
+        x1 = ax.transData.transform((1.0, 0.0))[0]
+        bbox = ax.get_window_extent()
+        geometry.append((x0, x1 - x0, int(height - bbox.y1), int(height - bbox.y0)))
+    plt.close(fig)
+    return image, geometry
+
+
+def fit(image: np.ndarray, width: int, height: int) -> np.ndarray:
+    return np.asarray(Image.fromarray(np.ascontiguousarray(image)).resize((width, height), Image.BILINEAR))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--records", required=True, help="action_trace_records.npz from the probe")
-    parser.add_argument("--out", default=None, help=".rrd path; default action_trace_sim.rrd beside the records")
-    parser.add_argument("--spawn", action="store_true", help="open the rerun viewer live instead of writing the .rrd")
+    parser.add_argument("--out", default=None, help="output directory; default action_trace_sim/ beside the records")
     parser.add_argument("--anchors", default=None, help="comma-separated anchor indices; default all")
     parser.add_argument("--episodes", default=None, help="comma-separated episode indices; default all")
-    parser.add_argument("--pause", type=float, default=0.5, help="seconds of timeline between anchors")
-    parser.add_argument("--time-scale", type=float, default=1.0, help="timeline seconds per real second; 2 plays the chunks at half speed")
+    parser.add_argument("--time-scale", type=float, default=1.0, help="video seconds per chunk second; 2 plays the chunks at half speed")
     parser.add_argument("--execute", action="store_true", help="run the chunks through MuJoCo physics instead of posing them")
     parser.add_argument("--substeps", type=int, default=17, help="physics steps per action tick (--execute)")
     parser.add_argument("--no-gravcomp", action="store_true", help="let the arm sag under its own weight (--execute)")
-    parser.add_argument("--demo-arm", action="store_true", help="also draw the demo command as a translucent ghost arm")
     parser.add_argument("--dataset-root", default=None, help="dataset to play video from; default the root recorded in the npz")
     parser.add_argument("--no-video", action="store_true", help="show the anchor still frames only")
     args = parser.parse_args()
@@ -340,42 +409,32 @@ def main() -> None:
     model = load_model(table_z, gravcomp=not args.no_gravcomp)
     model.opt.timestep = 1.0 / fps / args.substeps
     data = mujoco.MjData(model)
-    arm = ArmMeshes(model)
+    arm = Arm(model)
+    plain_lighting(model)
+    renderer = mujoco.Renderer(model, PANEL, PANEL)
+    renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
+    demo_rgb = hex_rgb(DEMO_COLOR)
+    measured_rgb = hex_rgb(MEASURED_COLOR)
+    fast_rgb = hex_rgb(FAST_COLOR)
     sample_colors = [hex_rgb(SAMPLE_COLORS[k % len(SAMPLE_COLORS)]) for k in range(n_samples)]
+    panel_colors = [demo_rgb, *sample_colors]
 
-    out = args.out or str(Path(args.records).with_name("action_trace_sim.rrd"))
-    layout = blueprint(camera_labels, joint_names, args.execute, args.time_scale)
-    rr.init("action_trace_sim", spawn=args.spawn, default_blueprint=layout)
-    if not args.spawn:
-        rr.save(out, default_blueprint=layout)
-
-    rr.log("/", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log(
-        "scene/table",
-        rr.Boxes3D(centers=[[0.25, 0.0, table_z - 0.01]], half_sizes=[[0.75, 0.75, 0.01]], colors=[(0.82, 0.80, 0.76)], fill_mode="solid"),
-        static=True,
-    )
-    if args.demo_arm:
-        arm.log_static("demo/arm", tint=hex_rgb(DEMO_COLOR), alpha=0.35)
-    for k in range(n_samples):
-        arm.log_static(f"sample{k}/arm", tint=sample_colors[k])
-    for name in joint_names:
-        rr.log(f"plots/joints/{name}/demo_cmd", rr.SeriesLines(colors=[hex_rgb(DEMO_COLOR)], widths=[2.0], names=["demo command"]), static=True)
-        for k in range(n_samples):
-            rr.log(f"plots/joints/{name}/sample{k}_cmd", rr.SeriesLines(colors=[sample_colors[k]], widths=[2.0], names=[f"sample {k} command"]), static=True)
-        if args.execute:
-            rr.log(f"plots/joints/{name}/demo_meas", rr.SeriesLines(colors=[hex_rgb(MEASURED_COLOR)], widths=[2.5], names=["real follower"]), static=True)
-            for k in range(n_samples):
-                rr.log(f"plots/joints/{name}/sample{k}_sim", rr.SeriesLines(colors=[sample_colors[k]], widths=[1.0], names=[f"sample {k} sim"]), static=True)
+    out = Path(args.out) if args.out else Path(args.records).with_name("action_trace_sim")
+    out.mkdir(parents=True, exist_ok=True)
+    width = (n_samples + 1) * PANEL + CAM_W
+    height = TITLE_H + PANEL + CAP_H + PLOT_H
+    video_fps = int(round(fps / args.time_scale))
+    legend = "grey = demo command, colours = flow samples"
     if args.execute:
-        for k in range(n_samples):
-            rr.log(f"plots/ee_lag_mm/sample{k}", rr.SeriesLines(colors=[sample_colors[k]], names=[f"sample {k}"]), static=True)
-            rr.log(f"plots/table_contact/sample{k}", rr.SeriesLines(colors=[sample_colors[k]], names=[f"sample {k}"]), static=True)
+        legend = "grey = demo command, black = real follower, colours = flow samples (dashed = sim achieved), small sphere = command target"
+    if has_fast:
+        legend += f", {FAST_COLOR} path = FAST decode"
 
-    clock = 0.0
+    anchors_summary = []
     for anchor in chosen:
         episode = int(records["episode"][anchor])
         frame = int(records["frame"][anchor])
+        subtask = str(records["subtask"][anchor]) or "-"
         state = np.asarray(records["state"][anchor], dtype=np.float64)[: len(joint_names)]
         gt_chunk = records["gt_chunk"][anchor]
         gt_chunk = gt_chunk[~np.isnan(gt_chunk[:, 0])]
@@ -385,84 +444,139 @@ def main() -> None:
         horizon = len(gt_chunk)
         command_paths = [arm.ee_path(chunk) for chunk in samples]
         demo_path = arm.ee_path(gt_chunk)
-        runs = [execute(model, data, state, chunk, args.substeps) for chunk in samples] if args.execute else None
-        clips = {label: video.frames(episode, frame, horizon, label) for label in camera_labels} if video else {}
-
-        rr.set_time("anchor", sequence=int(anchor))
-        rr.set_time("time", duration=clock)
-        final_spread = max(
-            (np.linalg.norm(command_paths[i][-1] - command_paths[j][-1]) for i in range(n_samples) for j in range(i + 1, n_samples)),
-            default=0.0,
-        )
-        lines = [
-            f"**anchor {anchor}**  episode {episode}  frame {frame}",
-            "",
-            f"subtask: {records['subtask'][anchor] or '-'}",
-            "",
-            f"final EE spread across samples: {final_spread * 1000:.0f} mm",
-            "",
-        ]
-        if args.execute:
-            lines += ["| sample | probe clearance (mm) | sim table contact (ticks) | max EE lag (mm) | final EE vs demo (mm) |", "|---|---|---|---|---|"]
-            for k, (qpos, ee, touched) in enumerate(runs):
-                lag = np.linalg.norm(ee - command_paths[k], axis=1)
-                lines.append(
-                    f"| {k} | {records['sample_clearance'][anchor][k] * 1000:.0f} | {int(touched.sum())} | {lag.max() * 1000:.0f} | {np.linalg.norm(ee[-1] - demo_path[-1]) * 1000:.0f} |"
-                )
-        else:
-            lines += ["| sample | probe clearance (mm) | final EE vs demo (mm) | path length (mm) |", "|---|---|---|---|"]
-            for k, path in enumerate(command_paths):
-                length = np.linalg.norm(np.diff(path, axis=0), axis=1).sum()
-                lines.append(
-                    f"| {k} | {records['sample_clearance'][anchor][k] * 1000:.0f} | {np.linalg.norm(path[-1] - demo_path[-1]) * 1000:.0f} | {length * 1000:.0f} |"
-                )
-        rr.log("info", rr.TextDocument("\n".join(lines), media_type=rr.MediaType.MARKDOWN))
-        for label in camera_labels:
-            if label not in clips:
-                rr.log(f"cameras/{label}", rr.Image(records[f"image_{label}"][anchor]))
-        rr.log("demo/command_path", rr.LineStrips3D([demo_path], colors=[hex_rgb(DEMO_COLOR)], radii=[0.002]))
-        for k in range(n_samples):
-            rr.log(f"sample{k}/command_path", rr.LineStrips3D([command_paths[k]], colors=[sample_colors[k]], radii=[0.0015]))
+        measured_path = arm.ee_path(measured) if len(measured) else demo_path[:1]
+        fast_path = None
         if has_fast:
             fast_chunk = records["fast_chunk"][anchor]
             fast_chunk = fast_chunk[~np.isnan(fast_chunk[:, 0])]
             if len(fast_chunk):
-                rr.log("fast/command_path", rr.LineStrips3D([arm.ee_path(fast_chunk)], colors=[hex_rgb(FAST_COLOR)], radii=[0.0015]))
+                fast_path = arm.ee_path(fast_chunk)
+        runs = [execute(model, data, state, chunk, args.substeps) for chunk in samples] if args.execute else None
+        clips = {label: video.frames(episode, frame, horizon, label) for label in camera_labels} if video else {}
+        drawn = [demo_path, measured_path, *command_paths]
+        if fast_path is not None:
+            drawn.append(fast_path)
         if args.execute:
-            rr.log("demo/measured_path", rr.LineStrips3D([arm.ee_path(measured)], colors=[hex_rgb(MEASURED_COLOR)], radii=[0.002]))
+            drawn += [ee for _, ee, _ in runs]
+        camera = anchor_camera(np.concatenate(drawn), table_z)
 
+        final_spread = max(
+            (np.linalg.norm(command_paths[i][-1] - command_paths[j][-1]) for i in range(n_samples) for j in range(i + 1, n_samples)),
+            default=0.0,
+        )
+        per_sample = []
+        captions = [("demo: real follower" if args.execute else "demo command", "")]
+        for k, path in enumerate(command_paths):
+            row = {
+                "clearance_mm": float(records["sample_clearance"][anchor][k] * 1000),
+                "final_vs_demo_mm": float(np.linalg.norm(path[-1] - demo_path[-1]) * 1000),
+                "path_mm": float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum() * 1000),
+            }
+            if args.execute:
+                qpos, ee, touched = runs[k]
+                row["contact_ticks"] = int(touched.sum())
+                row["max_lag_mm"] = float(np.linalg.norm(ee - path, axis=1).max() * 1000)
+                row["final_vs_demo_mm"] = float(np.linalg.norm(ee[-1] - demo_path[-1]) * 1000)
+                second = f"table contact {row['contact_ticks']} ticks   max lag {row['max_lag_mm']:.0f} mm"
+            else:
+                second = f"path {row['path_mm']:.0f} mm"
+            captions.append(
+                (f"sample {k}   clearance {row['clearance_mm']:.0f} mm   final vs demo {row['final_vs_demo_mm']:.0f} mm", second)
+            )
+            per_sample.append(row)
+        title = f"anchor {anchor}   episode {episode}   frame {frame}   subtask: {subtask}   final EE spread across samples: {final_spread * 1000:.0f} mm"
+
+        achieved = [np.stack([from_qpos(q) for q in qpos]) for qpos, _, _ in runs] if args.execute else None
+        strip, geometry = joint_strip(width, joint_names, fps, gt_chunk, samples, sample_colors, measured if args.execute else None, achieved)
+        stills = {label: fit(records[f"image_{label}"][anchor], CAM_W, CAM_H) for label in camera_labels}
+
+        name = f"anchor{anchor:03d}_ep{episode:04d}_fr{frame:06d}.mp4"
+        writer = VideoWriter(out / name, video_fps, width, height)
         for step in range(horizon):
-            rr.set_time("time", duration=clock + step / fps * args.time_scale)
-            for label, frames in clips.items():
-                if step < len(frames):
-                    rr.log(f"cameras/{label}", rr.EncodedImage(contents=frames[step], media_type="image/jpeg"))
-            if args.demo_arm:
-                arm.log_pose("demo/arm", to_qpos(gt_chunk[step]))
-            rr.log("demo/ee", rr.Points3D([demo_path[step]], colors=[hex_rgb(DEMO_COLOR)], radii=[0.006]))
-            for j, name in enumerate(joint_names):
-                rr.log(f"plots/joints/{name}/demo_cmd", rr.Scalars(float(gt_chunk[step, j])))
-                if args.execute and step < len(measured):
-                    rr.log(f"plots/joints/{name}/demo_meas", rr.Scalars(float(measured[step, j])))
-            for k in range(n_samples):
-                if args.execute:
-                    qpos, ee, touched = runs[k]
-                    arm.log_pose(f"sample{k}/arm", qpos[step])
-                    rr.log(f"sample{k}/target", rr.Points3D([command_paths[k][step]], colors=[sample_colors[k]], radii=[0.005]))
-                    rr.log(f"sample{k}/achieved_path", rr.LineStrips3D([ee[: step + 1]], colors=[sample_colors[k]], radii=[0.003]))
-                    achieved = from_qpos(qpos[step])
-                    for j, name in enumerate(joint_names):
-                        rr.log(f"plots/joints/{name}/sample{k}_sim", rr.Scalars(float(achieved[j])))
-                    rr.log(f"plots/ee_lag_mm/sample{k}", rr.Scalars(float(np.linalg.norm(ee[step] - command_paths[k][step]) * 1000)))
-                    rr.log(f"plots/table_contact/sample{k}", rr.Scalars(float(touched[step])))
+            canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+            # Arm panels: demo first, then every sample.
+            for p in range(n_samples + 1):
+                paths = [(demo_path, demo_rgb, 0.002)]
+                if fast_path is not None:
+                    paths.append((fast_path, fast_rgb, 0.0015))
+                if p == 0:
+                    if args.execute:
+                        paths.append((measured_path, measured_rgb, 0.002))
+                        pose_step = min(step, len(measured) - 1)
+                        qpos = to_qpos(measured[pose_step]) if len(measured) else to_qpos(gt_chunk[step])
+                        markers = [(demo_path[step], demo_rgb, 0.005), (measured_path[pose_step], measured_rgb, 0.007)]
+                    else:
+                        qpos = to_qpos(gt_chunk[step])
+                        markers = [(demo_path[step], demo_rgb, 0.007)]
                 else:
-                    arm.log_pose(f"sample{k}/arm", to_qpos(samples[k][step]))
-                    rr.log(f"sample{k}/ee", rr.Points3D([command_paths[k][step]], colors=[sample_colors[k]], radii=[0.005]))
-                for j, name in enumerate(joint_names):
-                    rr.log(f"plots/joints/{name}/sample{k}_cmd", rr.Scalars(float(samples[k][step, j])))
-        clock += horizon / fps * args.time_scale + args.pause
-        print(f"anchor {anchor}: ep{episode} frame {frame}  final spread {final_spread * 1000:.0f} mm")
-    if not args.spawn:
-        print(f"wrote {out}")
+                    k = p - 1
+                    paths.append((command_paths[k], sample_colors[k], 0.0015))
+                    if args.execute:
+                        qpos_run, ee, _ = runs[k]
+                        qpos = qpos_run[step]
+                        paths.append((ee[: step + 1], sample_colors[k], 0.003))
+                        markers = [(command_paths[k][step], sample_colors[k], 0.005)]
+                    else:
+                        qpos = to_qpos(samples[k][step])
+                        markers = [(command_paths[k][step], sample_colors[k], 0.007)]
+                arm.tint(panel_colors[p])
+                x = p * PANEL
+                canvas[TITLE_H : TITLE_H + PANEL, x : x + PANEL] = render_panel(renderer, arm, camera, qpos, paths, markers)
+                canvas[TITLE_H : TITLE_H + 4, x : x + PANEL] = rgb255(panel_colors[p])
+            # Cameras, stacked at the right end of the arm row.
+            x = (n_samples + 1) * PANEL
+            for c, label in enumerate(camera_labels):
+                frames = clips.get(label)
+                image = fit(frames[step], CAM_W, CAM_H) if frames and step < len(frames) else stills[label]
+                canvas[TITLE_H + c * CAM_H : TITLE_H + (c + 1) * CAM_H, x : x + CAM_W] = image
+            # Joint strip with the cursor.
+            plot_y = TITLE_H + PANEL + CAP_H
+            canvas[plot_y:, :] = strip
+            for x0, x_per_s, y_top, y_bottom in geometry:
+                cursor = int(round(x0 + x_per_s * step / fps))
+                canvas[plot_y + y_top : plot_y + y_bottom, cursor - 1 : cursor + 1] = (30, 30, 30)
+
+            image = Image.fromarray(canvas)
+            draw = ImageDraw.Draw(image)
+            draw.text((8, 4), title, fill=(20, 20, 20), font=FONT)
+            draw.text((8, 20), legend, fill=(90, 90, 90), font=FONT)
+            for p, (first, second) in enumerate(captions):
+                draw.text((p * PANEL + 8, TITLE_H + PANEL + 2), first, fill=(20, 20, 20), font=FONT)
+                draw.text((p * PANEL + 8, TITLE_H + PANEL + 17), second, fill=(90, 90, 90), font=FONT)
+            for c, label in enumerate(camera_labels):
+                draw.text((x + 6, TITLE_H + c * CAM_H + 4), label, fill=(255, 255, 255), font=FONT)
+            writer.write(np.asarray(image))
+        writer.close()
+
+        anchors_summary.append(
+            {
+                "anchor": int(anchor),
+                "episode": episode,
+                "frame": frame,
+                "subtask": subtask,
+                "file": name,
+                "final_spread_mm": float(final_spread * 1000),
+                "samples": per_sample,
+            }
+        )
+        print(f"anchor {anchor}: ep{episode} frame {frame}  final spread {final_spread * 1000:.0f} mm  -> {name}")
+
+    renderer.close()
+    summary = {
+        "execute": bool(args.execute),
+        "time_scale": args.time_scale,
+        "n_anchors": len(anchors_summary),
+        "n_samples": int(n_samples),
+        "final_spread_mm_mean": float(np.mean([a["final_spread_mm"] for a in anchors_summary])) if anchors_summary else None,
+        "anchors": anchors_summary,
+    }
+    if args.execute and anchors_summary:
+        summary["contact_anchor_fraction"] = float(
+            np.mean([any(s["contact_ticks"] > 0 for s in a["samples"]) for a in anchors_summary])
+        )
+        summary["max_lag_mm_mean"] = float(np.mean([s["max_lag_mm"] for a in anchors_summary for s in a["samples"]]))
+    (out / "summary.json").write_text(json.dumps(summary, indent=2))
+    print(f"wrote {len(anchors_summary)} videos and summary.json to {out}")
 
 
 if __name__ == "__main__":
