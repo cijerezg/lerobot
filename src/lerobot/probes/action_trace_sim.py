@@ -118,9 +118,13 @@ def load_model(table_z: float, gravcomp: bool) -> mujoco.MjModel:
         lo = min(np.deg2rad(lo), float(match.group(1)))
         hi = max(np.deg2rad(hi), float(match.group(2)))
         widened = f'{lo:.4f} {hi:.4f}"'
-        model_src = re.sub(rf'(<joint name="{joint}"[^>]*range=")[^"]*"', lambda m: m.group(1) + widened, model_src)
         model_src = re.sub(
-            rf'(<position [^>]*name="{joint}"[^>]*ctrlrange=")[^"]*"', lambda m: m.group(1) + widened, model_src
+            rf'(<joint name="{joint}"[^>]*range=")[^"]*"', lambda m: m.group(1) + widened, model_src
+        )
+        model_src = re.sub(
+            rf'(<position [^>]*name="{joint}"[^>]*ctrlrange=")[^"]*"',
+            lambda m: m.group(1) + widened,
+            model_src,
         )
     scene_src = SCENE.read_text()
     scene_src = scene_src.replace('name="floor"', f'name="floor" pos="0 0 {table_z:.4f}"')
@@ -163,10 +167,12 @@ def anchor_camera(points: np.ndarray, table_z: float) -> mujoco.MjvCamera:
     theta = float(np.degrees(np.arctan2(centre[1], centre[0])))
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
-    camera.lookat[:] = (centre[0], centre[1], max(centre[2], table_z + 0.03))
-    camera.distance = float(np.clip(2.6 * radius + 0.38, 0.45, 0.9))
+    # The paths are fingertip paths with the gripper body above them and the arm reaching in
+    # from the base, so the look-at point sits above the paths and a little back towards the base.
+    camera.lookat[:] = (0.85 * centre[0], 0.85 * centre[1], max(centre[2], table_z + 0.03) + 0.09)
+    camera.distance = float(np.clip(2.6 * radius + 0.45, 0.6, 0.95))
     camera.azimuth = theta + 130.0
-    camera.elevation = -25.0
+    camera.elevation = -18.0
     return camera
 
 
@@ -221,7 +227,9 @@ class Arm:
         return np.stack(points)
 
 
-def execute(model: mujoco.MjModel, data: mujoco.MjData, state_deg: np.ndarray, chunk_deg: np.ndarray, substeps: int):
+def execute(
+    model: mujoco.MjModel, data: mujoco.MjData, state_deg: np.ndarray, chunk_deg: np.ndarray, substeps: int
+):
     """Drive the position actuators through ``chunk_deg`` from rest at ``state_deg``.
 
     Returns the configuration after every tick, the end-effector position, and whether
@@ -267,7 +275,9 @@ class ChunkVideo:
 
         key = f"observation.images.{label}"
         meta = self.dataset.meta
-        if key not in meta.video_keys:  # npz labels are canonical roles; a raw rig root (inference) stores top / wrist
+        if (
+            key not in meta.video_keys
+        ):  # npz labels are canonical roles; a raw rig root (inference) stores top / wrist
             from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP
 
             raw = {role: name for name, role in CAMERA_ROLE_MAP["rebot"].items()}
@@ -286,17 +296,23 @@ class ChunkVideo:
         return list(decoded.permute(0, 2, 3, 1).numpy())
 
 
-def draw_path(scene: mujoco.MjvScene, points: np.ndarray, rgb: tuple[float, float, float], radius: float) -> None:
+def draw_path(
+    scene: mujoco.MjvScene, points: np.ndarray, rgb: tuple[float, float, float], radius: float
+) -> None:
     """Append a polyline of capsules to a scene already filled by ``update_scene``."""
     rgba = np.array([*rgb, 1.0], dtype=np.float32)
     for a, b in zip(points[:-1], points[1:], strict=True):
         geom = scene.geoms[scene.ngeom]
-        mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.eye(3).ravel(), rgba)
+        mujoco.mjv_initGeom(
+            geom, mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.eye(3).ravel(), rgba
+        )
         mujoco.mjv_connector(geom, mujoco.mjtGeom.mjGEOM_CAPSULE, radius, a, b)
         scene.ngeom += 1
 
 
-def draw_marker(scene: mujoco.MjvScene, point: np.ndarray, rgb: tuple[float, float, float], radius: float) -> None:
+def draw_marker(
+    scene: mujoco.MjvScene, point: np.ndarray, rgb: tuple[float, float, float], radius: float
+) -> None:
     geom = scene.geoms[scene.ngeom]
     mujoco.mjv_initGeom(
         geom,
@@ -309,7 +325,14 @@ def draw_marker(scene: mujoco.MjvScene, point: np.ndarray, rgb: tuple[float, flo
     scene.ngeom += 1
 
 
-def render_panel(renderer: mujoco.Renderer, arm: Arm, camera: mujoco.MjvCamera, qpos: np.ndarray, paths: list, markers: list) -> np.ndarray:
+def render_panel(
+    renderer: mujoco.Renderer,
+    arm: Arm,
+    camera: mujoco.MjvCamera,
+    qpos: np.ndarray,
+    paths: list,
+    markers: list,
+) -> np.ndarray:
     """One arm panel: the arm at ``qpos`` plus ``(points, rgb, radius)`` paths and ``(point, rgb, radius)`` markers."""
     arm.pose(qpos)
     renderer.update_scene(arm.data, camera)
@@ -346,7 +369,13 @@ def joint_strip(
         for k, chunk in enumerate(samples):
             ax.plot(time[: len(chunk)], chunk[:, j], color=sample_colors[k], linewidth=1.5)
             if achieved is not None:
-                ax.plot(time[: len(achieved[k])], achieved[k][:, j], color=sample_colors[k], linewidth=0.8, linestyle="--")
+                ax.plot(
+                    time[: len(achieved[k])],
+                    achieved[k][:, j],
+                    color=sample_colors[k],
+                    linewidth=0.8,
+                    linestyle="--",
+                )
         ax.set_title(name, fontsize=8)
         ax.set_xlim(0.0, max(time[-1], 1.0 / fps))
         ax.tick_params(labelsize=7)
@@ -371,16 +400,33 @@ def fit(image: np.ndarray, width: int, height: int) -> np.ndarray:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--records", required=True, help="action_trace_records.npz from the probe")
-    parser.add_argument("--out", default=None, help="output directory; default action_trace_sim/ beside the records")
+    parser.add_argument(
+        "--out", default=None, help="output directory; default action_trace_sim/ beside the records"
+    )
     parser.add_argument("--anchors", default=None, help="comma-separated anchor indices; default all")
     parser.add_argument("--episodes", default=None, help="comma-separated episode indices; default all")
-    parser.add_argument("--time-scale", type=float, default=1.0, help="video seconds per chunk second; 2 plays the chunks at half speed")
-    parser.add_argument("--execute", action="store_true", help="run the chunks through MuJoCo physics instead of posing them")
+    parser.add_argument(
+        "--time-scale",
+        type=float,
+        default=1.0,
+        help="video seconds per chunk second; 2 plays the chunks at half speed",
+    )
+    parser.add_argument(
+        "--execute", action="store_true", help="run the chunks through MuJoCo physics instead of posing them"
+    )
     parser.add_argument("--substeps", type=int, default=17, help="physics steps per action tick (--execute)")
-    parser.add_argument("--no-gravcomp", action="store_true", help="let the arm sag under its own weight (--execute)")
-    parser.add_argument("--dataset-root", default=None, help="dataset to play video from; default the root recorded in the npz")
+    parser.add_argument(
+        "--no-gravcomp", action="store_true", help="let the arm sag under its own weight (--execute)"
+    )
+    parser.add_argument(
+        "--dataset-root",
+        default=None,
+        help="dataset to play video from; default the root recorded in the npz",
+    )
     parser.add_argument("--no-video", action="store_true", help="show the anchor still frames only")
     args = parser.parse_args()
 
@@ -399,7 +445,9 @@ def main() -> None:
         chosen = [a for a in chosen if int(records["episode"][a]) in wanted]
 
     video = None
-    dataset_root = args.dataset_root or (str(records["dataset_root"]) if "dataset_root" in records.files else "")
+    dataset_root = args.dataset_root or (
+        str(records["dataset_root"]) if "dataset_root" in records.files else ""
+    )
     if not args.no_video and dataset_root and Path(dataset_root).is_dir():
         video = ChunkVideo(str(records["dataset_repo_id"]), dataset_root, fps)
         print(f"playing video from {dataset_root}")
@@ -451,8 +499,12 @@ def main() -> None:
             fast_chunk = fast_chunk[~np.isnan(fast_chunk[:, 0])]
             if len(fast_chunk):
                 fast_path = arm.ee_path(fast_chunk)
-        runs = [execute(model, data, state, chunk, args.substeps) for chunk in samples] if args.execute else None
-        clips = {label: video.frames(episode, frame, horizon, label) for label in camera_labels} if video else {}
+        runs = (
+            [execute(model, data, state, chunk, args.substeps) for chunk in samples] if args.execute else None
+        )
+        clips = (
+            {label: video.frames(episode, frame, horizon, label) for label in camera_labels} if video else {}
+        )
         drawn = [demo_path, measured_path, *command_paths]
         if fast_path is not None:
             drawn.append(fast_path)
@@ -461,7 +513,11 @@ def main() -> None:
         camera = anchor_camera(np.concatenate(drawn), table_z)
 
         final_spread = max(
-            (np.linalg.norm(command_paths[i][-1] - command_paths[j][-1]) for i in range(n_samples) for j in range(i + 1, n_samples)),
+            (
+                np.linalg.norm(command_paths[i][-1] - command_paths[j][-1])
+                for i in range(n_samples)
+                for j in range(i + 1, n_samples)
+            ),
             default=0.0,
         )
         per_sample = []
@@ -481,13 +537,25 @@ def main() -> None:
             else:
                 second = f"path {row['path_mm']:.0f} mm"
             captions.append(
-                (f"sample {k}   clearance {row['clearance_mm']:.0f} mm   final vs demo {row['final_vs_demo_mm']:.0f} mm", second)
+                (
+                    f"sample {k}   clearance {row['clearance_mm']:.0f} mm   final vs demo {row['final_vs_demo_mm']:.0f} mm",
+                    second,
+                )
             )
             per_sample.append(row)
         title = f"anchor {anchor}   episode {episode}   frame {frame}   subtask: {subtask}   final EE spread across samples: {final_spread * 1000:.0f} mm"
 
         achieved = [np.stack([from_qpos(q) for q in qpos]) for qpos, _, _ in runs] if args.execute else None
-        strip, geometry = joint_strip(width, joint_names, fps, gt_chunk, samples, sample_colors, measured if args.execute else None, achieved)
+        strip, geometry = joint_strip(
+            width,
+            joint_names,
+            fps,
+            gt_chunk,
+            samples,
+            sample_colors,
+            measured if args.execute else None,
+            achieved,
+        )
         stills = {label: fit(records[f"image_{label}"][anchor], CAM_W, CAM_H) for label in camera_labels}
 
         name = f"anchor{anchor:03d}_ep{episode:04d}_fr{frame:06d}.mp4"
@@ -504,7 +572,10 @@ def main() -> None:
                         paths.append((measured_path, measured_rgb, 0.002))
                         pose_step = min(step, len(measured) - 1)
                         qpos = to_qpos(measured[pose_step]) if len(measured) else to_qpos(gt_chunk[step])
-                        markers = [(demo_path[step], demo_rgb, 0.005), (measured_path[pose_step], measured_rgb, 0.007)]
+                        markers = [
+                            (demo_path[step], demo_rgb, 0.005),
+                            (measured_path[pose_step], measured_rgb, 0.007),
+                        ]
                     else:
                         qpos = to_qpos(gt_chunk[step])
                         markers = [(demo_path[step], demo_rgb, 0.007)]
@@ -521,7 +592,9 @@ def main() -> None:
                         markers = [(command_paths[k][step], sample_colors[k], 0.007)]
                 arm.tint(panel_colors[p])
                 x = p * PANEL
-                canvas[TITLE_H : TITLE_H + PANEL, x : x + PANEL] = render_panel(renderer, arm, camera, qpos, paths, markers)
+                canvas[TITLE_H : TITLE_H + PANEL, x : x + PANEL] = render_panel(
+                    renderer, arm, camera, qpos, paths, markers
+                )
                 canvas[TITLE_H : TITLE_H + 4, x : x + PANEL] = rgb255(panel_colors[p])
             # Cameras, stacked at the right end of the arm row.
             x = (n_samples + 1) * PANEL
@@ -559,7 +632,9 @@ def main() -> None:
                 "samples": per_sample,
             }
         )
-        print(f"anchor {anchor}: ep{episode} frame {frame}  final spread {final_spread * 1000:.0f} mm  -> {name}")
+        print(
+            f"anchor {anchor}: ep{episode} frame {frame}  final spread {final_spread * 1000:.0f} mm  -> {name}"
+        )
 
     renderer.close()
     summary = {
@@ -567,14 +642,18 @@ def main() -> None:
         "time_scale": args.time_scale,
         "n_anchors": len(anchors_summary),
         "n_samples": int(n_samples),
-        "final_spread_mm_mean": float(np.mean([a["final_spread_mm"] for a in anchors_summary])) if anchors_summary else None,
+        "final_spread_mm_mean": float(np.mean([a["final_spread_mm"] for a in anchors_summary]))
+        if anchors_summary
+        else None,
         "anchors": anchors_summary,
     }
     if args.execute and anchors_summary:
         summary["contact_anchor_fraction"] = float(
             np.mean([any(s["contact_ticks"] > 0 for s in a["samples"]) for a in anchors_summary])
         )
-        summary["max_lag_mm_mean"] = float(np.mean([s["max_lag_mm"] for a in anchors_summary for s in a["samples"]]))
+        summary["max_lag_mm_mean"] = float(
+            np.mean([s["max_lag_mm"] for a in anchors_summary for s in a["samples"]])
+        )
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"wrote {len(anchors_summary)} videos and summary.json to {out}")
 

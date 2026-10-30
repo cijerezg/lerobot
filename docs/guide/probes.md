@@ -240,7 +240,7 @@ The most direct measure of action prediction quality, and the probe that answers
 
 Output is one interactive Plotly page (`action_trace.html`) plus `metrics.csv`, `action_metrics.json`, `action_trace_records.npz`, and — on an `action_mode=both` checkpoint — a scale-locked FAST-vs-flow scene in `decoder_comparison.html`.
 
-**In sim (`enable_action_trace_sim`, separate probe).** Runs right after this one and plays its `action_trace_records.npz` on the MuJoCo reBot with `lerobot.probes.action_trace_sim`: each flow sample next to the demonstrated chunk, with the anchor's camera video; `--execute` in `trace_sim_args` adds physics (achieved trails, end-effector lag, table contact). Output `action_trace_sim/action_trace_sim.rrd`, opened with `rerun`, not the probe viewer. Runs in its own process; needs `mujoco` and `rerun-sdk` in the environment.
+**In sim (`enable_action_trace_sim`, separate probe).** Runs right after this one and plays its `action_trace_records.npz` on the MuJoCo reBot with `lerobot.probes.action_trace_sim`: one mp4 per anchor with the demonstrated chunk's arm and one panel per flow sample, the anchor's camera video and the joint curves with a cursor; the camera is framed per anchor on the end-effector paths. `--execute` in `trace_sim_args` adds physics (achieved trails, command target marker, simulated joints dashed, table-contact count). Output `action_trace_sim/anchor*.mp4` + `summary.json`, shown in the probe viewer like the sim eval videos. Runs in its own process with offscreen EGL rendering; needs `mujoco`, `matplotlib` and `av`.
 
 ### Standalone
 

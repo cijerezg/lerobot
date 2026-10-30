@@ -11,9 +11,50 @@ from lerobot.probes import set_representations as sr
 def test_even_picks_cover_both_ends_without_repeats():
     assert sr.even_picks(100, 5).tolist() == [0, 25, 50, 74, 99]
     assert sr.even_picks(3, 20).tolist() == [0, 1, 2]
-    assert sr.parse_sources("droid_success:Franka, robochallenge:ARX5") == [("droid_success", "Franka"), ("robochallenge", "ARX5")]
+    assert sr.parse_sources("droid_success:Franka, robochallenge:ARX5:2") == [("droid_success", "Franka", 1), ("robochallenge", "ARX5", 2)]
+    assert sr.parse_sources("yam:YAM:ep=yam__duster__ep000106|yam__duster__ep000174,ur7e:UR7e:ep=ur7e__stack_block__ep000012") == [
+        ("yam", "YAM", ["yam__duster__ep000106", "yam__duster__ep000174"]), ("ur7e", "UR7e", ["ur7e__stack_block__ep000012"])]
     with pytest.raises(ValueError):
         sr.parse_sources("droid")
+
+
+def _fake_buffer(episodes):
+    """A diverse buffer stand-in: rows (source, embodiment, episode_id, anchor_frame, anchor_s) per episode."""
+    rows = [{"source": src, "embodiment": emb, "episode_id": ep, "anchor_frame": 3 * k, "anchor_s": 0.2 * k}
+            for src, emb, ep, n in episodes for k in range(n)]
+    records = {ep: {"task": f"task {ep}"} for _, _, ep, _ in episodes}
+    return SimpleNamespace(rows=rows, selection=SimpleNamespace(episode_records=records))
+
+
+def test_diverse_set_explicit_episodes_and_split_tag():
+    buffer = _fake_buffer([("yam", "YAM", "yam__a", 12), ("yam", "YAM", "yam__b", 4), ("yam", "YAM", "yam__c", 12)])
+    rng = np.random.default_rng(0)
+    # explicit ids: taken as listed, even a short one (all 4 anchors), in id order
+    samples = sr.diverse_set(buffer, sr.parse_sources("yam:YAM:ep=yam__c|yam__b"), 5, rng, "holdout")
+    assert [s["episode"] for s in samples] == ["yam/yam__b"] * 4 + ["yam/yam__c"] * 5
+    assert {s["split"] for s in samples} == {"holdout"} and samples[-1]["task"] == "task yam__c"
+    assert [s["frame"] for s in samples[4:]] == [0, 9, 18, 24, 33]  # even picks over the 12 anchors, ends included
+    # the random form still picks among the episodes with enough anchors, tagged train by default
+    samples = sr.diverse_set(buffer, sr.parse_sources("yam:YAM:2"), 5, rng)
+    assert sorted({s["episode"] for s in samples}) == ["yam/yam__a", "yam/yam__c"] and {s["split"] for s in samples} == {"train"}
+    with pytest.raises(ValueError, match="yam__zz"):
+        sr.diverse_set(buffer, sr.parse_sources("yam:YAM:ep=yam__zz"), 5, rng)
+
+
+def test_spec_parsers_and_balanced_picks():
+    assert sr.parse_rebot_sets("outputs/a:0,3; outputs/b:4") == [("outputs/a", [0, 3]), ("outputs/b", [4])]
+    assert sr.parse_named("hero=outputs/x/inference_dataset:0:0-234@1;c1=outputs/y:4:13.5-19@0.5") == [
+        {"label": "hero", "root": "outputs/x/inference_dataset", "episode": 0, "t0": 0.0, "t1": 234.0, "stride_s": 1.0},
+        {"label": "c1", "root": "outputs/y", "episode": 4, "t0": 13.5, "t1": 19.0, "stride_s": 0.5}]
+    with pytest.raises(ValueError):
+        sr.parse_named("hero=outputs/x:0:0-234")
+    assert sr.phase_verb("Grasp the cup") == "grasp" and sr.phase_verb("return home") == "other" and sr.phase_verb("") == "other"
+    # 12 grasp, 4 move, 2 release frames, 8 picks: 3 / 3 / 2, the move and release frames all used before grasp fills up
+    verbs = ["grasp"] * 12 + ["move"] * 4 + ["release"] * 2
+    picks = sr.balanced_picks(verbs, 8)
+    assert len(picks) == 8 and len(set(picks)) == 8
+    assert [verbs[i] for i in picks].count("release") == 2 and [verbs[i] for i in picks].count("move") == 3
+    assert sr.balanced_picks(["grasp"] * 5, 8).tolist() == [0, 1, 2, 3, 4]
 
 
 def test_pick_episodes_covers_distinct_tasks_before_repeating():

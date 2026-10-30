@@ -160,8 +160,10 @@ def _ramp_leader(teleop_device, target: dict[str, float], fps: float, deg_per_s:
         precise_sleep(1.0 / fps)
 
 
-def _return_to_rest(online_env, teleop_device, fps: float, leader_torqued: bool) -> None:
+def _return_to_rest(online_env, teleop_device, fps: float, leader_torqued: bool, on_step=None) -> None:
     """Both arms to the follower's park pose; the leader is released there.
+
+    `on_step`, when given, gets each ramp target after the leader (the actor records the park with it).
 
     Follower: `park()` (freeze, descent at park_deg_per_s, arrival check); torque stays on,
     so it holds the rest pose until the next episode. The leader rides the same ramp
@@ -182,9 +184,14 @@ def _return_to_rest(online_env, teleop_device, fps: float, leader_torqued: bool)
             leader_alive = False
             logger.error("[RTC_ENV] Leader dropped out of the descent: %s", error)
 
+    def tick(target: dict[str, float]) -> None:
+        feed_leader(target)
+        if on_step is not None:
+            on_step(target)
+
     if online_env.send_actions_to_robot:
         try:
-            robot.park(on_step=feed_leader)
+            robot.park(on_step=tick)
         except RuntimeError:
             logger.error("[RTC_ENV] Follower did not reach the rest pose; torque stays on:\n%s", traceback.format_exc())
     elif leader_alive:
@@ -1411,7 +1418,24 @@ def rtc_env_worker(
                 if auto_subtasks is not None:
                     # Snapshot before the park: the sim's park resets the scene and with it the scorer.
                     episode_record = dict(episode=shared_state.episode_counter, success=bool(info_success), reward=auto_subtasks.reward, stage=auto_subtasks.stage_name, events=list(auto_subtasks.events))
-                _return_to_rest(online_env, teleop_device, cfg.env.fps, leader_torqued)
+                record_park = None
+                if info_success and (recorder is not None or videos is not None):
+                    # Key 1 ends the episode at the rest pose: the park's frames ride along, each one
+                    # the observation before the tick plus the ramp target as the executed action.
+                    def record_park(target: dict[str, float], subtask_index=subtask_idx_now, subtask=subtask_name_now or "") -> None:
+                        nonlocal raw_obs
+                        action = torch.tensor([target[key] for key in online_env.robot.action_features])
+                        if recorder is not None:
+                            recorder.add_frame(
+                                raw_obs, action,
+                                is_intervention=False, subtask_index=subtask_index, subtask=subtask,
+                                policy_index=shared_state.active_policy,
+                            )
+                        if videos is not None:
+                            videos.put(raw_obs)
+                        raw_obs = online_env.read_raw_observation()
+
+                _return_to_rest(online_env, teleop_device, cfg.env.fps, leader_torqued, on_step=record_park)
                 leader_torqued = False
                 if recorder is not None:
                     recorder.save_episode()

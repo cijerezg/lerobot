@@ -75,11 +75,16 @@ def _robot(monkeypatch, moves: bool, torque: bool = True):
     return robot
 
 
+def _rate(robot, name):
+    return robot.config.park_gripper_deg_per_s if name == "gripper" else robot.config.park_deg_per_s
+
+
 def test_park_freezes_then_descends_within_rate_and_arrives(monkeypatch):
     robot = _robot(monkeypatch, moves=True)
     robot.park()
-    fps, rate = module._PARK_FPS, robot.config.park_deg_per_s
+    fps = module._PARK_FPS
     for name, motor in robot.motors.items():
+        rate = _rate(robot, name)
         assert motor.sent[0] == pytest.approx(START[name])
         steps = [b - a for a, b in zip(motor.sent, motor.sent[1:])]
         assert max(abs(s) for s in steps) <= rate / fps + 1e-6
@@ -220,11 +225,11 @@ def test_park_callback_rate_and_sent_actions(monkeypatch, fps):
     robot = _robot(monkeypatch, moves=True)
     seen = []
     robot.park(on_step=seen.append, fps=fps)
-    ramp_ticks = math.ceil(fps * max(abs(v) for v in START.values()) / robot.config.park_deg_per_s)
+    ramp_ticks = math.ceil(fps * max(abs(v) / _rate(robot, name) for name, v in START.items()))
     assert len(seen) == ramp_ticks + math.ceil(fps * module._PARK_SETTLE_CHECK_SEC)
     for name, motor in robot.motors.items():
         assert [action[f"{name}.pos"] for action in seen] == pytest.approx(motor.sent[1:])
-        assert max(abs(b - a) for a, b in zip(motor.sent, motor.sent[1:])) <= robot.config.park_deg_per_s / fps + 1e-6
+        assert max(abs(b - a) for a, b in zip(motor.sent, motor.sent[1:])) <= _rate(robot, name) / fps + 1e-6
 
 
 def test_park_rejects_invalid_fps_before_moving(monkeypatch):

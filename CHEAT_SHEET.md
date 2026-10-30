@@ -15,6 +15,11 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.id=rebot_leader_hd_v1 \
     --display_data=true
 
+Cameras only (no robot, no leader; same cameras dict, streams to Rerun, Ctrl-C to stop):
+
+uv run --no-project --python .venv/bin/python lerobot/adhocs/camera_preview/preview.py \
+    --cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true, log_path: outputs/logs/realsense_wrist.log, log_severity: info}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30}}"
+
 ## Record
 
 `depth_stride` must equal `policy.image_stride` in config_rl.yaml (which must divide `policy.chunk_size`).
@@ -126,7 +131,7 @@ uv run python -m lerobot.scripts.view_probes outputs olmoact2_offline_rebot_all-
 
 ## Action trace in sim
 
-The Action Inspector's flow samples played on the MuJoCo reBot, as a rerun log. In the suite it is its own probe, `enable_action_trace_sim` (needs `enable_action_trace`, which it runs after), flags from `probe_parameters.trace_sim_args` (`"--time-scale 2"` = half speed, `--execute` = physics); output `validation/step_*/action_trace_sim/action_trace_sim.rrd`. By hand, on a checkpoint and chosen anchors:
+The Action Inspector's flow samples played on the MuJoCo reBot, one mp4 per anchor (demo arm + one panel per flow sample, camera frames, joint curves) shown in the probe viewer. In the suite it is its own probe, `enable_action_trace_sim` (needs `enable_action_trace`, which it runs after), flags from `probe_parameters.trace_sim_args` (`"--time-scale 2"` = half speed, `--execute` = physics); output `validation/step_*/action_trace_sim/anchor*.mp4` + `summary.json`. Rendering is offscreen EGL (`MUJOCO_GL=egl` is set by the script). By hand, on a checkpoint and chosen anchors:
 
 ```bash
 uv run python -m lerobot.probes.action_trace_probe --config config_rl_validate.yaml \
@@ -134,9 +139,9 @@ uv run python -m lerobot.probes.action_trace_probe --config config_rl_validate.y
     --dataset.root outputs/rebot_val_2026-10-14-v1 \
     --probe_parameters.output_dir outputs/probe_runs/<name> \
     --probe_parameters.trace_frames "$(cat migration/action_trace_sim_2026-10-15/grasp_anchors_6s.txt)"
-# other flags: --execute, --demo-arm, --anchors, --episodes, --spawn
+# other flags: --execute, --anchors, --episodes, --out
 uv run python -m lerobot.probes.action_trace_sim --records outputs/probe_runs/<name>/action_trace/action_trace_records.npz --time-scale 2
-.venv/bin/rerun outputs/probe_runs/<name>/action_trace/action_trace_sim.rrd
+# -> outputs/probe_runs/<name>/action_trace_sim/anchor*.mp4, visible in view_probes
 ```
 
 ## Representation trajectories

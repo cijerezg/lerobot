@@ -341,9 +341,18 @@ class RebotB601Follower(Robot):
         present = self._present_pos()
         self.send_action({f"{name}.pos": pos for name, pos in present.items()})
         target = self.config.park_pose
-        gap = max(abs(target[name] - present[name]) for name in target)
-        steps = max(math.ceil(fps), math.ceil(fps * gap / self.config.park_deg_per_s))
-        logger.info(f"{self} parking: largest gap {gap:.1f} deg, {steps / fps:.1f} s")
+        # The gripper has its own rate: its 270 deg travel would otherwise pace the arm's descent.
+        rate = {
+            name: self.config.park_gripper_deg_per_s if name == "gripper" else self.config.park_deg_per_s
+            for name in target
+        }
+        seconds = {name: abs(target[name] - present[name]) / rate[name] for name in target}
+        pacing = max(seconds, key=seconds.get)
+        steps = max(math.ceil(fps), math.ceil(fps * seconds[pacing]))
+        logger.info(
+            f"{self} parking: {steps / fps:.1f} s, paced by {pacing} "
+            f"({abs(target[pacing] - present[pacing]):.1f} deg at {rate[pacing]:.0f} deg/s)"
+        )
         for step in range(1, steps + 1):
             tick_start = time.perf_counter()
             t = step / steps

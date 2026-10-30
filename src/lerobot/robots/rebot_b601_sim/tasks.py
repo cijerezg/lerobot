@@ -5,6 +5,10 @@ name or path to scenes/<name>/scene.xml). The shell gets the per-scene policy ov
 ``python -c "from lerobot.robots.rebot_b601_sim.tasks import main; main()" overrides <scene>`` (draccus CLI
 flags with JSON lists, one per line) and the default layouts from ``... layouts``; config_rl_sim.yaml keeps the nail task as its single values.
 
+Placement variants: scenes/<layout>_v<k>/ (scenes/README.md, migration/sim_variants_2026-10-28) share the base layout's Task;
+``layout_name`` strips the suffix, ``variants(layout)`` lists them on disk and ``eval_layouts()`` is LAYOUTS with every base
+that has variants replaced by them (``layouts`` prints that, so run_sim_eval.sh runs the variants instead of the base).
+
 Task strings: closest task-sheet entry (lerobot/docs/annotation_notes/rebot_tasks.md). close_lid = T071 verbatim.
 bottle_basket and lift_bottle have no sheet entry (sheet_id None): the strings are the shortest natural ones; the
 bottle_basket script follows T072 steps 5-8 (grasp / move / release the spray bottle in the basket, return to home)
@@ -12,6 +16,7 @@ with T048's "brown basket" wording, lift_bottle's follows T082/T089 (one-step gr
 """
 
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +26,7 @@ from .nail_task import NailTaskScorer
 from .scorer import TaskScorer
 
 TIERS = ("easy", "hard")
+SCENES_DIR = Path(__file__).resolve().parent / "scenes"
 
 
 @dataclass(frozen=True)
@@ -89,8 +95,21 @@ LAYOUTS = ("clippers_only", "bottle_basket", "close_lid", "ep0", "ep3")
 
 
 def layout_name(scene: str) -> str:
-    """The registry key of a config ``scene``: a layout name, or scenes/<name>/scene.xml."""
-    return Path(scene).parent.name if scene.endswith(".xml") else scene
+    """The registry key of a config ``scene``: a layout name, or scenes/<name>/scene.xml; a placement variant
+    ``<layout>_v<k>`` resolves to its base layout."""
+    name = Path(scene).parent.name if scene.endswith(".xml") else scene
+    return re.sub(r"_v\d+$", "", name)
+
+
+def variants(layout: str) -> list[str]:
+    """The placement variants ``<layout>_v<k>`` on disk under SCENES_DIR, by k."""
+    names = [p.name for p in SCENES_DIR.glob(f"{layout}_v*") if re.fullmatch(rf"{re.escape(layout)}_v\d+", p.name) and (p / "scene.xml").exists()]
+    return sorted(names, key=lambda n: int(n.rsplit("_v", 1)[1]))
+
+
+def eval_layouts() -> list[str]:
+    """LAYOUTS with each base layout replaced by its variants when it has any (the base itself is then not run)."""
+    return [name for layout in LAYOUTS for name in (variants(layout) or [layout])]
 
 
 def task_for(scene: str) -> Task:
@@ -98,8 +117,8 @@ def task_for(scene: str) -> Task:
 
 
 def main() -> None:
-    """``layouts`` -> the default set; ``overrides <scene>`` -> policy CLI flags, one per line (run_sim_eval.sh)."""
+    """``layouts`` -> the default set (variants in place of their base); ``overrides <scene>`` -> policy CLI flags, one per line (run_sim_eval.sh)."""
     if sys.argv[1] == "layouts":
-        print(" ".join(LAYOUTS))
+        print(" ".join(eval_layouts()))
     elif sys.argv[1] == "overrides":
         print("\n".join(task_for(sys.argv[2]).overrides()))

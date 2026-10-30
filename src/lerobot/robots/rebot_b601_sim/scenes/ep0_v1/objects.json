@@ -1,0 +1,91 @@
+{
+ "variant_of": "ep0",
+ "variant": 1,
+ "seed": [
+  20261028,
+  2
+ ],
+ "generator": "migration/sim_variants_2026-10-28/generate_variants.py",
+ "region": {
+  "grid_cells": "rows 2-3 x columns B-E of lerobot/adhocs/object_coverage",
+  "polygon_xy": [
+   [
+    0.1507,
+    -0.2829
+   ],
+   [
+    0.183,
+    0.4803
+   ],
+   [
+    0.5651,
+    0.4216
+   ],
+   [
+    0.5377,
+    -0.302
+   ]
+  ],
+  "reach_m": 0.5
+ },
+ "objects": {
+  "clipper_case": {
+   "xy": [
+    0.3634,
+    -0.1252
+   ],
+   "z": 0.0,
+   "yaw_deg": -158.51,
+   "quat_wxyz": [
+    0.1864,
+    0.0,
+    0.0,
+    -0.98247
+   ],
+   "free": true,
+   "radius_from_base_m": 0.3843
+  },
+  "clipper_large": {
+   "xy": [
+    0.3946,
+    0.0759
+   ],
+   "z": 0.0051,
+   "yaw_deg": -88.63,
+   "quat_wxyz": [
+    0.71551,
+    0.0,
+    0.0,
+    -0.69861
+   ],
+   "free": true,
+   "radius_from_base_m": 0.4018
+  },
+  "clipper_small": {
+   "xy": [
+    0.2152,
+    0.0612
+   ],
+   "z": 0.0046,
+   "yaw_deg": 147.62,
+   "quat_wxyz": [
+    0.27879,
+    0.0,
+    0.0,
+    0.96035
+   ],
+   "free": true,
+   "radius_from_base_m": 0.2237
+  }
+ },
+ "unchanged": [
+  "bottle_yellow_cap_standing",
+  "bottle_white_lying",
+  "spray_bottle_lying",
+  "blue_pouch",
+  "headphone_case_closed",
+  "bits_box",
+  "mic_knob"
+ ],
+ "assets": "background_top.png copied from the base; materials and meshes referenced through the base folder (assetdir ..)"
+}

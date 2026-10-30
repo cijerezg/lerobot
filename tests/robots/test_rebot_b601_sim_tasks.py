@@ -5,9 +5,10 @@ import pytest
 
 mujoco = pytest.importorskip("mujoco")
 
-from lerobot.robots.rebot_b601_sim.easy_tasks import BottleBasketScorer, CloseLidScorer, LiftBottleScorer  # noqa: E402
+from lerobot.robots.rebot_b601_sim.easy_tasks import LID_REACH_M, BottleBasketScorer, CloseLidScorer, LiftBottleScorer, body_surface_distance  # noqa: E402
 from lerobot.robots.rebot_b601_sim.nail_task import GRIPPER_CLOSED_DEG, SLOTS, NailTaskScorer  # noqa: E402
 from lerobot.robots.rebot_b601_sim.scorer import SUCCESS, TaskScorer  # noqa: E402
+from lerobot.robots.rebot_b601_sim import tasks  # noqa: E402
 from lerobot.robots.rebot_b601_sim.tasks import LAYOUTS, TASKS, TIERS, task_for  # noqa: E402
 
 # Gripper: mocap gripper_end with two finger boxes 40 mm apart (bottle diameter 55 mm: both touch at +-27.5 mm).
@@ -82,6 +83,23 @@ def test_registry():
     assert task_for("some/dir/scenes/ep3/scene.xml") is TASKS["ep3"]
     assert {t.tier for n, t in TASKS.items() if n in ("ep0", "ep3")} == {"hard"}
     assert {t.tier for n, t in TASKS.items() if n in ("clippers_only", "bottle_basket", "close_lid", "lift_bottle")} == {"easy"}
+
+
+def test_placement_variants_resolve_and_expand(tmp_path, monkeypatch, capsys):
+    assert tasks.layout_name("ep0_v3") == "ep0" and tasks.layout_name("x/scenes/clippers_only_v12/scene.xml") == "clippers_only"
+    assert tasks.layout_name("ep3") == "ep3" and tasks.layout_name("some/dir/scenes/ep3/scene.xml") == "ep3"
+    assert task_for("close_lid_v1") is TASKS["close_lid"] and task_for("close_lid_v1").overrides() == TASKS["close_lid"].overrides()
+    for name in ("ep0_v2", "ep0_v10", "ep0_v1", "ep0_vx", "ep0_v3_old", "ep0"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "scene.xml").write_text("")
+    (tmp_path / "ep0_v4").mkdir()  # no scene.xml: not a variant
+    monkeypatch.setattr(tasks, "SCENES_DIR", tmp_path)
+    monkeypatch.setattr(tasks, "LAYOUTS", ("ep3", "ep0"))
+    assert tasks.variants("ep0") == ["ep0_v1", "ep0_v2", "ep0_v10"] and tasks.variants("ep3") == []
+    assert tasks.eval_layouts() == ["ep3", "ep0_v1", "ep0_v2", "ep0_v10"]  # variants replace their base, bases without any stay
+    monkeypatch.setattr(tasks.sys, "argv", ["tasks", "layouts"])
+    tasks.main()
+    assert capsys.readouterr().out.split() == ["ep3", "ep0_v1", "ep0_v2", "ep0_v10"]
 
 
 class Toggle(TaskScorer):
@@ -165,7 +183,13 @@ def test_close_lid_predicates():
     assert s.closed == 3.0
     adr = m.jnt_qposadr[m.joint("lid_hinge").id]
     assert s.poll() == 0 and s.reward == 0.0
-    gripper_to(m, d, d.xipos[m.body("headphone_lid").id] + (0, 0, 0.05))
+    # reach is rim-based: the lid tray spans x 0.15-0.25, y -0.35..-0.25, z 0.04-0.05. 7 cm above the COM is not a reach ...
+    gripper_to(m, d, d.xipos[m.body("headphone_lid").id] + (0, 0, 0.07))
+    assert s.poll() == 0 and s.reward == 0.0
+    # ... a pinch on the far corner (midpoint 3.5 cm above the rim corner, 8.1 cm from the COM) is
+    gripper_to(m, d, (0.15, -0.35, 0.085))
+    assert body_surface_distance(m, d, m.body("headphone_lid").id, s.midpoint()) == pytest.approx(0.035)
+    assert np.linalg.norm(d.xipos[m.body("headphone_lid").id] - s.midpoint()) > 0.08
     assert s.poll() == 0 and s.reward == 0.1
     d.qpos[adr] = 0.8; mujoco.mj_forward(m, d)
     assert s.poll() == 1 and s.reward == 0.4
@@ -176,6 +200,19 @@ def test_close_lid_predicates():
     assert s.poll() == 1 and s.reward == 0.7
     gripper_to(m, d, (1, 1, 1))
     assert s.poll() == 2 and s.reward == 1.0 and SUCCESS.is_set()
+
+
+def test_close_lid_reach_follows_the_rim():
+    """The reach distance is to the lid's collision surface, so it moves with the hinge; LID_REACH_M is the single threshold."""
+    m, d = load(EASY_XML)
+    s = CloseLidScorer(m, d, lambda: 0.0)
+    lid = m.body("headphone_lid").id
+    adr = m.jnt_qposadr[m.joint("lid_hinge").id]
+    assert body_surface_distance(m, d, lid, np.array([0.2, -0.3, 0.05])) == pytest.approx(0.0)  # on the tray's top face
+    assert body_surface_distance(m, d, lid, np.array([0.2, -0.3, 0.05 + LID_REACH_M])) == pytest.approx(LID_REACH_M)
+    d.qpos[adr] = np.pi / 2; mujoco.mj_forward(m, d)  # lid vertical: the tray stands on the hinge line x = 0.25
+    assert body_surface_distance(m, d, lid, np.array([0.2, -0.3, 0.05])) > 0.03
+    assert body_surface_distance(m, d, lid, np.array([0.25, -0.3, 0.09])) < 0.012
 
 
 def test_nail_predicates_and_cursor():

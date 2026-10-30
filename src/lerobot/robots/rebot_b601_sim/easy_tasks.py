@@ -4,7 +4,10 @@ Body names are the scene contract: ``bottle`` (free body, collision geom + visua
 geoms give the footprint), ``headphone_case`` + ``headphone_lid`` with hinge ``lid_hinge`` (0 = open; the closed
 angle is the nonzero end of the joint's ``range``). "Held" is both finger bodies in contact with the object
 (scorer.pinched), so it does not depend on the gripper reading; "reach" is the finger midpoint within a few cm of
-the object's centre. Thresholds are plain numbers below.
+the object's centre, except close_lid: the lid is grasped at its rim (the demos rim-pinch the side wall near the far
+end, 9-10 cm from the lid's centre of mass), so its reach is the finger midpoint within LID_REACH_M of the nearest
+point of any lid collision geom (the tray floor and the four 7 mm rim walls). The finger bodies sit 4.2 cm behind
+the tips, so a pinch 1.5 cm deep on a wall puts the midpoint 2.7 cm from the rim. Thresholds are plain numbers below.
 """
 
 import numpy as np
@@ -20,7 +23,7 @@ REACH_M = 0.06  # finger midpoint to the bottle centre (bottle radius 27.5 mm)
 BASKET_LIFT_M = 0.03  # bottle centre above its rest height
 LIFT_M = 0.05  # lift_bottle: bottle centre above its rest height
 HOLD_S = 2.0  # lift_bottle: held and lifted continuously, sim seconds
-LID_REACH_M = 0.08  # finger midpoint to the lid's centre of mass
+LID_REACH_M = 0.05  # finger midpoint to the nearest point of a lid collision geom (2026-10-28; was 8 cm to the lid COM, which a rim pinch misses)
 LID_CLOSED_TOL = 0.08  # fraction of the closed angle (close_lid: pi, soft stop; its XML scores closed as > 2.9 rad)
 
 
@@ -73,6 +76,19 @@ class LiftBottleScorer(TaskScorer):
         )
 
 
+def body_surface_distance(model, data, body: int, point: np.ndarray) -> float:
+    """Distance from ``point`` to the nearest collision geom of ``body``: each geom's local AABB (exact for boxes) clamped
+    in the geom frame."""
+    best = np.inf
+    for g in range(model.ngeom):
+        if model.geom_bodyid[g] != body or not (model.geom_contype[g] or model.geom_conaffinity[g]):
+            continue
+        local = data.geom_xmat[g].reshape(3, 3).T @ (point - data.geom_xpos[g])
+        c, h = model.geom_aabb[g, :3], model.geom_aabb[g, 3:]
+        best = min(best, float(np.linalg.norm(local - np.clip(local, c - h, c + h))))
+    return best
+
+
 class CloseLidScorer(TaskScorer):
     STAGES = [("reach", 0.1, 0), ("quarter", 0.4, 1), ("three_quarters", 0.7, 1), ("closed", 1.0, 2)]
 
@@ -89,7 +105,7 @@ class CloseLidScorer(TaskScorer):
         frac = float(self.data.qpos[self.qadr]) / self.closed
         clear = not ((self.touching(self.lid) | self.touching(self.case)) & self.gripper)
         return dict(
-            reach=np.linalg.norm(self.data.xipos[self.lid] - self.midpoint()) < LID_REACH_M,
+            reach=body_surface_distance(self.model, self.data, self.lid, self.midpoint()) < LID_REACH_M,
             quarter=frac >= 0.25,
             three_quarters=frac >= 0.75,
             closed=frac >= 1.0 - LID_CLOSED_TOL and clear,

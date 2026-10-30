@@ -59,6 +59,7 @@ class RebotB601FollowerConfig:
         }
     )
     park_deg_per_s: float = 20.0
+    park_gripper_deg_per_s: float = 120.0  # gripper closes on its own rate (motor cap 180 deg/s)
     park_tolerance_deg: float = 10.0
 
     # `max_relative_target` limits the magnitude of the relative positional target

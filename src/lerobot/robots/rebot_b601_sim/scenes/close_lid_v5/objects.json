@@ -1,0 +1,54 @@
+{
+ "variant_of": "close_lid",
+ "variant": 5,
+ "seed": [
+  20261028,
+  4
+ ],
+ "generator": "migration/sim_variants_2026-10-28/generate_variants.py",
+ "region": {
+  "demo": "t071_ep2",
+  "source": "migration/lid_solvability_2026-10-28/demo_pose_summary.json",
+  "xy_jitter_m": 0.04,
+  "yaw_jitter_deg": 20.0
+ },
+ "objects": {
+  "headphone_case": {
+   "xy": [
+    0.3958,
+    0.2724
+   ],
+   "z": 0.02,
+   "yaw_deg": -129.67,
+   "quat_wxyz": [
+    0.42524,
+    0.0,
+    0.0,
+    -0.90508
+   ],
+   "free": false,
+   "radius_from_base_m": 0.4805
+  },
+  "headphone_lid": {
+   "xy": [
+    0.3186,
+    0.2886
+   ],
+   "joint": "lid_hinge",
+   "hinge_point_world": [
+    0.3186,
+    0.2886,
+    0.0316
+   ],
+   "hinge_axis_world": [
+    0.2053,
+    0.9787,
+    0.0
+   ],
+   "open_rad": 0.0,
+   "closed_rad": 3.14159
+  }
+ },
+ "unchanged": [],
+ "assets": "background_top.png copied from the base; materials and meshes referenced through the base folder (assetdir ..)"
+}

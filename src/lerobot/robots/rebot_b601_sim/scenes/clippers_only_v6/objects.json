@@ -1,0 +1,83 @@
+{
+ "variant_of": "clippers_only",
+ "variant": 6,
+ "seed": [
+  20261028,
+  1
+ ],
+ "generator": "migration/sim_variants_2026-10-28/generate_variants.py",
+ "region": {
+  "grid_cells": "rows 2-3 x columns B-E of lerobot/adhocs/object_coverage",
+  "polygon_xy": [
+   [
+    0.1507,
+    -0.2829
+   ],
+   [
+    0.183,
+    0.4803
+   ],
+   [
+    0.5651,
+    0.4216
+   ],
+   [
+    0.5377,
+    -0.302
+   ]
+  ],
+  "reach_m": 0.5
+ },
+ "objects": {
+  "clipper_case": {
+   "xy": [
+    0.2201,
+    0.2917
+   ],
+   "z": 0.0,
+   "yaw_deg": -136.88,
+   "quat_wxyz": [
+    0.36751,
+    0.0,
+    0.0,
+    -0.93002
+   ],
+   "free": true,
+   "radius_from_base_m": 0.3654
+  },
+  "clipper_large": {
+   "xy": [
+    0.4042,
+    0.0726
+   ],
+   "z": 0.0051,
+   "yaw_deg": -138.08,
+   "quat_wxyz": [
+    0.35776,
+    0.0,
+    0.0,
+    -0.93382
+   ],
+   "free": true,
+   "radius_from_base_m": 0.4107
+  },
+  "clipper_small": {
+   "xy": [
+    0.4593,
+    0.1663
+   ],
+   "z": 0.0046,
+   "yaw_deg": 154.28,
+   "quat_wxyz": [
+    0.22261,
+    0.0,
+    0.0,
+    0.97491
+   ],
+   "free": true,
+   "radius_from_base_m": 0.4885
+  }
+ },
+ "unchanged": [],
+ "assets": "background_top.png copied from the base; materials and meshes referenced through the base folder (assetdir ..)"
+}

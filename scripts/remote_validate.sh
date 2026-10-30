@@ -213,6 +213,8 @@ export PYTHONPATH='$WS/lerobot/src'
 # setsid+nohup gives a non-interactive, non-login shell, which never sources the
 # profile that puts uv on PATH.
 export PATH="\$HOME/.local/bin:\$PATH"
+# run_sim_eval.sh: layouts run at once on the DGX (SIM_PARALLEL on the local side, 2026-10-28; 5 fits the 128 GB).
+export PARALLEL='${SIM_PARALLEL:-1}'
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
 bash lerobot/scripts/$LAUNCHER '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'

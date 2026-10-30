@@ -13,7 +13,7 @@ the calibration numbers and the rebuild order; the build scripts stay in that fo
 | ep3 | 10-16 ep 3 frame 0 | clippers 0.25-0.33 m from the case | tidy-up recording |
 | lift_bottle | ep0's standing bottle at clippers_only's case position | one bottle (`bottle`) | 2026-10-22, easy tier |
 | bottle_basket | ep0's standing bottle + measured brown basket (`assets/photoreal/basket`, woven mesh from 10-21 wrist frames, hollow collider) | `bottle`, `basket` | 2026-10-22, easy tier |
-| close_lid | ep2's hinged headphone case, base fixed, lid on a real hinge with a tray collider | `headphone_case`, `headphone_lid`, hinge `lid_hinge` (0 = open, closed = the nonzero end of its `range`) | 2026-10-22, easy tier |
+| close_lid | ep2's hinged headphone case, base fixed, lid on a real hinge with a tray collider (floor + four 7 mm rim walls); the loop handle on the base's far end has capsule colliders (2026-10-28) | `headphone_case`, `headphone_lid`, hinge `lid_hinge` (0 = open, closed = the nonzero end of its `range`) | 2026-10-22, easy tier; solvability study in `migration/lid_solvability_2026-10-28` |
 
 ## Eval set, tiers and staged reward (2026-10-22)
 
@@ -44,7 +44,7 @@ Stages (predicate = value); thresholds in `nail_task.py` / `easy_tasks.py`:
 | nail (T085) | reach large 0.1, large held 0.2, large over the case 0.3, large seated 0.5, small held 0.6, small over the case 0.7, both seated 1.0 |
 | bottle_basket | midpoint within 6 cm 0.1, pinched 0.3, pinched and 3 cm up 0.5, 3 cm up over the basket footprint 0.8, inside the footprint below the rim and released 1.0 |
 | lift_bottle | midpoint within 6 cm 0.2, pinched 0.5, pinched and 5 cm up 0.8, pinched and 5 cm up for 2 s 1.0 |
-| close_lid | midpoint within 8 cm of the lid COM 0.1, hinge past 25 % of closed 0.4, past 75 % 0.7, within 8 % of closed with the gripper clear of case and lid 1.0 |
+| close_lid | finger midpoint within 5 cm of the nearest lid collision geom (rim walls or tray floor; a rim pinch sits 9-10 cm from the lid COM) 0.1, hinge past 25 % of closed 0.4, past 75 % 0.7, within 8 % of closed with the gripper clear of case and lid 1.0 |
 
 Per layout: `scene.xml` (free bodies for the case and two clippers; recorded layouts also include clutter primitives, all within 0.50 m
 of the base; table collision plane; cameras `ext` = top webcam, `wrist` = D405 on gripper_end), `materials/`
@@ -95,3 +95,30 @@ Source/reference and builder history remains in the workspace under
 The integration backup, asset manifest and validation reports are under
 `migration/photoreal_integration_2026-10-18/`. Earlier experiment hash checks describe
 the pre-integration state; their original-scene hashes intentionally differ now.
+
+## Placement variants (2026-10-28)
+
+`<layout>_v1` .. `<layout>_v6` for bottle_basket, clippers_only, close_lid, ep0 and ep3: the same scene with only the task
+objects' xy + yaw re-sampled (bottle + basket; case + two clippers, the recorded clutter stays put; the fixed headphone
+case with its lid). `tasks.py` resolves a variant name to the base layout's Task (`layout_name` strips `_v<k>`), `variants(layout)`
+lists them on disk and `eval_layouts()` / `tasks.py layouts` replace a base layout by its variants, so `run_sim_eval.sh` runs
+the 30 variants and not the five bases; `sim_summary.py` keeps `reward.<layout>_v<k>` and rolls them up into `reward.<layout>`
+(mean over all the variants' episodes); the tiers average over base layouts.
+
+Region: the object-coverage grid cells rows 2-3 x columns B-E (`lerobot/adhocs/object_coverage`, where the real data put the
+clippers, case and kit), unprojected through the ext camera onto the table: the quadrilateral (0.151, -0.283), (0.183, 0.480),
+(0.565, 0.422), (0.538, -0.302) in table coordinates (x toward the camera, y to the robot's right), intersected with the 0.50 m
+reach disc around the base (basket centre <= 0.48 m, bottle <= 0.45 m from the basket). Yaw is uniform for the free objects, base
++-25 deg for the basket. close_lid instead centres on the three T071 demo poses measured by the lid study
+(`migration/lid_solvability_2026-10-28/demo_pose_summary.json`: ep0, ep2, ep3; variants 1-3 and 4-6 follow them in that order)
+with +-4 cm xy and +-20 deg yaw jitter around the demo body yaw (lid toward the robot side as in the demos). Every pose keeps the
+body's AABB 2 cm inside the table and its convex footprint (lid open and the strap-loop capsules included) 2 cm clear of every
+other scene body and of the robot base, and passes an IK reach test inside the follower's soft joint limits (straight-down pinch at
+the object top; position only 5 cm over the basket rim; for close_lid a pinch across each side wall of the open lid, the grasp that
+closes it); each variant settles for 1 s with the task objects moving < 5 mm.
+
+Regenerate (seed 20261028, per-layout sub-seed = index in bottle_basket, clippers_only, ep0, ep3, close_lid; byte-identical
+output): `MUJOCO_GL=egl PYTHONSAFEPATH=1 uv run python migration/sim_variants_2026-10-28/generate_variants.py [--layouts ...]`.
+Each variant folder holds `scene.xml` (only the task-object body lines differ from the base), `objects.json` (`variant_of`, seed,
+sampled poses, the lid's hinge point) and a copy of `background_top.png`; meshes and `materials/` stay referenced through the base
+folder. Contact sheets: `migration/sim_variants_2026-10-28/contact_<layout>.png`.

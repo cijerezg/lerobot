@@ -16,9 +16,21 @@ clause from the annotation, deployment metadata clause) and one forward at flow 
 * ``external``: ``setrep_external_episodes`` episodes of the external ReBot source (the
   config source whose name starts with ``external``), ``setrep_external_frames`` each;
 * ``diverse``: one episode per entry of ``setrep_diverse_sources`` (``source:embodiment``
-  pairs of the diverse corpus, chosen for different robots and layouts),
+  pairs of the diverse corpus, chosen for different robots and layouts; a third field
+  ``:n`` asks for n distinct episodes of that robot, ``:ep=id|id`` for those episodes),
   ``setrep_diverse_frames`` anchors evenly spaced over it, through the training diverse
-  buffer exactly as training reads it.
+  buffer exactly as training reads it; ``setrep_diverse_holdout`` (same syntax) adds
+  episodes of the corpus holdout (never trained on, decoded from video), every row
+  tagged ``split`` = train / holdout;
+* ``named`` (optional): clips listed in ``setrep_named`` as ``label=root:ep:t0-t1@stride``,
+  every frame of the window at that stride, for recurrence matrices and chosen reference
+  frames (a hero rollout, a wrist-roll window). A raw ``inference_dataset`` root has no
+  annotation; its subtask is the one the policy was given, from ``meta/online_labels.parquet``.
+
+``setrep_rebot_sets`` / ``setrep_external_sets`` (``root:ep,ep;root:ep``) replace the random
+picks with explicit episodes from any annotated root. ``setrep_balance_phases`` splits each episode's
+frames evenly over the subtask verbs present (grasp / move / release / other) instead of
+evenly over time, so a set is not two thirds grasp frames.
 
 Episodes are the unit. Every within-set and between-set number below is a mean over
 pairs of frames from DIFFERENT episodes, so a set's own diagonal says how alike two
@@ -85,7 +97,7 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
 PROTOCOL = "set_representations_v1"
-SETS = ("rebot", "external", "diverse")
+SETS = ("rebot", "external", "diverse", "named")
 GEOMETRIES = ("raw", "centered")
 MEASURES = ("cosine", "distance")
 HEADLINE_GROUPS = ("img_external_0", "action")
@@ -110,16 +122,101 @@ def _options(cfg):
 
 
 def parse_sources(text):
-    """``"droid_success:Franka,robochallenge:ARX5"`` -> [("droid_success", "Franka"), ...]."""
+    """``"droid_success:Franka,robochallenge:ARX5:2,yam:YAM:ep=yam__duster__ep000106|yam__duster__ep000174"``
+    -> [("droid_success", "Franka", 1), ("robochallenge", "ARX5", 2), ("yam", "YAM", ["yam__duster__ep000106",
+    "yam__duster__ep000174"])]: the third field is a count of random episodes (default 1) or ``ep=`` with
+    explicit episode ids joined by ``|``."""
     pairs = []
     for item in text.split(","):
         if not item.strip():
             continue
-        source, _, embodiment = item.strip().partition(":")
-        if not embodiment:
-            raise ValueError(f"setrep_diverse_sources entries are source:embodiment, got {item!r}")
-        pairs.append((source.strip(), embodiment.strip()))
+        parts = [x.strip() for x in item.strip().split(":")]
+        if len(parts) < 2 or not parts[1]:
+            raise ValueError(f"setrep_diverse_sources entries are source:embodiment[:episodes], got {item!r}")
+        episodes = parts[2] if len(parts) > 2 and parts[2] else "1"
+        pairs.append((parts[0], parts[1], episodes[3:].split("|") if episodes.startswith("ep=") else int(episodes)))
     return pairs
+
+
+def parse_rebot_sets(text):
+    """``"root_a:0,3;root_b:4"`` -> [("root_a", [0, 3]), ("root_b", [4])]."""
+    out = []
+    for item in text.split(";"):
+        if not item.strip():
+            continue
+        root, _, eps = item.strip().rpartition(":")
+        if not root or not eps:
+            raise ValueError(f"setrep_rebot_sets entries are root:ep,ep, got {item!r}")
+        out.append((root.strip(), [int(e) for e in eps.split(",") if e.strip()]))
+    return out
+
+
+def parse_named(text):
+    """``"hero=root:0:0-234@1;roll_c1=root:4:13-19@0.5"`` -> [{"label", "root", "episode", "t0", "t1", "stride_s"}]."""
+    out = []
+    for item in text.split(";"):
+        if not item.strip():
+            continue
+        try:
+            label, rest = item.strip().split("=", 1)
+            spec, stride = rest.rsplit("@", 1)
+            root, episode, window = spec.rsplit(":", 2)
+            t0, t1 = window.split("-", 1)
+            out.append({"label": label.strip(), "root": root.strip(), "episode": int(episode), "t0": float(t0),
+                        "t1": float(t1), "stride_s": float(stride)})
+        except ValueError as exc:
+            raise ValueError(f"setrep_named entries are label=root:ep:t0-t1@stride_s, got {item!r}") from exc
+    return out
+
+
+def root_name(path):
+    """Basename of a root; a raw ``inference_dataset`` takes its run folder's name."""
+    path = Path(path).resolve()
+    return path.parent.name if path.name == "inference_dataset" else path.name
+
+
+def phase_verb(subtask):
+    """"grasp the cup" -> "grasp"; move / release kept, anything else "other"."""
+    verb = (subtask or "").strip().split(" ")[0].lower()
+    return verb if verb in ("grasp", "move", "release") else "other"
+
+
+def balanced_picks(verbs, k):
+    """k positions over range(len(verbs)) split as evenly as the verbs present allow (one
+    pick at a time to the verb with the fewest so far), each verb's share evenly spaced
+    over its own frames."""
+    buckets = {}
+    for i, v in enumerate(verbs):
+        buckets.setdefault(v, []).append(i)
+    names = sorted(buckets, key=lambda v: -len(buckets[v]))
+    share = {v: 0 for v in names}
+    for _ in range(min(k, len(verbs))):
+        v = min((v for v in names if share[v] < len(buckets[v])), key=lambda v: share[v])
+        share[v] += 1
+    picks = []
+    for v in names:
+        picks += [buckets[v][int(j)] for j in even_picks(len(buckets[v]), share[v])]
+    return np.array(sorted(picks), dtype=int)
+
+
+def frame_subtasks(dataset):
+    """One subtask string per global frame index: the reviewed windows when the root has
+    them, else the online labels of a raw inference_dataset, else empty strings."""
+    from lerobot.probes.utils import _dataset_subtask_indices, get_subtask_str
+
+    n = len(dataset)
+    indices = _dataset_subtask_indices(dataset)
+    if indices is not None:
+        names = {}
+        return [names.setdefault(int(i), get_subtask_str(dataset, int(i))) for i in indices.tolist()[:n]]
+    labels = Path(str(dataset.root)) / "meta" / "online_labels.parquet"
+    if labels.exists():
+        import pandas as pd
+
+        df = pd.read_parquet(labels, columns=["index", "subtask"])
+        by_index = dict(zip(df["index"].astype(int), df["subtask"].astype(str)))
+        return [by_index.get(i, "") for i in range(n)]
+    return [""] * n
 
 
 def even_picks(n, k):
@@ -146,36 +243,103 @@ def pick_episodes(episodes, task_of, n, rng):
     return sorted(chosen)
 
 
-def lerobot_set(dataset, cfg, set_name, n_episodes, n_frames, rng):
-    from lerobot.datasets.embodiment import embodiment_name
+class _Root:
+    """One loaded LeRobot root: identity, per-frame columns, episodes, tasks, subtasks."""
 
-    identity = dataset_identity_columns(dataset, cfg)
-    robot = embodiment_name(identity["embodiment_index"]) or f"embodiment {identity['embodiment_index']}"
-    stride = probe_image_stride(cfg)
-    columns = dataset.hf_dataset.select_columns(["frame_index", "timestamp", "task_index"]).with_format(None)[:]
-    source = Path(str(dataset.root)).resolve().name
-    episodes = build_episode_index(dataset)
-    task_of = {ep: str(dataset.meta.tasks.iloc[int(columns["task_index"][idx[0]])].name) for ep, idx in episodes.items()}
+    def __init__(self, dataset, cfg):
+        from lerobot.datasets.embodiment import embodiment_name
+
+        self.dataset = dataset
+        self.identity = dataset_identity_columns(dataset, cfg)
+        self.robot = embodiment_name(self.identity["embodiment_index"]) or f"embodiment {self.identity['embodiment_index']}"
+        self.stride = probe_image_stride(cfg)
+        self.columns = dataset.hf_dataset.select_columns(["frame_index", "timestamp", "task_index"]).with_format(None)[:]
+        self.source = root_name(str(dataset.root))
+        self.episodes = build_episode_index(dataset)
+        self.task_of = {ep: str(dataset.meta.tasks.iloc[int(self.columns["task_index"][idx[0]])].name)
+                        for ep, idx in self.episodes.items()}
+        self.subtasks = frame_subtasks(dataset)
+
+    def sample(self, set_name, ep, index, **extra):
+        return {**self.identity, "kind": "lerobot", "set": set_name, "source": self.source, "robot": self.robot,
+                "episode": f"{self.source}/{ep}", "index": int(index),
+                "frame": int(self.columns["frame_index"][index]), "time_s": float(self.columns["timestamp"][index]),
+                "task": self.task_of[ep], "subtask": self.subtasks[index], **extra}
+
+    def episode_samples(self, set_name, ep, n_frames, balance):
+        available = [i for i in self.episodes[ep] if i % self.stride == 0]
+        if balance:
+            picks = balanced_picks([phase_verb(self.subtasks[i]) for i in available], n_frames)
+        else:
+            picks = even_picks(len(available), n_frames)
+        return [self.sample(set_name, ep, available[int(pos)]) for pos in picks]
+
+    def window_samples(self, set_name, ep, t0, t1, stride_s, label):
+        """Every stride-grid frame of the episode with timestamp in [t0, t1], at least
+        stride_s apart (episode-relative seconds, as the dataset's timestamps are)."""
+        base = float(self.columns["timestamp"][self.episodes[ep][0]])
+        out, last = [], None
+        for i in self.episodes[ep]:
+            t = float(self.columns["timestamp"][i]) - base
+            if i % self.stride or t < t0 or t > t1:
+                continue
+            if last is None or t - last >= stride_s - 1e-6:
+                out.append(self.sample(set_name, ep, i, clip=label))
+                last = t
+        if not out:
+            raise ValueError(f"No frames for named clip {label!r} in {self.source}/{ep} at {t0}-{t1} s")
+        return out
+
+
+def lerobot_set(dataset, cfg, set_name, n_episodes, n_frames, rng, balance=False, roots=None):
+    """Random episode picks (every task once before any repeats); the loaded root goes into ``roots``."""
+    root = dataset if isinstance(dataset, _Root) else _Root(dataset, cfg)
+    if roots is not None:
+        roots[root.source] = root
     samples = []
-    for ep in pick_episodes(episodes, task_of, n_episodes, rng):
-        available = [i for i in episodes[ep] if i % stride == 0]
-        for pos in even_picks(len(available), n_frames):
-            index = available[int(pos)]
-            samples.append({**identity, "kind": "lerobot", "set": set_name, "source": source, "robot": robot,
-                            "episode": f"{source}/{ep}", "index": int(index),
-                            "frame": int(columns["frame_index"][index]),
-                            "time_s": float(columns["timestamp"][index]), "task": task_of[ep]})
+    for ep in pick_episodes(root.episodes, root.task_of, n_episodes, rng):
+        samples += root.episode_samples(set_name, ep, n_frames, balance)
     return samples
 
 
-def diverse_set(buffer, specs, n_frames, rng):
-    """One episode per (source, embodiment) from the training diverse buffer, n_frames
-    anchors evenly spaced over it; an episode with at least n_frames anchors when the
-    source has one, else its longest."""
+def open_roots(specs, cfg, roots):
+    """Load every root named in specs once (keyed by basename) into ``roots``."""
+    for spec in specs:
+        path = spec if isinstance(spec, str) else spec["root"]
+        name = root_name(path)
+        if name not in roots:
+            roots[name] = _Root(load_extra_dataset(cfg.dataset.repo_id, path), cfg)
+    return roots
+
+
+def explicit_sets(spec_text, cfg, set_name, n_frames, balance, roots):
+    samples = []
+    for path, eps in parse_rebot_sets(spec_text):
+        root = open_roots([path], cfg, roots)[root_name(path)]
+        for ep in eps:
+            samples += root.episode_samples(set_name, ep, n_frames, balance)
+    return samples
+
+
+def named_set(spec_text, cfg, roots):
+    samples = []
+    for spec in parse_named(spec_text):
+        root = open_roots([spec], cfg, roots)[root_name(spec["root"])]
+        samples += root.window_samples("named", spec["episode"], spec["t0"], spec["t1"], spec["stride_s"], spec["label"])
+    return samples
+
+
+BUFFER_OF_SPLIT = {"train": "diverse", "holdout": "diverse_holdout"}
+
+
+def diverse_set(buffer, specs, n_frames, rng, split="train"):
+    """Episodes per (source, embodiment) from a diverse buffer (training or holdout, the
+    ``split`` tag), n_frames anchors evenly spaced over each: the listed episode ids, or
+    random ones with at least n_frames anchors when the source has them, else its longest."""
     from lerobot.datasets.diverse_prompt import episode_task
 
     samples = []
-    for source, embodiment in specs:
+    for source, embodiment, n_episodes in specs:
         by_episode = defaultdict(list)
         for index, row in enumerate(buffer.rows):
             if str(row["source"]) == source and str(row["embodiment"]) == embodiment:
@@ -184,16 +348,23 @@ def diverse_set(buffer, specs, n_frames, rng):
             raise ValueError(f"No diverse buffer rows for {source}:{embodiment}")
         anchors = {ep: list({float(buffer.rows[i]["anchor_s"]): i for i in sorted(
             idx, key=lambda i: float(buffer.rows[i]["anchor_s"]))}.values()) for ep, idx in by_episode.items()}
-        pool = sorted(ep for ep, idx in anchors.items() if len(idx) >= n_frames) \
-            or [max(anchors, key=lambda ep: len(anchors[ep]))]
-        ep = pool[int(rng.integers(len(pool)))]
-        task = episode_task(buffer.selection.episode_records[ep], source)[0]
-        for pos in even_picks(len(anchors[ep]), n_frames):
-            index = anchors[ep][int(pos)]
-            row = buffer.rows[index]
-            samples.append({"kind": "diverse", "set": "diverse", "source": source, "robot": embodiment,
-                            "episode": f"{source}/{ep}", "index": int(index), "frame": int(row["anchor_frame"]),
-                            "time_s": float(row["anchor_s"]), "task": task})
+        if isinstance(n_episodes, list):
+            missing = sorted(set(n_episodes) - set(anchors))
+            if missing:
+                raise ValueError(f"No diverse {split} buffer rows for {source}:{embodiment} episodes {missing}")
+            chosen = n_episodes
+        else:
+            pool = sorted(ep for ep, idx in anchors.items() if len(idx) >= n_frames) \
+                or [max(anchors, key=lambda ep: len(anchors[ep]))]
+            chosen = [pool[int(i)] for i in rng.permutation(len(pool))[:n_episodes]]
+        for ep in sorted(chosen):
+            task = episode_task(buffer.selection.episode_records[ep], source)[0]
+            for pos in even_picks(len(anchors[ep]), n_frames):
+                index = anchors[ep][int(pos)]
+                row = buffer.rows[index]
+                samples.append({"kind": "diverse", "set": "diverse", "source": source, "robot": embodiment,
+                                "episode": f"{source}/{ep}", "index": int(index), "frame": int(row["anchor_frame"]),
+                                "time_s": float(row["anchor_s"]), "task": task, "split": split})
     return samples
 
 
@@ -208,19 +379,28 @@ def sampling_plan(val_dataset, cfg):
     """Samples in page order (set, episode, time), the datasets by source name, the buffers."""
     p = cfg.probe_parameters
     rng = np.random.default_rng(int(p.random_seed))
-    datasets, samples = {}, []
-    samples += lerobot_set(val_dataset, cfg, "rebot", p.setrep_rebot_episodes, p.setrep_rebot_frames, rng)
-    datasets[samples[0]["source"]] = val_dataset
-    ext = load_extra_dataset(cfg.dataset.repo_id, external_root(cfg))
-    ext_samples = lerobot_set(ext, cfg, "external", p.setrep_external_episodes, p.setrep_external_frames, rng)
-    datasets[ext_samples[0]["source"]] = ext
-    samples += ext_samples
+    balance = bool(getattr(p, "setrep_balance_phases", False))
+    roots, samples = {}, {}
+    if getattr(p, "setrep_rebot_sets", ""):
+        samples["rebot"] = explicit_sets(p.setrep_rebot_sets, cfg, "rebot", p.setrep_rebot_frames, balance, roots)
+    else:
+        samples["rebot"] = lerobot_set(val_dataset, cfg, "rebot", p.setrep_rebot_episodes, p.setrep_rebot_frames, rng, balance, roots)
+    if getattr(p, "setrep_external_sets", ""):
+        samples["external"] = explicit_sets(p.setrep_external_sets, cfg, "external", p.setrep_external_frames, balance, roots)
+    else:
+        ext = load_extra_dataset(cfg.dataset.repo_id, external_root(cfg))
+        samples["external"] = lerobot_set(ext, cfg, "external", p.setrep_external_episodes, p.setrep_external_frames, rng, balance, roots)
     buffers = {}
     specs = parse_sources(p.setrep_diverse_sources)
-    if specs:
+    holdout = parse_sources(getattr(p, "setrep_diverse_holdout", ""))
+    if specs or holdout:
         buffers = _open_diverse_buffers(cfg)
-        samples += diverse_set(buffers["diverse"], specs, p.setrep_diverse_frames, rng)
-    return samples, datasets, buffers
+        samples["diverse"] = (diverse_set(buffers["diverse"], specs, p.setrep_diverse_frames, rng, "train")
+                              + diverse_set(buffers.get("diverse_holdout"), holdout, p.setrep_diverse_frames, rng, "holdout"))
+    if getattr(p, "setrep_named", ""):
+        samples["named"] = named_set(p.setrep_named, cfg, roots)
+    datasets = {name: r.dataset for name, r in roots.items()}
+    return [s for name in SETS for s in samples.get(name, [])], datasets, buffers
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -240,7 +420,9 @@ def collect(adapter, cfg, samples, datasets, buffers, cache_dir):
         if i % 25 == 0:
             logging.info("Set representations: %s/%s frames", i + 1, len(samples))
         inputs = (_rebot_inputs(datasets[sample["source"]], cfg, sample, adapter.chunk_size)
-                  if sample["kind"] == "lerobot" else _diverse_inputs(buffers["diverse"], cfg, sample))
+                  if sample["kind"] == "lerobot" else _diverse_inputs(buffers[BUFFER_OF_SPLIT[sample["split"]]], cfg, sample))
+        if not inputs["subtask"] and sample.get("subtask"):
+            inputs["subtask"] = sample["subtask"]  # raw inference_dataset: the prompt the policy was given
         for camera in ("external_0", "wrist_0"):
             (cache_dir / "thumbs" / f"{i:04d}.{camera}.jpg").unlink(missing_ok=True)
         _save_thumbs(inputs["obs"], str(cache_dir), i)
@@ -416,7 +598,7 @@ def analyze(meta, arrays, present, layers, groups, output_dir):
                "gap_distance": summary_gaps["distance"],
                "missing_groups": sorted(set(groups) - set(arrays))}
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
-    payload = {"rows": [{k: r.get(k) for k in ("row", "set", "source", "robot", "episode", "time_s", "frame", "task", "subtask")}
+    payload = {"rows": [{k: r.get(k) for k in ("row", "set", "source", "robot", "episode", "time_s", "frame", "task", "subtask", "clip")}
                         for r in all_rows],
                "panels": panel_keys, "groups": [g for g in groups if g in arrays], "layers": layers,
                "geometries": list(GEOMETRIES), "measures": list(MEASURES), "view": meta["view"],
@@ -450,7 +632,7 @@ h1{font-size:18px;margin:14px 0 4px}h2{font-size:14px;margin:0 0 6px}.muted{colo
 @media(max-width:1000px){.grid,.grid2{grid-template-columns:1fr}}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pair img{width:100%;border-radius:4px;background:#ddd}
 .card{font-size:12px}.card b{font-size:13px}.tag{display:inline-block;padding:1px 6px;border-radius:3px;color:white;font-size:11px;margin-right:4px}
-.rebot{background:#2a6fdb}.external{background:#e37525}.diverse{background:#2e9e5b}
+.rebot{background:#2a6fdb}.external{background:#e37525}.diverse{background:#2e9e5b}.named{background:#8e44ad}
 table{border-collapse:collapse;font-size:12px;width:100%}td,th{padding:3px 6px;border-bottom:1px solid #eee;text-align:right}th:first-child,td:first-child{text-align:left}
 details{font-size:12px;color:#444;margin-top:8px}
 </style></head><body>
@@ -474,7 +656,7 @@ details{font-size:12px;color:#444;margin-top:8px}
 const DATA=__DATA__;const $=id=>document.getElementById(id);const panels={};let waiting=null;
 window.__setPanel=(key,data)=>{panels[key]=data;if(waiting&&waiting.key===key){waiting.resolve(data);waiting=null;}};
 function loadPanel(key){if(panels[key])return Promise.resolve(panels[key]);return new Promise(resolve=>{waiting={key,resolve};const s=document.createElement('script');s.src='panels/'+key+'.js';document.body.append(s);});}
-const SETCOLOR={rebot:'#2a6fdb',external:'#e37525',diverse:'#2e9e5b'};
+const SETCOLOR={rebot:'#2a6fdb',external:'#e37525',diverse:'#2e9e5b',named:'#8e44ad'};
 function fill(id,values,labels){const s=$(id);s.replaceChildren();values.forEach((v,i)=>{const o=document.createElement('option');o.value=v;o.textContent=labels?labels[i]:v;s.append(o);});}
 fill('group',DATA.groups);fill('layer',DATA.layers,DATA.layers.map(l=>'L'+l));fill('geometry',DATA.geometries);fill('measure',DATA.measures,['Cosine','L2 distance']);
 $('layer').value=DATA.layers[DATA.layers.length-1];$('geometry').value='centered';

@@ -330,7 +330,7 @@ class ProbeConfig:
     enable_action_trace: bool = (
         False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
     )
-    enable_action_trace_sim: bool = False  # action_trace's samples played on the MuJoCo reBot -> rerun .rrd (needs enable_action_trace)
+    enable_action_trace_sim: bool = False  # action_trace's samples played on the MuJoCo reBot -> one mp4 per anchor (needs enable_action_trace)
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
     enable_depth_modality: bool = False  # matched foreign/stale depth + null sensor-loss stress
     enable_depth_event: bool = False  # depth read at pre-grasp frames against far-from-event controls
@@ -409,8 +409,19 @@ class ProbeConfig:
     setrep_rebot_frames: int = 40
     setrep_external_episodes: int = 2
     setrep_external_frames: int = 20
+    # source:embodiment[:n | :ep=id|id]: n random episodes (default 1) or the listed episode ids.
     setrep_diverse_sources: str = "droid_success:Franka,robochallenge:ARX5"
+    setrep_diverse_holdout: str = ""  # same syntax, episodes of the corpus holdout (rows tagged split=holdout)
     setrep_diverse_frames: int = 20
+    # Explicit own-robot episodes, "root:ep,ep;root:ep" (empty = setrep_rebot_episodes random
+    # picks from the val root). Named clips, "label=root:ep:t0-t1@stride_s;..." (set "named",
+    # every frame of the window at stride_s; a raw inference_dataset reads its subtask from
+    # meta/online_labels.parquet). Balance = per episode, frames split evenly over the
+    # subtask verbs present instead of evenly over time.
+    setrep_rebot_sets: str = ""
+    setrep_external_sets: str = ""  # same syntax, for the external ReBot set
+    setrep_named: str = ""
+    setrep_balance_phases: bool = False
     # Domain representations. Frames per ReBot episode (None inherits n_frames_per_episode);
     # the diverse side draws the same total, split evenly over its sources. k is the
     # cosine neighbourhood of the purity readout.

@@ -340,6 +340,11 @@ class RobotEnv(gym.Env):
         """The unprocessed observation of the last reset/step (the robot's own keys and dtypes)."""
         return self._raw_observation
 
+    def read_raw_observation(self) -> RobotObservation:
+        """Read the robot now and make that the raw observation (frames taken outside step(), e.g. the park)."""
+        self._raw_observation = self._get_observation()
+        return self._raw_observation
+
     def get_last_requested_joint_targets(self) -> dict[str, Any] | None:
         """Return the most recent step target, whether or not it was sent to the robot."""
         if self._last_requested_joint_targets is None:
