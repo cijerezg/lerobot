@@ -122,3 +122,22 @@ output): `MUJOCO_GL=egl PYTHONSAFEPATH=1 uv run python migration/sim_variants_20
 Each variant folder holds `scene.xml` (only the task-object body lines differ from the base), `objects.json` (`variant_of`, seed,
 sampled poses, the lid's hinge point) and a copy of `background_top.png`; meshes and `materials/` stay referenced through the base
 folder. Contact sheets: `migration/sim_variants_2026-10-28/contact_<layout>.png`.
+
+## Twin eval set (2026-10-30)
+
+`twin_l<L>_<config>_p<1-4>` layouts: the digital-twin desk (`migration/digital_twin_2026-10-29/twin/scene_twin.xml`, room geometry
+instead of a real background composite, the aligned `ext` camera, package copies of the twin assets under `assets/twin/`, room files
+under `assets/twin/room/`). Four levels (tiers `twin_l1` .. `twin_l4`) x four hand-designed configurations x four placements: `p1` is
+the configuration itself, `p2`-`p4` jitter every movable body (xy +-6 cm, yaw +-20 deg) under the placement rules above (2 cm inside
+the desk, 2 cm clearance, no start contact with the parked arm, IK reach of the targets and 5 cm over the basket rim, 1 s settle
+< 5 mm). L1 = basket + one object; L2 = target + distractors (a second tape roll `tape_roll_2` and the clipper case with both
+clippers seated exist as bodies); L3 = the full twin desk (tape / pill bottle target, "Close the bit kit", "Close the headphone case lid" with the kit
+closed; the basket stays at its twin pose with its contents); L4 = the full desk, sequential multi-object tasks (`twin_tasks.sequence_scorer`, equal ladder
+shares in task order). Built by `migration/digital_twin_2026-10-29/envs/build_twin_envs.py` (seed 20261030, byte-identical; report
+`envs/ENVS_REPORT.md`). Scorers in `twin_tasks.py` are staged like the others and additionally dense (`reward_dense` in
+subtask_events.json / sim/index.json). `TWIN=1 run_sim_eval.sh ...` runs the 64 placements (16 configurations x 4), 4 episodes each, with a config copy
+whose top camera has no background composite; `tasks.py layouts` / `eval_layouts()` list the default set unless `TWIN=1` (or
+`layouts --twin`). `twin_l3_close_lid` (T071 on the twin's headphone case, `easy_tasks.CloseLidScorer`) is the one full-desk
+configuration with the bit kit CLOSED: the fold asset's settled closed angles are baked into the strip / flap body frames (joint ranges
+and dead-band springs shifted alike), so the kit occupies one panel's footprint and the open headphone case fits far left with the lid
+toward the robot (both lid walls inside the pinch IK reach; the case is exempt from the region / reach rule like close_lid).

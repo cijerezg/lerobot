@@ -1,0 +1,27 @@
+{
+  "name": "close_lid",
+  "task": "Close the headphone case lid",
+  "scene": "sim close_lid (easy_tasks.py CloseLidScorer), hardware 'Tidy up the table' steps 1-2",
+  "script": ["grasp the headphone case lid", "close the headphone case lid", "return to home"],
+  "subtasks": [
+    {"id": 0, "text": "reach toward the lid rim", "cursor": 0, "contact": "na", "precision": 3,
+     "criterion": "gripper open and moving toward the open lid's rim; lid fully open"},
+    {"id": 1, "text": "pinch the lid rim", "cursor": 0, "contact": "rim-pinch", "precision": 3,
+     "criterion": "one finger inside the lid, one outside its wall, closed on the rim; lid not yet moving"},
+    {"id": 2, "text": "swing the lid closed", "cursor": 1, "contact": "rim-pinch", "precision": 2,
+     "criterion": "lid rotating on its hinge toward the case, held or pushed by the gripper"},
+    {"id": 3, "text": "let go of the closed lid", "cursor": 1, "contact": "drop", "precision": 2,
+     "criterion": "lid down on the case; fingers opening or just opened"},
+    {"id": 4, "text": "retreat", "cursor": 2, "contact": "na", "precision": 1,
+     "criterion": "gripper clear of the case, lid closed, arm moving away or home"},
+    {"id": 5, "text": "idle or off-task", "cursor": -1, "contact": "na", "precision": 1,
+     "criterion": "arm not moving for the whole strip, or doing something none of the entries above describes"}
+  ],
+  "stages": [
+    {"id": 0, "name": "none", "value": 0.0, "cursor": 0, "criterion": "nothing below holds"},
+    {"id": 1, "name": "reach", "value": 0.1, "cursor": 0, "criterion": "finger midpoint within about 5 cm of the lid"},
+    {"id": 2, "name": "quarter", "value": 0.4, "cursor": 1, "criterion": "lid rotated at least a quarter of the way closed"},
+    {"id": 3, "name": "three_quarters", "value": 0.7, "cursor": 1, "criterion": "lid rotated at least three quarters of the way closed"},
+    {"id": 4, "name": "closed", "value": 1.0, "cursor": 2, "criterion": "lid closed on the case and the gripper not touching lid or case"}
+  ]
+}

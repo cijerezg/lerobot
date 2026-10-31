@@ -1,0 +1,32 @@
+{
+  "name": "nail_clippers",
+  "task": "Put the nail clippers in the clipper case",
+  "scene": "sim clippers_only / ep0 / ep3 (nail_task.py NailTaskScorer), T085",
+  "script": ["grasp the large nail clipper", "move the large nail clipper to the clipper case", "release the large nail clipper in the large slot",
+             "push the large nail clipper into the large slot", "grasp the nail clipper", "move the nail clipper to the clipper case",
+             "release the nail clipper in the small slot", "push the nail clipper into the small slot", "return to home"],
+  "subtasks": [
+    {"id": 0, "text": "reach toward the large clipper", "cursor": 0, "contact": "na", "precision": 4, "criterion": "gripper open, moving toward the large clipper on the table"},
+    {"id": 1, "text": "grasp the large clipper", "cursor": 0, "contact": "top-pinch", "precision": 4, "criterion": "fingers closing on the large clipper from above; clipper still on the table"},
+    {"id": 2, "text": "carry the large clipper to the case", "cursor": 1, "contact": "na", "precision": 4, "criterion": "large clipper held, lifted, travelling toward or above the case"},
+    {"id": 3, "text": "insert the large clipper in the large slot", "cursor": 2, "contact": "insert", "precision": 5, "criterion": "large clipper lowered into the large slot; fingers opening"},
+    {"id": 4, "text": "push the large clipper down", "cursor": 3, "contact": "push", "precision": 3, "criterion": "gripper pressing the large clipper further into its slot"},
+    {"id": 5, "text": "reach toward the small clipper", "cursor": 4, "contact": "na", "precision": 4, "criterion": "large clipper seated; gripper open, moving toward the small clipper"},
+    {"id": 6, "text": "grasp the small clipper", "cursor": 4, "contact": "top-pinch", "precision": 4, "criterion": "fingers closing on the small clipper from above"},
+    {"id": 7, "text": "carry the small clipper to the case", "cursor": 5, "contact": "na", "precision": 4, "criterion": "small clipper held, lifted, travelling toward or above the case"},
+    {"id": 8, "text": "insert the small clipper in the small slot", "cursor": 6, "contact": "insert", "precision": 5, "criterion": "small clipper lowered into the small slot; fingers opening"},
+    {"id": 9, "text": "push the small clipper down", "cursor": 7, "contact": "push", "precision": 3, "criterion": "gripper pressing the small clipper further into its slot"},
+    {"id": 10, "text": "retreat", "cursor": 8, "contact": "na", "precision": 1, "criterion": "both clippers seated, gripper empty, arm moving home"},
+    {"id": 11, "text": "idle or off-task", "cursor": -1, "contact": "na", "precision": 1, "criterion": "arm not moving for the whole strip, a clipper dropped outside the case, or anything not listed above"}
+  ],
+  "stages": [
+    {"id": 0, "name": "none", "value": 0.0, "cursor": 0, "criterion": "nothing below holds"},
+    {"id": 1, "name": "reach_large", "value": 0.1, "cursor": 0, "criterion": "finger midpoint within about 4 cm of the large clipper"},
+    {"id": 2, "name": "held_large", "value": 0.2, "cursor": 1, "criterion": "large clipper held and lifted off the table"},
+    {"id": 3, "name": "near_large", "value": 0.3, "cursor": 2, "criterion": "large clipper held above the case"},
+    {"id": 4, "name": "seated_large", "value": 0.5, "cursor": 4, "criterion": "large clipper resting in the large slot, gripper off it"},
+    {"id": 5, "name": "held_small", "value": 0.6, "cursor": 5, "criterion": "small clipper held and lifted off the table"},
+    {"id": 6, "name": "near_small", "value": 0.7, "cursor": 6, "criterion": "small clipper held above the case"},
+    {"id": 7, "name": "seated_both", "value": 1.0, "cursor": 8, "criterion": "both clippers resting in their slots, gripper off them"}
+  ]
+}

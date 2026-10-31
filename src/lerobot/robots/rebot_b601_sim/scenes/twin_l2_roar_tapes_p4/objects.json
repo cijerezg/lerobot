@@ -1,0 +1,251 @@
+{
+ "config": "twin_l2_roar_tapes",
+ "level": 2,
+ "letter": "c",
+ "placement": 4,
+ "tier": "twin_l2",
+ "seed": [
+  20261030,
+  6
+ ],
+ "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "twin_snapshot": "2026-10-30 11:05",
+ "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
+ "rules": {
+  "seed": 20261030,
+  "placements": 4,
+  "jitter_xy_m": 0.06,
+  "jitter_yaw_deg": 20.0,
+  "margin_m": 0.02,
+  "reach_m": 0.5,
+  "basket_reach_m": 0.48,
+  "settle_s": 1.0,
+  "settle_tol_m": 0.005,
+  "start_contact_tol_m": 0.001,
+  "region_xy": [
+   [
+    0.151,
+    -0.283
+   ],
+   [
+    0.183,
+    0.48
+   ],
+   [
+    0.565,
+    0.422
+   ],
+   [
+    0.538,
+    -0.302
+   ]
+  ],
+  "jittered": true
+ },
+ "task_objects": [
+  "roar_bottle"
+ ],
+ "basket_anchored": false,
+ "objects": {
+  "basket": {
+   "xy": [
+    0.4561,
+    0.1315
+   ],
+   "z": 0.002,
+   "yaw_deg": 11.0,
+   "quat_wxyz": [
+    0.99539,
+    0.0,
+    0.0,
+    0.09587
+   ],
+   "radius_from_base_m": 0.4747,
+   "role": "basket",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0039,
+    "dy_m": 0.0515,
+    "dyaw_deg": 11.0
+   }
+  },
+  "roar_bottle": {
+   "xy": [
+    0.193,
+    -0.1796
+   ],
+   "z": 0.002,
+   "yaw_deg": -2.72,
+   "quat_wxyz": [
+    0.99972,
+    0.0,
+    0.0,
+    -0.02371
+   ],
+   "radius_from_base_m": 0.2636,
+   "role": "target",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.027,
+    "dy_m": -0.0196,
+    "dyaw_deg": -2.72
+   }
+  },
+  "tape_roll": {
+   "xy": [
+    0.2304,
+    0.0885
+   ],
+   "z": 0.017,
+   "yaw_deg": 15.3,
+   "quat_wxyz": [
+    0.9911,
+    0.0,
+    0.0,
+    0.13313
+   ],
+   "radius_from_base_m": 0.2468,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0104,
+    "dy_m": -0.0515,
+    "dyaw_deg": 15.3
+   }
+  },
+  "tape_roll_2": {
+   "xy": [
+    0.3604,
+    -0.1928
+   ],
+   "z": 0.017,
+   "yaw_deg": -16.45,
+   "quat_wxyz": [
+    0.98971,
+    0.0,
+    0.0,
+    -0.1431
+   ],
+   "radius_from_base_m": 0.4087,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0004,
+    "dy_m": 0.0472,
+    "dyaw_deg": -16.45
+   }
+  },
+  "clipper_large": {
+   "xy": [
+    0.2862,
+    0.3589
+   ],
+   "z": 0.0071,
+   "yaw_deg": 38.27,
+   "quat_wxyz": [
+    0.94476,
+    0.0,
+    0.0,
+    0.32777
+   ],
+   "radius_from_base_m": 0.459,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0138,
+    "dy_m": 0.0589,
+    "dyaw_deg": -6.73
+   }
+  },
+  "clipper_small": {
+   "xy": [
+    0.2032,
+    0.3778
+   ],
+   "z": 0.0065,
+   "yaw_deg": -13.33,
+   "quat_wxyz": [
+    0.99324,
+    0.0,
+    0.0,
+    -0.11607
+   ],
+   "radius_from_base_m": 0.429,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0168,
+    "dy_m": 0.0578,
+    "dyaw_deg": 16.67
+   }
+  }
+ },
+ "unchanged": [],
+ "ik": {
+  "roar_bottle": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 37.08,
+   "q_deg": [
+    -30.5,
+    -56.6,
+    -38.2,
+    38.7,
+    18.0,
+    0.0
+   ],
+   "target": [
+    0.193,
+    -0.1796,
+    0.122
+   ]
+  },
+  "basket": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 62.99,
+   "q_deg": [
+    13.8,
+    -84.7,
+    -68.1,
+    10.5,
+    -6.0,
+    -0.0
+   ],
+   "target": [
+    0.4561,
+    0.1315,
+    0.264
+   ]
+  }
+ },
+ "start_contact_mm": 0.0,
+ "attempts": 1,
+ "settle": {
+  "moved_mm": {
+   "basket": 2.02,
+   "roar_bottle": 2.14,
+   "tape_roll": 2.14,
+   "tape_roll_2": 2.14,
+   "clipper_large": 2.21,
+   "clipper_small": 2.11
+  },
+  "max_moved_mm": 2.21,
+  "contact_dist_mm": {
+   "basket": -1.16,
+   "roar_bottle": -1.21,
+   "tape_roll": -1.21,
+   "tape_roll_2": -1.39,
+   "clipper_large": -1.53,
+   "clipper_small": -1.19
+  },
+  "worst_contact_dist_mm": -1.53
+ },
+ "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
+}

@@ -1,0 +1,32 @@
+{
+  "name": "basket",
+  "task": "Put the {object} in the basket",
+  "scene": "twin / hardware 'Tidy up the table' basket steps (config_rl.yaml): one spec per object, instantiated with object = pill bottle | cup | tape roll | bottle. Same ladder as bottle_basket.",
+  "objects": ["pill bottle", "cup", "tape roll", "bottle"],
+  "script": ["grasp the {object}", "move the {object} to the basket", "release the {object} in the basket"],
+  "subtasks": [
+    {"id": 0, "text": "reach toward the {object}", "cursor": 0, "contact": "na", "precision": 3,
+     "criterion": "gripper open and moving toward the {object}; no finger touches it; the {object} at its start spot"},
+    {"id": 1, "text": "grasp the {object}", "cursor": 0, "contact": "{grasp_contact}", "precision": 3,
+     "criterion": "fingers closing on the {object}; it still rests on the table"},
+    {"id": 2, "text": "lift the {object}", "cursor": 1, "contact": "na", "precision": 2,
+     "criterion": "the {object} held between both fingers and clear of the table, still near its start spot"},
+    {"id": 3, "text": "carry the {object} to the basket", "cursor": 1, "contact": "na", "precision": 2,
+     "criterion": "the {object} held and travelling toward or hovering above the basket"},
+    {"id": 4, "text": "place the {object} in the basket", "cursor": 2, "contact": "drop", "precision": 1,
+     "criterion": "the {object} over or inside the basket rim; fingers opening or just opened"},
+    {"id": 5, "text": "retreat", "cursor": 2, "contact": "na", "precision": 1,
+     "criterion": "gripper empty, the {object} resting inside the basket, arm moving away"},
+    {"id": 6, "text": "idle or off-task", "cursor": -1, "contact": "na", "precision": 1,
+     "criterion": "arm not moving for the whole strip, or doing something none of the entries above describes"}
+  ],
+  "stages": [
+    {"id": 0, "name": "none", "value": 0.0, "cursor": 0, "criterion": "nothing below holds"},
+    {"id": 1, "name": "reach", "value": 0.1, "cursor": 0, "criterion": "finger midpoint within about 6 cm of the {object}"},
+    {"id": 2, "name": "held", "value": 0.3, "cursor": 1, "criterion": "both fingers in contact with the {object}"},
+    {"id": 3, "name": "lifted", "value": 0.5, "cursor": 1, "criterion": "held and the {object} more than 3 cm above where it rested"},
+    {"id": 4, "name": "over", "value": 0.8, "cursor": 2, "criterion": "lifted and the {object} above the basket footprint"},
+    {"id": 5, "name": "inside", "value": 1.0, "cursor": 2, "criterion": "the {object} inside the basket, below the rim, no finger touching it"}
+  ],
+  "grasp_contact": {"pill bottle": "top-pinch", "cup": "rim-pinch", "tape roll": "side-pinch", "bottle": "side-pinch"}
+}

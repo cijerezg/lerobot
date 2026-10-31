@@ -1,0 +1,43 @@
+{
+  "name": "fold_kit",
+  "task": "Fold the bit kit",
+  "scene": "twin bits_kit_fold (T067 steps 1-5 of lerobot/docs/annotation_notes/rebot_tasks.md). No hand-written sim scorer yet: the ladder below is a proposal to align with the scorer the twin agent adds.",
+  "script": ["grasp the outer edge of the flap with the bits", "fold the flap with the bits over the middle of the kit",
+             "grasp the outer edge of the flap with the white card", "fold the flap with the white card over the folded flap",
+             "press the kit flat", "return to home"],
+  "subtasks": [
+    {"id": 0, "text": "reach toward the edge of the bits flap", "cursor": 0, "contact": "na", "precision": 3,
+     "criterion": "gripper open and moving toward the outer edge of the flap that holds the bits; kit fully open"},
+    {"id": 1, "text": "pinch the edge of the bits flap", "cursor": 0, "contact": "cloth-pinch", "precision": 3,
+     "criterion": "fingers closed on the fabric edge of the bits flap; flap still flat on the table"},
+    {"id": 2, "text": "swing the bits flap over the middle", "cursor": 1, "contact": "cloth-pinch", "precision": 2,
+     "criterion": "bits flap held and lifting or rotating toward the middle panel of the kit"},
+    {"id": 3, "text": "release the bits flap on the middle", "cursor": 1, "contact": "drop", "precision": 2,
+     "criterion": "bits flap lying on the middle panel; fingers opening or just opened"},
+    {"id": 4, "text": "reach toward the edge of the card flap", "cursor": 2, "contact": "na", "precision": 3,
+     "criterion": "gripper open and moving toward the outer edge of the flap with the white card; bits flap already folded"},
+    {"id": 5, "text": "pinch the edge of the card flap", "cursor": 2, "contact": "cloth-pinch", "precision": 3,
+     "criterion": "fingers closed on the fabric edge of the card flap; flap still flat"},
+    {"id": 6, "text": "swing the card flap over the folded flap", "cursor": 3, "contact": "cloth-pinch", "precision": 2,
+     "criterion": "card flap held and rotating over the already folded bits flap"},
+    {"id": 7, "text": "set the card flap down", "cursor": 3, "contact": "set-down", "precision": 2,
+     "criterion": "card flap lying on top of the folded bits flap; fingers opening or just opened"},
+    {"id": 8, "text": "press the kit flat", "cursor": 4, "contact": "press", "precision": 1,
+     "criterion": "closed or open gripper pushing down on the folded kit"},
+    {"id": 9, "text": "retreat", "cursor": 5, "contact": "na", "precision": 1,
+     "criterion": "gripper empty, kit folded, arm moving away or back to its home pose"},
+    {"id": 10, "text": "idle or off-task", "cursor": -1, "contact": "na", "precision": 1,
+     "criterion": "arm not moving for the whole strip, or doing something none of the entries above describes (flap unfolds again, gripper empty away from the kit)"}
+  ],
+  "stages": [
+    {"id": 0, "name": "none", "value": 0.0, "cursor": 0, "criterion": "kit fully open, nothing below holds"},
+    {"id": 1, "name": "reach_bits_flap", "value": 0.1, "cursor": 0, "criterion": "finger midpoint within a few cm of the bits flap edge"},
+    {"id": 2, "name": "bits_flap_pinched", "value": 0.2, "cursor": 0, "criterion": "both fingers on the bits flap edge"},
+    {"id": 3, "name": "bits_flap_over_middle", "value": 0.4, "cursor": 1, "criterion": "bits flap folded more than halfway toward the middle panel"},
+    {"id": 4, "name": "bits_flap_folded", "value": 0.5, "cursor": 2, "criterion": "bits flap resting on the middle panel, gripper off it"},
+    {"id": 5, "name": "card_flap_pinched", "value": 0.6, "cursor": 2, "criterion": "both fingers on the card flap edge"},
+    {"id": 6, "name": "card_flap_over", "value": 0.8, "cursor": 3, "criterion": "card flap folded more than halfway over the bits flap"},
+    {"id": 7, "name": "kit_folded", "value": 0.9, "cursor": 4, "criterion": "card flap resting on the folded bits flap, gripper off it"},
+    {"id": 8, "name": "pressed_flat", "value": 1.0, "cursor": 5, "criterion": "kit folded and pressed; gripper lifted off it"}
+  ]
+}

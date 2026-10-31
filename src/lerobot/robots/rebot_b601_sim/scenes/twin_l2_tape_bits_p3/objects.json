@@ -1,0 +1,276 @@
+{
+ "config": "twin_l2_tape_bits",
+ "level": 2,
+ "letter": "a",
+ "placement": 3,
+ "tier": "twin_l2",
+ "seed": [
+  20261030,
+  4
+ ],
+ "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "twin_snapshot": "2026-10-30 11:05",
+ "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
+ "rules": {
+  "seed": 20261030,
+  "placements": 4,
+  "jitter_xy_m": 0.06,
+  "jitter_yaw_deg": 20.0,
+  "margin_m": 0.02,
+  "reach_m": 0.5,
+  "basket_reach_m": 0.48,
+  "settle_s": 1.0,
+  "settle_tol_m": 0.005,
+  "start_contact_tol_m": 0.001,
+  "region_xy": [
+   [
+    0.151,
+    -0.283
+   ],
+   [
+    0.183,
+    0.48
+   ],
+   [
+    0.565,
+    0.422
+   ],
+   [
+    0.538,
+    -0.302
+   ]
+  ],
+  "jittered": true
+ },
+ "task_objects": [
+  "tape_roll"
+ ],
+ "basket_anchored": false,
+ "objects": {
+  "basket": {
+   "xy": [
+    0.453,
+    -0.1522
+   ],
+   "z": 0.002,
+   "yaw_deg": 12.44,
+   "quat_wxyz": [
+    0.99411,
+    0.0,
+    0.0,
+    0.10833
+   ],
+   "radius_from_base_m": 0.4779,
+   "role": "basket",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.033,
+    "dy_m": -0.0322,
+    "dyaw_deg": 12.44
+   }
+  },
+  "tape_roll": {
+   "xy": [
+    0.2192,
+    0.1084
+   ],
+   "z": 0.017,
+   "yaw_deg": 1.92,
+   "quat_wxyz": [
+    0.99986,
+    0.0,
+    0.0,
+    0.01677
+   ],
+   "radius_from_base_m": 0.2446,
+   "role": "target",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0208,
+    "dy_m": -0.0516,
+    "dyaw_deg": 1.92
+   }
+  },
+  "pill_bottle": {
+   "xy": [
+    0.3043,
+    0.2628
+   ],
+   "z": 0.002,
+   "yaw_deg": 10.24,
+   "quat_wxyz": [
+    0.99601,
+    0.0,
+    0.0,
+    0.08925
+   ],
+   "radius_from_base_m": 0.4021,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0557,
+    "dy_m": 0.0428,
+    "dyaw_deg": 10.24
+   }
+  },
+  "bit_1": {
+   "xy": [
+    0.2448,
+    0.3214
+   ],
+   "z": 0.004,
+   "yaw_deg": 39.85,
+   "quat_wxyz": [
+    0.94014,
+    0.0,
+    0.0,
+    0.3408
+   ],
+   "radius_from_base_m": 0.404,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0448,
+    "dy_m": 0.0214,
+    "dyaw_deg": 9.85
+   }
+  },
+  "bit_2": {
+   "xy": [
+    0.2383,
+    0.3802
+   ],
+   "z": 0.004,
+   "yaw_deg": -51.35,
+   "quat_wxyz": [
+    0.90128,
+    0.0,
+    0.0,
+    -0.43324
+   ],
+   "radius_from_base_m": 0.4487,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0417,
+    "dy_m": 0.0502,
+    "dyaw_deg": -6.35
+   }
+  },
+  "bit_3": {
+   "xy": [
+    0.3565,
+    0.3244
+   ],
+   "z": 0.004,
+   "yaw_deg": 77.26,
+   "quat_wxyz": [
+    0.7812,
+    0.0,
+    0.0,
+    0.62429
+   ],
+   "radius_from_base_m": 0.482,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0165,
+    "dy_m": -0.0556,
+    "dyaw_deg": -2.74
+   }
+  },
+  "bit_4": {
+   "xy": [
+    0.4952,
+    0.2614
+   ],
+   "z": 0.004,
+   "yaw_deg": 2.69,
+   "quat_wxyz": [
+    0.99972,
+    0.0,
+    0.0,
+    0.02346
+   ],
+   "radius_from_base_m": 0.56,
+   "role": "distractor",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0452,
+    "dy_m": 0.0214,
+    "dyaw_deg": -7.31
+   }
+  }
+ },
+ "unchanged": [],
+ "ik": {
+  "tape_roll": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 0.0,
+   "q_deg": [
+    26.3,
+    -91.0,
+    -52.0,
+    51.1,
+    -0.0,
+    23.3
+   ],
+   "target": [
+    0.2192,
+    0.1084,
+    0.032
+   ]
+  },
+  "basket": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 63.21,
+   "q_deg": [
+    -15.9,
+    -85.4,
+    -68.5,
+    10.1,
+    6.9,
+    0.0
+   ],
+   "target": [
+    0.453,
+    -0.1522,
+    0.264
+   ]
+  }
+ },
+ "start_contact_mm": 0.0,
+ "attempts": 1,
+ "settle": {
+  "moved_mm": {
+   "basket": 2.02,
+   "tape_roll": 2.14,
+   "pill_bottle": 2.21,
+   "bit_1": 1.26,
+   "bit_2": 1.26,
+   "bit_3": 1.26,
+   "bit_4": 1.26
+  },
+  "max_moved_mm": 2.21,
+  "contact_dist_mm": {
+   "basket": -1.16,
+   "tape_roll": -1.54,
+   "pill_bottle": -1.32,
+   "bit_1": -0.99,
+   "bit_2": -0.99,
+   "bit_3": -0.99,
+   "bit_4": -0.99
+  },
+  "worst_contact_dist_mm": -1.54
+ },
+ "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
+}

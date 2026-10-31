@@ -1417,7 +1417,8 @@ def rtc_env_worker(
                 shared_state.set_episode_active(False)
                 if auto_subtasks is not None:
                     # Snapshot before the park: the sim's park resets the scene and with it the scorer.
-                    episode_record = dict(episode=shared_state.episode_counter, success=bool(info_success), reward=auto_subtasks.reward, stage=auto_subtasks.stage_name, events=list(auto_subtasks.events))
+                    episode_record = dict(episode=shared_state.episode_counter, success=bool(info_success), reward=auto_subtasks.reward, stage=auto_subtasks.stage_name, events=list(auto_subtasks.events),
+                                          **(auto_subtasks.episode_extra() if hasattr(auto_subtasks, "episode_extra") else {}))  # twin_tasks: reward_dense, timeline, drop
                 record_park = None
                 if info_success and (recorder is not None or videos is not None):
                     # Key 1 ends the episode at the rest pose: the park's frames ride along, each one

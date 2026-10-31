@@ -1,6 +1,6 @@
 # Data record
 
-Generated 2026-10-27 11:36 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
+Generated 2026-10-29 22:18 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
 
 ## Training mix by sampling group
 
@@ -9,14 +9,14 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 | group | share | episodes | frames | usable frames | hours |
 |---|---|---|---|---|---|
 | external_rebot | 0.2 | 231 | 171,876 | 171,144 | 1.59 |
-| bits_clippers | 0.1553 | 50 | 261,315 | 246,238 | 2.42 |
-| rigid | 0.08322 | 52 | 96,252 | 96,196 | 0.89 |
-| cases_kit_box_push | 0.04461 | 18 | 37,206 | 31,795 | 0.34 |
-| bottles_lids | 0.04093 | 17 | 59,889 | 53,109 | 0.55 |
-| clothing | 0.04086 | 79 | 280,194 | 259,848 | 2.59 |
-| pills_caps | 0.03508 | 12 | 33,459 | 32,456 | 0.31 |
+| bits_clippers | 0.155 | 55 | 280,476 | 265,399 | 2.60 |
+| rigid | 0.08564 | 55 | 106,989 | 106,933 | 0.99 |
+| cases_kit_box_push | 0.05119 | 24 | 44,820 | 39,409 | 0.41 |
+| bottles_lids | 0.03789 | 17 | 59,889 | 53,109 | 0.55 |
+| clothing | 0.03783 | 79 | 280,194 | 259,848 | 2.59 |
+| pills_caps | 0.03248 | 12 | 33,459 | 32,456 | 0.31 |
 | excluded | 0 | 13 | 20,634 | 0 | 0.19 |
-| **ReBot sampled** | **0.6** | **459** | **940,191** | **890,786** | **8.71** |
+| **ReBot sampled** | **0.6** | **473** | **977,703** | **928,298** | **9.05** |
 | diverse corpus | 0.4 | 879 | 487,851 | | 6.39 (usable 6.33) |
 
 ## ReBot roots in the config
@@ -36,8 +36,9 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 | internal_oct21 | `outputs/rebot_2026-10-21-annotated-v1` | 10 | 18,285 | 0.17 | 10 | bits_clippers 10 / 18,285 |
 | internal_oct26 | `outputs/rebot_2026-10-26-merged-v2` | 19 | 80,169 | 0.74 | 19 | rigid 10 / 25,620, bits_clippers 8 / 52,869, cases_kit_box_push 1 / 1,680 |
 | internal_oct27 | `outputs/rebot_2026-10-27-merged-v1` | 4 | 12,171 | 0.11 | 4 | rigid 3 / 5,808, bits_clippers 1 / 6,363 |
+| internal_oct29 | `outputs/rebot_2026-10-29-merged-v1` | 14 | 37,512 | 0.35 | 14 | rigid 3 / 10,737, bits_clippers 5 / 19,161, cases_kit_box_push 6 / 7,614 |
 | external_rebot_train | `outputs/external_rebot_train-annotated-v9-tasks1` | 241 | 177,522 | 1.64 | 231 | external_rebot 231 / 171,876, excluded 10 / 5,646 |
-| **total** | | **472** | **960,825** | **8.90** | | |
+| **total** | | **486** | **998,337** | **9.24** | | |
 
 ## Diverse corpus
 

@@ -15,12 +15,18 @@
 # Env: LAYOUTS (default: the registry's LAYOUTS), SIM_EVAL_ARGS (extra inference_async flags, e.g.
 # "--env.robot.episodes=1 --env.processor.reset.control_time_s=20"), PARALLEL (default 1; N runs up to N layouts at
 # once, each layout's console output then goes to <sim>/<layout>.console.log beside its folder).
+# TWIN=1 (2026-10-30): the twin set (tasks.py TWIN_LAYOUTS: twin_l1 .. twin_l4, 16 configurations x 4 placements twin_<config>_p<k>,
+# migration/digital_twin_2026-10-29/envs/ENVS_REPORT.md) instead of the default set, 4 episodes per placement (SIM_EVAL_ARGS still
+# overrides); the twin scenes render the room instead of the real-background composite, so the top camera's background / colour fit /
+# render_static of config_rl_sim.yaml are switched off.
 set -uo pipefail
 sim_workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sim_workspace"
 sim_checkpoint="${1:?Usage: run_sim_eval.sh CHECKPOINT_PRETRAINED_MODEL [FRESH_OUTPUT_DIRECTORY] [CONFIG]}"
 sim_config="${3:-config_rl_sim.yaml}"
 parallel="${PARALLEL:-1}"
+twin="${TWIN:-0}"
+[[ "$twin" == "0" || -z "$twin" ]] || export TWIN  # the registry's `layouts` then lists the twin set
 [[ -f "$sim_checkpoint/config.json" ]] || { echo "Missing checkpoint config: $sim_checkpoint" >&2; exit 1; }
 sim_step=0
 if [[ -n "${2:-}" ]]; then
@@ -37,14 +43,35 @@ else
   sim_step="$((10#$sim_step_name))"
 fi
 printf -v sim_out '%s/validation/step_%08d/sim' "$sim_run_dir" "$sim_step"
-[[ ! -e "$sim_out" ]] || { echo "Sim output already exists: $sim_out" >&2; exit 1; }
+if [[ "${RESUME:-0}" == "1" ]]; then
+  # RESUME=1 (2026-10-30): finish an interrupted run in place; layouts that already have subtask_events.json are skipped.
+  [[ -d "$sim_out" ]] || { echo "RESUME=1 but no sim output at $sim_out" >&2; exit 1; }
+else
+  [[ ! -e "$sim_out" ]] || { echo "Sim output already exists: $sim_out (RESUME=1 to finish it in place)" >&2; exit 1; }
+fi
 [[ -f "$sim_config" ]] || { echo "Missing sim config: $sim_config" >&2; exit 1; }
-echo "Sim config: $sim_config (PARALLEL=$parallel)"
+echo "Sim config: $sim_config (PARALLEL=$parallel, TWIN=$twin)"
 export PYTHONPATH="lerobot/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONSAFEPATH=1   # the Spark checkout has stray files under LeRobot/lerobot/ that shadow the package from the CWD
 export MUJOCO_GL=egl
 export PYTHONUNBUFFERED=1
 registry='from lerobot.robots.rebot_b601_sim.tasks import main; main()'
+if [[ "$twin" != "0" && -n "$twin" ]]; then
+  # draccus has no CLI path into the cameras dict: the twin run uses a copy of the config with the top camera's real-background
+  # composite fields removed (the twin scenes have no background_top.png and no `table` / `table_top` geoms), kept next to the outputs.
+  mkdir -p "$sim_out"
+  .venv/bin/python - "$sim_config" "$sim_out/config_twin.yaml" <<'PY'
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+top = cfg["env"]["robot"]["cameras"]["top"]
+for key in ("background", "color_gain", "color_offset", "render_static", "render_static_gain"):
+    top.pop(key, None)
+yaml.safe_dump(cfg, open(sys.argv[2], "w"), sort_keys=False)
+PY
+  sim_config="$sim_out/config_twin.yaml"
+  echo "Twin config: $sim_config"
+  twin_args="--env.robot.episodes=4"  # 64 placements x 4 episodes; SIM_EVAL_ARGS comes later on the command line and wins
+fi
 
 run_layout() {
   local layout="$1"
@@ -61,17 +88,26 @@ run_layout() {
     --output_dir="$sim_out/$layout" \
     --aim.enable=false \
     "${task_overrides[@]}" \
+    ${twin_args:-} \
     ${SIM_EVAL_ARGS:-}
 }
 
 failed=0
 finish_layout() {  # layout, rc
-  [[ $2 -eq 0 && -f "$sim_out/$1/subtask_events.json" ]] || { echo "$1 failed (rc=$2)" >&2; failed=1; }
+  # rc 139 = the EGL cleanup segfault at interpreter exit (scenes/README.md); harmless when the results file is complete
+  if [[ $2 -eq 139 && -f "$sim_out/$1/subtask_events.json" ]]; then echo "$1 ok (shutdown segfault after writing results)" >&2
+  else [[ $2 -eq 0 && -f "$sim_out/$1/subtask_events.json" ]] || { echo "$1 failed (rc=$2)" >&2; failed=1; }; fi
 }
 
 running_pids=()
 running_layouts=()
 for layout in ${LAYOUTS:-$(.venv/bin/python -c "$registry" layouts)}; do
+  if [[ "${RESUME:-0}" == "1" && -f "$sim_out/$layout/subtask_events.json" ]]; then echo "skip $layout (done)"; continue; fi
+  if [[ "${RESUME:-0}" == "1" && -d "$sim_out/$layout" ]]; then
+    # a failed attempt left a folder without results (inference_async refuses an existing output dir): keep its console log, drop the folder
+    [[ -f "$sim_out/$layout.console.log" ]] && mv "$sim_out/$layout.console.log" "$sim_out/$layout.failed.console.log"
+    rm -rf "$sim_out/$layout"
+  fi
   echo "=== $layout -> $sim_out/$layout"
   if [[ $parallel -le 1 ]]; then
     run_layout "$layout"

@@ -1,0 +1,30 @@
+{
+  "name": "bottle_basket",
+  "task": "Put the bottle in the brown basket",
+  "scene": "sim bottle_basket (robots/rebot_b601_sim/easy_tasks.py BottleBasketScorer); the twin basket tasks reuse this ladder through basket.json",
+  "script": ["grasp the bottle", "move the bottle to the brown basket", "release the bottle in the brown basket", "return to home"],
+  "subtasks": [
+    {"id": 0, "text": "reach toward the bottle", "cursor": 0, "contact": "na", "precision": 3,
+     "criterion": "gripper open and moving toward the bottle; no finger touches it; bottle upright at its start spot"},
+    {"id": 1, "text": "grasp the bottle", "cursor": 0, "contact": "side-pinch", "precision": 3,
+     "criterion": "fingers closing on the bottle body from the side; bottle still resting on the table"},
+    {"id": 2, "text": "lift the bottle", "cursor": 1, "contact": "na", "precision": 1,
+     "criterion": "bottle held between both fingers and clear of the table, still near its start spot"},
+    {"id": 3, "text": "carry the bottle to the basket", "cursor": 1, "contact": "na", "precision": 1,
+     "criterion": "bottle held and travelling toward or hovering above the basket"},
+    {"id": 4, "text": "place the bottle in the basket", "cursor": 2, "contact": "set-down", "precision": 1,
+     "criterion": "bottle lowered inside the basket rim; fingers opening or just opened"},
+    {"id": 5, "text": "retreat", "cursor": 3, "contact": "na", "precision": 1,
+     "criterion": "gripper empty, bottle resting inside the basket, arm moving away or back to its home pose"},
+    {"id": 6, "text": "idle or off-task", "cursor": -1, "contact": "na", "precision": 1,
+     "criterion": "arm not moving for the whole strip, or doing something none of the entries above describes (bottle knocked over, gripper empty away from both objects)"}
+  ],
+  "stages": [
+    {"id": 0, "name": "none", "value": 0.0, "cursor": 0, "criterion": "nothing below holds"},
+    {"id": 1, "name": "reach", "value": 0.1, "cursor": 0, "criterion": "finger midpoint within about 6 cm of the bottle"},
+    {"id": 2, "name": "held", "value": 0.3, "cursor": 1, "criterion": "both fingers in contact with the bottle"},
+    {"id": 3, "name": "lifted", "value": 0.5, "cursor": 1, "criterion": "held and the bottle more than 3 cm above where it rested"},
+    {"id": 4, "name": "over", "value": 0.8, "cursor": 2, "criterion": "lifted and the bottle above the basket footprint"},
+    {"id": 5, "name": "inside", "value": 1.0, "cursor": 3, "criterion": "bottle inside the basket, below the rim, no finger touching it"}
+  ]
+}

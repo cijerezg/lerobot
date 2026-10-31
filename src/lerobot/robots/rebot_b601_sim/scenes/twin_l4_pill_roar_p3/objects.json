@@ -1,0 +1,700 @@
+{
+ "config": "twin_l4_pill_roar",
+ "level": 4,
+ "letter": "c",
+ "placement": 3,
+ "tier": "twin_l4",
+ "seed": [
+  20261030,
+  13
+ ],
+ "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "twin_snapshot": "2026-10-30 11:05",
+ "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
+ "rules": {
+  "seed": 20261030,
+  "placements": 4,
+  "jitter_xy_m": 0.06,
+  "jitter_yaw_deg": 20.0,
+  "margin_m": 0.02,
+  "reach_m": 0.5,
+  "basket_reach_m": 0.48,
+  "settle_s": 1.0,
+  "settle_tol_m": 0.005,
+  "start_contact_tol_m": 0.001,
+  "region_xy": [
+   [
+    0.151,
+    -0.283
+   ],
+   [
+    0.183,
+    0.48
+   ],
+   [
+    0.565,
+    0.422
+   ],
+   [
+    0.538,
+    -0.302
+   ]
+  ],
+  "jittered": true
+ },
+ "task_objects": [
+  "pill_bottle",
+  "roar_bottle"
+ ],
+ "basket_anchored": true,
+ "objects": {
+  "bits_kit": {
+   "xy": [
+    0.3045,
+    -0.0576
+   ],
+   "z": 0.003,
+   "yaw_deg": 240.18,
+   "quat_wxyz": [
+    -0.50135,
+    0.0,
+    0.0,
+    0.86525
+   ],
+   "radius_from_base_m": 0.3099,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0176,
+    "dy_m": -0.0025,
+    "dyaw_deg": -5.42
+   }
+  },
+  "pill_bottle": {
+   "xy": [
+    0.1786,
+    0.0819
+   ],
+   "z": 0.002,
+   "yaw_deg": -2.75,
+   "quat_wxyz": [
+    0.99971,
+    0.0,
+    0.0,
+    -0.02401
+   ],
+   "radius_from_base_m": 0.1965,
+   "role": "target",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0214,
+    "dy_m": -0.0381,
+    "dyaw_deg": -2.75
+   }
+  },
+  "roar_bottle": {
+   "xy": [
+    0.3173,
+    0.2664
+   ],
+   "z": 0.002,
+   "yaw_deg": 14.45,
+   "quat_wxyz": [
+    0.99206,
+    0.0,
+    0.0,
+    0.12574
+   ],
+   "radius_from_base_m": 0.4143,
+   "role": "target",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0527,
+    "dy_m": -0.0136,
+    "dyaw_deg": 14.45
+   }
+  },
+  "navy_bottle": {
+   "xy": [
+    0.0381,
+    -0.5276
+   ],
+   "z": 0.002,
+   "yaw_deg": 6.79,
+   "quat_wxyz": [
+    0.99824,
+    0.0,
+    0.0,
+    0.05926
+   ],
+   "radius_from_base_m": 0.529,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0184,
+    "dy_m": -0.0151,
+    "dyaw_deg": 6.79
+   }
+  },
+  "bit_1": {
+   "xy": [
+    0.0053,
+    0.2606
+   ],
+   "z": 0.004,
+   "yaw_deg": 56.67,
+   "quat_wxyz": [
+    0.88017,
+    0.0,
+    0.0,
+    0.47465
+   ],
+   "radius_from_base_m": 0.2606,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.059,
+    "dy_m": -0.0552,
+    "dyaw_deg": 16.87
+   }
+  },
+  "bit_2": {
+   "xy": [
+    0.0096,
+    0.3458
+   ],
+   "z": 0.004,
+   "yaw_deg": 70.28,
+   "quat_wxyz": [
+    0.81775,
+    0.0,
+    0.0,
+    0.57557
+   ],
+   "radius_from_base_m": 0.346,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0477,
+    "dy_m": -0.0319,
+    "dyaw_deg": 1.48
+   }
+  },
+  "bit_3": {
+   "xy": [
+    0.0725,
+    0.3318
+   ],
+   "z": 0.004,
+   "yaw_deg": 113.66,
+   "quat_wxyz": [
+    0.54715,
+    0.0,
+    0.0,
+    0.83703
+   ],
+   "radius_from_base_m": 0.3396,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.031,
+    "dy_m": -0.0112,
+    "dyaw_deg": -0.04
+   }
+  },
+  "bit_4": {
+   "xy": [
+    0.1107,
+    0.3814
+   ],
+   "z": 0.004,
+   "yaw_deg": 9.48,
+   "quat_wxyz": [
+    0.99658,
+    0.0,
+    0.0,
+    0.08263
+   ],
+   "radius_from_base_m": 0.3971,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0186,
+    "dy_m": -0.0348,
+    "dyaw_deg": -7.82
+   }
+  },
+  "bit_5": {
+   "xy": [
+    0.1345,
+    0.2465
+   ],
+   "z": 0.004,
+   "yaw_deg": 67.01,
+   "quat_wxyz": [
+    0.83385,
+    0.0,
+    0.0,
+    0.55199
+   ],
+   "radius_from_base_m": 0.2808,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0465,
+    "dy_m": -0.0374,
+    "dyaw_deg": 14.61
+   }
+  },
+  "bit_6": {
+   "xy": [
+    0.0356,
+    0.4513
+   ],
+   "z": 0.004,
+   "yaw_deg": 53.91,
+   "quat_wxyz": [
+    0.89137,
+    0.0,
+    0.0,
+    0.45327
+   ],
+   "radius_from_base_m": 0.4527,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0025,
+    "dy_m": 0.048,
+    "dyaw_deg": 11.11
+   }
+  },
+  "bits_box": {
+   "xy": [
+    0.1714,
+    0.5066
+   ],
+   "z": 0.0145,
+   "yaw_deg": 60.0,
+   "quat_wxyz": [
+    0.86602,
+    0.0,
+    0.0,
+    0.5
+   ],
+   "radius_from_base_m": 0.5348,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0328,
+    "dy_m": 0.0506,
+    "dyaw_deg": -18.9
+   }
+  },
+  "bit_holder": {
+   "xy": [
+    0.5982,
+    -0.048
+   ],
+   "z": 0.0095,
+   "yaw_deg": -39.34,
+   "quat_wxyz": [
+    0.94165,
+    0.0,
+    0.0,
+    -0.33659
+   ],
+   "radius_from_base_m": 0.6001,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0406,
+    "dy_m": -0.0001,
+    "dyaw_deg": 0.46
+   }
+  },
+  "basket_bottle": {
+   "xy": [
+    0.5834,
+    0.5572
+   ],
+   "z": 0.014,
+   "yaw_deg": 9.63,
+   "quat_wxyz": [
+    0.99647,
+    0.0,
+    0.0,
+    0.08397
+   ],
+   "radius_from_base_m": 0.8067,
+   "role": "rides_with_basket",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "basket_can": {
+   "xy": [
+    0.452,
+    0.4943
+   ],
+   "z": 0.044,
+   "yaw_deg": 9.63,
+   "quat_wxyz": [
+    0.99647,
+    0.0,
+    0.0,
+    0.08397
+   ],
+   "radius_from_base_m": 0.6698,
+   "role": "rides_with_basket",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "basket_card": {
+   "xy": [
+    0.5435,
+    0.4338
+   ],
+   "z": 0.017,
+   "yaw_deg": 39.63,
+   "quat_wxyz": [
+    0.94078,
+    0.0,
+    0.0,
+    0.33901
+   ],
+   "radius_from_base_m": 0.6953,
+   "role": "rides_with_basket",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "basket_card_white": {
+   "xy": [
+    0.5435,
+    0.4338
+   ],
+   "z": 0.022,
+   "yaw_deg": 19.63,
+   "quat_wxyz": [
+    0.98536,
+    0.0,
+    0.0,
+    0.1705
+   ],
+   "radius_from_base_m": 0.6953,
+   "role": "rides_with_basket",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "clipper_case": {
+   "xy": [
+    0.6131,
+    0.1101
+   ],
+   "z": 0.002,
+   "yaw_deg": 174.29,
+   "quat_wxyz": [
+    0.04985,
+    0.0,
+    0.0,
+    0.99876
+   ],
+   "radius_from_base_m": 0.6229,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0191,
+    "dy_m": -0.0187,
+    "dyaw_deg": -9.91
+   }
+  },
+  "clipper_large": {
+   "xy": [
+    0.5702,
+    -0.1192
+   ],
+   "z": 0.0071,
+   "yaw_deg": 113.56,
+   "quat_wxyz": [
+    0.54784,
+    0.0,
+    0.0,
+    0.83658
+   ],
+   "radius_from_base_m": 0.5825,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.019,
+    "dy_m": -0.0011,
+    "dyaw_deg": -18.24
+   }
+  },
+  "clipper_small": {
+   "xy": [
+    0.6162,
+    0.13
+   ],
+   "z": 0.0106,
+   "yaw_deg": null,
+   "quat_wxyz": [
+    0.74627,
+    -0.02243,
+    -0.02397,
+    0.66483
+   ],
+   "radius_from_base_m": 0.6298,
+   "role": "rides_with_clipper_case",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "basket": {
+   "xy": [
+    0.5342,
+    0.488
+   ],
+   "z": 0.002,
+   "yaw_deg": 9.63,
+   "quat_wxyz": [
+    0.99647,
+    0.0,
+    0.0,
+    0.08397
+   ],
+   "radius_from_base_m": 0.7235,
+   "role": "basket",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.038,
+    "dy_m": 0.008,
+    "dyaw_deg": 8.73
+   }
+  },
+  "headphone_case": {
+   "xy": [
+    0.5416,
+    -0.3493
+   ],
+   "z": 0.022,
+   "yaw_deg": -68.54,
+   "quat_wxyz": [
+    0.82637,
+    0.0,
+    0.0,
+    -0.56312
+   ],
+   "radius_from_base_m": 0.6445,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.048,
+    "dy_m": -0.0598,
+    "dyaw_deg": 15.28
+   }
+  },
+  "tape_roll": {
+   "xy": [
+    0.1841,
+    -0.3838
+   ],
+   "z": 0.017,
+   "yaw_deg": 7.32,
+   "quat_wxyz": [
+    0.99796,
+    0.0,
+    0.0,
+    0.06385
+   ],
+   "radius_from_base_m": 0.4257,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0241,
+    "dy_m": 0.0062,
+    "dyaw_deg": 7.32
+   }
+  },
+  "paper_cup": {
+   "xy": [
+    0.2155,
+    0.268
+   ],
+   "z": 0.057,
+   "yaw_deg": 6.14,
+   "quat_wxyz": [
+    0.99856,
+    0.0,
+    0.0,
+    0.05358
+   ],
+   "radius_from_base_m": 0.3439,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": 0.0155,
+    "dy_m": 0.018,
+    "dyaw_deg": 6.14
+   }
+  },
+  "tape_roll_2": {
+   "xy": [
+    0.0403,
+    -0.2704
+   ],
+   "z": 0.017,
+   "yaw_deg": -11.97,
+   "quat_wxyz": [
+    0.99455,
+    0.0,
+    0.0,
+    -0.1043
+   ],
+   "radius_from_base_m": 0.2734,
+   "role": "clutter",
+   "placed": true,
+   "jittered": true,
+   "jitter": {
+    "dx_m": -0.0297,
+    "dy_m": 0.0296,
+    "dyaw_deg": -11.97
+   }
+  }
+ },
+ "unchanged": [],
+ "ik": {
+  "pill_bottle": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 0.0,
+   "q_deg": [
+    24.6,
+    -74.9,
+    -57.6,
+    72.7,
+    0.0,
+    22.1
+   ],
+   "target": [
+    0.1786,
+    0.0819,
+    0.113
+   ]
+  },
+  "roar_bottle": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 43.29,
+   "q_deg": [
+    33.6,
+    -88.4,
+    -55.1,
+    15.5,
+    -14.5,
+    -0.0
+   ],
+   "target": [
+    0.3173,
+    0.2664,
+    0.122
+   ]
+  },
+  "basket": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 89.61,
+   "q_deg": [
+    40.5,
+    -138.8,
+    -115.7,
+    -22.8,
+    -7.4,
+    0.0
+   ],
+   "target": [
+    0.5342,
+    0.488,
+    0.264
+   ]
+  }
+ },
+ "start_contact_mm": 0.0,
+ "attempts": 1,
+ "settle": {
+  "moved_mm": {
+   "bits_kit": 3.15,
+   "pill_bottle": 2.21,
+   "roar_bottle": 2.14,
+   "navy_bottle": 2.14,
+   "bit_1": 1.26,
+   "bit_2": 1.26,
+   "bit_3": 1.26,
+   "bit_4": 1.26,
+   "bit_5": 1.26,
+   "bit_6": 1.26,
+   "bits_box": 2.11,
+   "bit_holder": 2.11,
+   "basket_bottle": 2.6,
+   "basket_can": 2.25,
+   "basket_card": 2.27,
+   "basket_card_white": 3.35,
+   "clipper_case": 2.13,
+   "clipper_large": 2.21,
+   "clipper_small": 0.18,
+   "basket": 2.03,
+   "headphone_case": 2.06,
+   "tape_roll": 2.14,
+   "paper_cup": 2.14,
+   "tape_roll_2": 2.14
+  },
+  "max_moved_mm": 3.35,
+  "contact_dist_mm": {
+   "bits_kit": -3.0,
+   "pill_bottle": -1.32,
+   "roar_bottle": -1.21,
+   "navy_bottle": -1.21,
+   "bit_1": -0.99,
+   "bit_2": -0.99,
+   "bit_3": -0.99,
+   "bit_4": -0.99,
+   "bit_5": -0.99,
+   "bit_6": -1.2,
+   "bits_box": -1.19,
+   "bit_holder": -1.19,
+   "basket_bottle": -0.85,
+   "basket_can": -0.23,
+   "basket_card": -1.18,
+   "basket_card_white": -1.18,
+   "clipper_case": -1.72,
+   "clipper_large": -1.53,
+   "clipper_small": -1.72,
+   "basket": -1.16,
+   "headphone_case": -1.19,
+   "tape_roll": -1.21,
+   "paper_cup": -1.21,
+   "tape_roll_2": -3.15
+  },
+  "worst_contact_dist_mm": -3.15
+ },
+ "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
+}
