@@ -173,7 +173,7 @@ def test_assigner_request_shape():
 def test_sim_specs_follow_tasks_py():
     from lerobot.robots.rebot_b601_sim import tasks as sim_tasks
 
-    for layout in sim_tasks.TWIN_LAYOUTS + sim_tasks.LAYOUTS:
+    for layout in sim_tasks.LAYOUTS + ("clippers_only", "bottle_basket", "close_lid", "ep0", "ep3"):  # twin set + the old scenes with specs
         spec = TaskSpec.load(f"sim:{layout}_p2")
         task = sim_tasks.TASKS[layout]
         assert list(spec.script) == list(task.eval_subtasks)

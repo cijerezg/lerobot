@@ -856,7 +856,11 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
 
 
 def _patch_memory_efficient_vision_backbone(
-    backbone: Any, *, gradient_checkpointing: bool, temporal_layer_stride: int
+    backbone: Any,
+    *,
+    gradient_checkpointing: bool,
+    temporal_layer_stride: int,
+    history_image_mode: str = "slot",
 ) -> None:
     vision_backbone = getattr(backbone, "vision_backbone", None)
     if vision_backbone is None or getattr(
@@ -872,62 +876,35 @@ def _patch_memory_efficient_vision_backbone(
     if not hasattr(vision_backbone, "vit_layers"):
         return
 
-    def _encode_image(self, images: Tensor) -> Tensor:
-        """Single-frame path is byte-identical to the pre-MEM encoder. With a stashed
-        history (MEM video encoder, 04_memory.md §2.4): past frames ride as extra
-        time slices through the shared ViT, every temporal_layer_stride-th resblock
-        runs the separable temporal attention, and past rows are dropped after the
-        last temporal layer — the returned features (and the LLM sequence) keep the
-        single-frame shape exactly."""
-        history = getattr(self, "_lerobot_history", None)
-        self._lerobot_history = None  # consume-once: no stale reuse across forwards
-
-        batch_size, num_crops, num_patches, patch_dim = images.shape
-        images = images.view(batch_size * num_crops, num_patches, patch_dim)
-
-        x = self.image_vit.patch_embedding(images)
+    def _encode_crops(self, crops: Tensor, history: tuple | None) -> Tensor:
+        """crops (R, n, patch_dim) -> features (R, n, D_taps). history=None is the
+        single-frame path, byte-identical to the pre-MEM encoder. With history
+        (earlier (R, T_e, n, patch_dim) bf16 frames oldest -> newest, times (T_e + 1,) the
+        ages of those rows AND of the crop itself last, history_on (R,) bool or None) the
+        MEM video encoder runs: the earlier frames ride as extra time slices before the
+        crop, every temporal_layer_stride-th resblock runs the separable temporal
+        attention, and the earlier rows are dropped after the last temporal layer — the
+        returned rows are the crop's, same shape as the single-frame path. The inplace
+        mode passes the current frame as the crop with age 0; the slot mode passes the
+        newest past frame with its own age (docs/notes/memory_history_slot.md §4)."""
+        num_patches = int(crops.shape[1])
+        x = self.image_vit.patch_embedding(crops)
         x = self.image_vit.add_pos_emb(x, self.image_vit.config.image_num_patch)
 
         num_frames = 1
         e_t = None
         history_on = None
         if history is not None:
-            frames, times, mask = history
-            cams, t_h = int(frames.shape[1]), int(frames.shape[2])
-            if cams != num_crops:
-                raise ValueError(
-                    f"MEM video encoder expects one crop per camera (crop_mode 'resize'): "
-                    f"history has {cams} cameras but the batch has {num_crops} crops."
-                )
-            num_frames = t_h + 1
-            hist = frames.to(device=x.device, dtype=x.dtype).reshape(
-                batch_size * cams * t_h, num_patches, patch_dim
+            frames, times, history_on = history
+            rows, t_e = int(frames.shape[0]), int(frames.shape[1])
+            num_frames = t_e + 1
+            x_hist = self.image_vit.patch_embedding(
+                frames.to(device=x.device, dtype=x.dtype).reshape(rows * t_e, num_patches, -1)
             )
-            x_hist = self.image_vit.patch_embedding(hist)
             x_hist = self.image_vit.add_pos_emb(x_hist, self.image_vit.config.image_num_patch)
-            # (BC, T, n, D): history oldest → newest, current frame last (t = 0 s).
-            x = torch.cat(
-                [
-                    x_hist.view(batch_size * cams, t_h, num_patches, -1),
-                    x.view(batch_size * cams, 1, num_patches, -1),
-                ],
-                dim=1,
-            )
-            times_full = torch.cat([times.to(x.device), torch.zeros(1, device=x.device)])
-            e_t = _sinusoidal_seconds_embedding(times_full, x.shape[-1])
-            if mask is not None:
-                # (B,) is one flip for the whole sample (history dropout); (B, cams) also
-                # carries per-camera presence. Rows are ordered b * cams + c, so the
-                # two-dimensional form flattens straight onto them.
-                mask = mask.to(x.device)
-                history_on = (
-                    mask.reshape(-1) if mask.ndim == 2 else mask.repeat_interleave(cams)
-                )
-                if int(history_on.shape[0]) != batch_size * cams:
-                    raise ValueError(
-                        f"history mask has {int(history_on.shape[0])} rows, expected "
-                        f"{batch_size * cams} (batch {batch_size} x cameras {cams})."
-                    )
+            # (R, T, n, D): earlier frames oldest → newest, the crop last.
+            x = torch.cat([x_hist.view(rows, t_e, num_patches, -1), x[:, None]], dim=1)
+            e_t = _sinusoidal_seconds_embedding(times.to(x.device), x.shape[-1])
 
         stride = max(int(self._lerobot_temporal_layer_stride), 1)
         num_layers = len(self.image_vit.transformer.resblocks)
@@ -964,19 +941,99 @@ def _patch_memory_efficient_vision_backbone(
             missing = sorted(needed_layers - set(selected_features))
             raise RuntimeError(f"MolmoAct2 vision backbone did not produce requested layers: {missing}.")
 
-        image_features = torch.cat([selected_features[int(layer)] for layer in self.vit_layers], dim=-1)
+        features = torch.cat([selected_features[int(layer)] for layer in self.vit_layers], dim=-1)
         if self.num_prefix_tokens > 0:
-            image_features = image_features[:, 1:]
+            features = features[:, 1:]
+        return features
+
+    def _encode_image(self, images: Tensor) -> Tensor:
+        """Without a stashed history every crop takes the single-frame path (byte-identical
+        to the pre-MEM encoder). With one (MEM video encoder, 04_memory.md §2.4) the
+        history_image_mode decides where its output goes:
+
+        "slot" (docs/notes/memory_history_slot.md): crops [:C] are the current frames and
+        take the single-frame path unchanged; crops [C:] are the pack step's history
+        slots, the newest past frame (-2 s) per camera, and take the MEM path over the
+        stash's older frames [-6, -4] followed by that crop, ages [6, 4, 2] — no t = 0 row.
+        The crop's row is what survives to the taps. Features are concatenated in crop
+        order.
+
+        "inplace" (2026-08-03 behaviour): the C crops are the current frames (age 0) and
+        take the MEM path over the whole stash followed by themselves, so the temporal
+        read rewrites the current frames' own tokens."""
+        history = getattr(self, "_lerobot_history", None)
+        self._lerobot_history = None  # consume-once: no stale reuse across forwards
+
+        batch_size, num_crops, num_patches, patch_dim = images.shape
+        slot = self._lerobot_history_image_mode == "slot"
+        if history is None:
+            image_features = self._lerobot_encode_crops(
+                images.view(batch_size * num_crops, num_patches, patch_dim), None
+            )
+        else:
+            frames, times, mask = history
+            cams, t_h = int(frames.shape[1]), int(frames.shape[2])
+            if num_crops != (2 * cams if slot else cams):
+                raise ValueError(
+                    f"MEM video encoder ({self._lerobot_history_image_mode}) expects "
+                    f"{'two crops' if slot else 'one crop'} per camera (crop_mode 'resize'): "
+                    f"history has {cams} cameras but the batch has {num_crops} crops."
+                )
+            history_on = None
+            if mask is not None:
+                # (B,) is one flip for the whole sample (history dropout); (B, cams) also
+                # carries per-camera presence. Rows are ordered b * cams + c, so the
+                # two-dimensional form flattens straight onto them.
+                mask = mask.to(images.device)
+                history_on = mask.reshape(-1) if mask.ndim == 2 else mask.repeat_interleave(cams)
+                if int(history_on.shape[0]) != batch_size * cams:
+                    raise ValueError(
+                        f"history mask has {int(history_on.shape[0])} rows, expected "
+                        f"{batch_size * cams} (batch {batch_size} x cameras {cams})."
+                    )
+            times = times.to(images.device)
+            if slot:
+                current = self._lerobot_encode_crops(
+                    images[:, :cams].reshape(batch_size * cams, num_patches, patch_dim), None
+                )
+                # Older frames only; the crop is the stash's newest frame and carries its age.
+                earlier = (
+                    frames[:, :, :-1].reshape(batch_size * cams, t_h - 1, num_patches, patch_dim),
+                    times,
+                    history_on,
+                )
+                folded = self._lerobot_encode_crops(
+                    images[:, cams:].reshape(batch_size * cams, num_patches, patch_dim), earlier
+                )
+                image_features = torch.cat(
+                    [current.view(batch_size, cams, num_patches, -1), folded.view(batch_size, cams, num_patches, -1)],
+                    dim=1,
+                )
+            else:
+                stacked = (
+                    frames.reshape(batch_size * cams, t_h, num_patches, patch_dim),
+                    torch.cat([times, torch.zeros(1, device=times.device)]),
+                    history_on,
+                )
+                image_features = self._lerobot_encode_crops(
+                    images.reshape(batch_size * cams, num_patches, patch_dim), stacked
+                )
+
         image_features = image_features.view(batch_size, num_crops, num_patches, -1)
         if getattr(self, "_lerobot_capture_future_features", False):
-            self._lerobot_future_features = image_features
+            # The future-visual objective reads the current frames' features (crops [:C]).
+            self._lerobot_future_features = (
+                image_features[:, : num_crops // 2] if history is not None and slot else image_features
+            )
             self._lerobot_capture_future_features = False
 
         return image_features
 
     vision_backbone.encode_image = types.MethodType(_encode_image, vision_backbone)
+    vision_backbone._lerobot_encode_crops = types.MethodType(_encode_crops, vision_backbone)
     vision_backbone._lerobot_vision_gradient_checkpointing = bool(gradient_checkpointing)
     vision_backbone._lerobot_temporal_layer_stride = int(temporal_layer_stride)
+    vision_backbone._lerobot_history_image_mode = history_image_mode
     vision_backbone._lerobot_history = None
     vision_backbone._lerobot_memory_efficient_vision_backbone_patched = True
 
@@ -1652,6 +1709,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             self._backbone(),
             gradient_checkpointing=bool(self.config.gradient_checkpointing),
             temporal_layer_stride=int(self.config.temporal_layer_stride),
+            history_image_mode=self.config.history_image_mode,
         )
         _patch_training_kv_collection(self._backbone())
         _patch_numpy_dtype_cast(self._backbone())
@@ -2159,6 +2217,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     "(config.input_features lacks observation.state)."
                 )
             embeds = self.state_projector(states.to(device=device, dtype=self.state_projector.weight.dtype))
+            # Age stamp (docs/notes/memory_history_slot.md §5): the ViT's e(t) in the text
+            # width, one per past slot, oldest → newest like the state rows. No parameters.
+            embeds = embeds + _sinusoidal_seconds_embedding(
+                batch["history_image_times"].to(device), embeds.shape[-1]
+            ).to(embeds.dtype)
             backbone._lerobot_state_values = (
                 embeds,
                 batch["state_values_mask"].to(device=device, dtype=torch.bool),

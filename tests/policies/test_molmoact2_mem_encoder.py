@@ -220,11 +220,14 @@ class StubVisionBackbone(nn.Module):
         self.num_prefix_tokens = 0
 
 
-def make_backbone():
+def make_backbone(history_image_mode="inplace"):
     backbone = nn.Module()
     backbone.vision_backbone = StubVisionBackbone().eval()
     _patch_memory_efficient_vision_backbone(
-        backbone, gradient_checkpointing=False, temporal_layer_stride=4
+        backbone,
+        gradient_checkpointing=False,
+        temporal_layer_stride=4,
+        history_image_mode=history_image_mode,
     )
     return backbone
 
@@ -288,17 +291,136 @@ def test_encode_image_camera_count_mismatch_raises():
         vb.encode_image(torch.randn(2, 2, PATCHES, 6))
 
 
-def test_temporal_block_capture_records_once_under_training():
-    """Capture appends to a module global, so one block call must append exactly one
-    record even under autograd."""
-    block = StubBlock().train()
-    x = torch.randn(2, 4, PATCHES, DIM, requires_grad=True)
-    e_t = _sinusoidal_seconds_embedding(torch.tensor([3.0, 2.0, 1.0, 0.0]), DIM)
-    _MEM_TEMPORAL_CAPTURE["records"].clear()
-    _MEM_TEMPORAL_CAPTURE["enabled"] = True
-    try:
-        _temporal_vision_block(block, x, e_t, None).square().sum().backward()
-    finally:
-        _MEM_TEMPORAL_CAPTURE["enabled"] = False
-    assert len(_MEM_TEMPORAL_CAPTURE["records"]) == 1
-    _MEM_TEMPORAL_CAPTURE["records"].clear()
+# ── history_image_mode "slot" (docs/notes/memory_history_slot.md §4) ─────────────
+
+
+def slot_inputs(cams=2, t_h=3):
+    """Crops [:C] current frames, crops [C:] the newest history frame per camera (the
+    pack step's history slots); one (B, cams, T_h) history stash, ages oldest → newest."""
+    torch.manual_seed(1)
+    current = torch.randn(2, cams, PATCHES, 6)
+    frames = torch.randn(2, cams, t_h, PATCHES, 6)
+    images = torch.cat([current, frames[:, :, -1]], dim=1)
+    times = torch.tensor([6.0, 4.0, 2.0][-t_h:])
+    return images, frames, times
+
+
+def reference_folded(vb, frames, times, temporal_layer_stride=4):
+    """Straight-line MEM pass over the past frames alone, [x(-6), x(-4), x(-2)] with ages
+    (6, 4, 2) and no t = 0 row: the temporal block every stride-th layer, the newest row
+    (-2 s) kept at the taps and after the last temporal layer."""
+    b, c, t, n, p = frames.shape
+    x = vb.image_vit.patch_embedding(frames.reshape(b * c * t, n, p)).view(b * c, t, n, -1)
+    e_t = _sinusoidal_seconds_embedding(times, x.shape[-1])
+    blocks = vb.image_vit.transformer.resblocks
+    temporal = {i for i in range(len(blocks)) if (i + 1) % temporal_layer_stride == 0}
+    feats = {}
+    for idx, block in enumerate(blocks):
+        if x.ndim == 4 and idx in temporal:
+            x = _temporal_vision_block(block, x, e_t, None)
+        elif x.ndim == 4:
+            x = block(x.reshape(-1, n, x.shape[-1])).view(x.shape)
+        else:
+            x = block(x)
+        feats[idx] = x[:, -1] if x.ndim == 4 else x
+        if x.ndim == 4 and idx == max(temporal):
+            x = x[:, -1]
+    out = torch.cat([feats[int(layer)] for layer in vb.vit_layers], dim=-1)
+    return out.view(b, c, n, -1)
+
+
+def test_slot_mode_current_crops_bit_match_the_single_frame_path():
+    """Crops [:C] never see the stash: they equal the pre-MEM encoder exactly, while the
+    slots [C:] carry the temporal read over the past and differ from both the current
+    crops and the plain encoding of the -2 s frame."""
+    torch.manual_seed(0)
+    backbone = make_backbone("slot")
+    vb = backbone.vision_backbone
+    images, frames, times = slot_inputs()
+    vb._lerobot_history = (frames, times, torch.tensor([True, True]))
+    out = vb.encode_image(images)
+    assert out.shape == (2, 4, PATCHES, 2 * DIM)
+    assert vb._lerobot_history is None  # consume-once
+    assert torch.equal(out[:, :2], reference_single_frame(vb, images[:, :2].contiguous()))
+    assert not torch.allclose(out[:, 2:], out[:, :2], atol=1e-4)
+    assert not torch.allclose(out[:, 2:], reference_single_frame(vb, images[:, 2:].contiguous()), atol=1e-4)
+
+
+def test_slot_mode_slot_is_the_mem_pass_over_the_past_frames_with_the_newest_row_kept():
+    """The slot = the MEM encoder run on [x(-6), x(-4), x(-2)] alone, ages (6, 4, 2), the
+    -2 s row surviving to the taps. Written out straight-line in reference_folded."""
+    torch.manual_seed(0)
+    backbone = make_backbone("slot")
+    vb = backbone.vision_backbone
+    images, frames, times = slot_inputs()
+    vb._lerobot_history = (frames, times, None)
+    folded = vb.encode_image(images)[:, 2:]
+    assert torch.equal(folded, reference_folded(vb, frames, times))
+    # The older frames are read: scrambling -6 / -4 moves the slot, not the current crops.
+    scrambled = frames.clone()
+    scrambled[:, :, :-1] = torch.randn_like(scrambled[:, :, :-1])
+    vb._lerobot_history = (scrambled, times, None)
+    other = vb.encode_image(images)
+    assert not torch.allclose(other[:, 2:], folded, atol=1e-4)
+    assert torch.equal(other[:, :2], reference_single_frame(vb, images[:, :2].contiguous()))
+
+
+def test_inplace_mode_keeps_the_current_frame_last_with_age_zero():
+    """The 2026-08-03 ablation path: the C crops are the current frames, the whole stash
+    rides before them, the current row (t = 0) survives."""
+    torch.manual_seed(0)
+    backbone = make_backbone("inplace")
+    vb = backbone.vision_backbone
+    images, frames, times = slot_inputs()
+    current = images[:, :2].contiguous()
+    vb._lerobot_history = (frames, times, None)
+    out = vb.encode_image(current)
+    stacked = torch.cat([frames, current[:, :, None]], dim=2)
+    want = reference_folded(vb, stacked, torch.cat([times, torch.zeros(1)]))
+    assert torch.equal(out, want)
+
+
+def test_slot_mode_absent_camera_reads_no_past():
+    """Per-camera presence (B, cams): the absent camera's slot is self-only, so its
+    features do not depend on the older frames; the present camera's do."""
+    torch.manual_seed(0)
+    backbone = make_backbone("slot")
+    vb = backbone.vision_backbone
+    images, frames, times = slot_inputs()
+    present = torch.tensor([[True, False], [True, False]])
+    vb._lerobot_history = (frames, times, present)
+    out = vb.encode_image(images)
+    older = frames.clone()
+    older[:, :, :-1] = torch.randn_like(older[:, :, :-1])
+    vb._lerobot_history = (older, times, present)
+    other = vb.encode_image(images)
+    assert torch.allclose(out[:, 3], other[:, 3], atol=1e-6)  # camera 1 absent
+    assert not torch.allclose(out[:, 2], other[:, 2], atol=1e-4)  # camera 0 read its past
+    assert torch.equal(out[:, :2], other[:, :2])  # current crops untouched either way
+
+
+def test_slot_mode_requires_two_crops_per_camera():
+    backbone = make_backbone("slot")
+    vb = backbone.vision_backbone
+    vb._lerobot_history = (torch.randn(2, 2, 3, PATCHES, 6), torch.tensor([6.0, 4.0, 2.0]), None)
+    with pytest.raises(ValueError, match="two crops per camera"):
+        vb.encode_image(torch.randn(2, 2, PATCHES, 6))
+
+
+def test_slot_mode_without_history_is_the_plain_path():
+    """No stash (history off, the generation prompt, legacy prompts): every crop is the
+    single-frame path, whatever the mode."""
+    backbone = make_backbone("slot")
+    vb = backbone.vision_backbone
+    images = torch.randn(2, 3, PATCHES, 6)
+    assert torch.equal(vb.encode_image(images), reference_single_frame(vb, images))
+
+
+def test_slot_mode_future_capture_is_the_current_crops():
+    backbone = make_backbone("slot")
+    vb = backbone.vision_backbone
+    images, frames, times = slot_inputs()
+    vb._lerobot_history = (frames, times, None)
+    vb._lerobot_capture_future_features = True
+    out = vb.encode_image(images)
+    assert torch.equal(vb._lerobot_future_features, out[:, :2])

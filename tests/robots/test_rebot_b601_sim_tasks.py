@@ -71,7 +71,8 @@ def gripper_to(m, d, pos):
 
 
 def test_registry():
-    assert set(LAYOUTS) <= set(TASKS) and set(LAYOUTS) == {"clippers_only", "bottle_basket", "close_lid", "ep0", "ep3"}
+    assert set(LAYOUTS) <= set(TASKS) and set(LAYOUTS) == {n for n in TASKS if n.startswith("twin_")}  # the twin desk is the eval set
+    assert {"clippers_only", "bottle_basket", "close_lid", "ep0", "ep3"} <= set(TASKS) - set(LAYOUTS)  # old scenes resolve, never run
     for name, task in TASKS.items():
         assert task.tier in TIERS
         values = [v for _, v, _ in task.stages]
@@ -96,10 +97,10 @@ def test_placement_variants_resolve_and_expand(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(tasks, "SCENES_DIR", tmp_path)
     monkeypatch.setattr(tasks, "LAYOUTS", ("ep3", "ep0"))
     assert tasks.variants("ep0") == ["ep0_v1", "ep0_v2", "ep0_v10"] and tasks.variants("ep3") == []
-    assert tasks.eval_layouts() == ["ep3", "ep0_v1", "ep0_v2", "ep0_v10"]  # variants replace their base, bases without any stay
+    assert tasks.eval_layouts() == ["ep0_v1", "ep0_v2", "ep0_v10"]  # variants replace their base; a base without any is skipped
     monkeypatch.setattr(tasks.sys, "argv", ["tasks", "layouts"])
     tasks.main()
-    assert capsys.readouterr().out.split() == ["ep3", "ep0_v1", "ep0_v2", "ep0_v10"]
+    assert capsys.readouterr().out.split() == ["ep0_v1", "ep0_v2", "ep0_v10"]
 
 
 class Toggle(TaskScorer):

@@ -22,7 +22,10 @@ MOLMOACT2_IMAGE_TOKENS_PER_IMAGE = 196
 MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
 MOLMOACT2_TASK_TOKEN_BUDGET = 32
 MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
-MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET = 16
+# Text lead-ins of the two short-term-memory clauses: the past-state clause (13 tokens)
+# and the history-slot clause (37, docs/notes/memory_history_slot.md §3); the slot
+# images themselves are counted through num_images.
+MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET = 56
 MOLMOACT2_DEPTH_CLAUSE_TOKEN_BUDGET = 16
 MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
 MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
@@ -369,6 +372,12 @@ class MolmoAct2Config(PreTrainedConfig):
     # is None (past frame k of T_h → k * stride seconds before now, current = 0); it
     # is what pre-2026-09 checkpoints carry.
     temporal_layer_stride: int = 4
+    # Where the MEM encoder's output goes (docs/notes/memory_history_slot.md). "slot":
+    # the current frame stays the stock single-frame ViT output and the temporal
+    # read lands in an extra image per camera (images C+1..2C, the pack step appends
+    # the current frame once more per present history). "inplace": the 2026-08-03
+    # behaviour, the temporal read rewrites the current image's own tokens.
+    history_image_mode: str = "slot"
     future_visual_loss: FutureVisualLossConfig = field(default_factory=FutureVisualLossConfig)
     history_stride_seconds: float = 1.0
     history_times_seconds: list[float] | None = None

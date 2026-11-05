@@ -17,9 +17,11 @@ the calibration numbers and the rebuild order; the build scripts stay in that fo
 
 ## Eval set, tiers and staged reward (2026-10-22)
 
-`tasks.py` is the registry: scene -> tier, task string, `eval_subtasks` script, scorer, stages. `run_sim_eval.sh` runs
-`LAYOUTS` (easy: clippers_only, bottle_basket, close_lid; hard: ep0, ep3; lift_bottle, ep1 and ep2 stay on disk) with
-`episodes: 8` per layout (2026-10-28, was 4) and `control_time_s: 60.0` (`terminate_on_success` ends an episode at the
+`tasks.py` is the registry: scene -> tier, task string, `eval_subtasks` script, scorer, stages. Since 2026-11-05 `run_sim_eval.sh`
+runs the twin eval set (below) and nothing else; the photo-composite scenes of this section (easy: clippers_only, bottle_basket,
+close_lid; hard: ep0, ep3; lift_bottle, ep1 and ep2) stay on disk and registered so earlier results resolve, but need the top
+camera's background composite that config_rl_sim.yaml no longer carries. Until then the eval ran them with `episodes: 8` per
+layout (2026-10-28, was 4) and `control_time_s: 60.0` (`terminate_on_success` ends an episode at the
 last stage; the real nail episodes run 78-102 s, so 60 s truncates some). Since 2026-10-28 the eval runs on a sim clock
 (`env.robot.inference_delay_steps`, rl/rtc_actor_runtime): the env steps in lockstep with the inference worker instead
 of at wall-clock fps, the RTC delay is fixed at 6 control steps (the local wall-clock eval's p95 cycle latency, 0.18 s;
@@ -101,8 +103,8 @@ the pre-integration state; their original-scene hashes intentionally differ now.
 `<layout>_v1` .. `<layout>_v6` for bottle_basket, clippers_only, close_lid, ep0 and ep3: the same scene with only the task
 objects' xy + yaw re-sampled (bottle + basket; case + two clippers, the recorded clutter stays put; the fixed headphone
 case with its lid). `tasks.py` resolves a variant name to the base layout's Task (`layout_name` strips `_v<k>`), `variants(layout)`
-lists them on disk and `eval_layouts()` / `tasks.py layouts` replace a base layout by its variants, so `run_sim_eval.sh` runs
-the 30 variants and not the five bases; `sim_summary.py` keeps `reward.<layout>_v<k>` and rolls them up into `reward.<layout>`
+lists them on disk and `eval_layouts()` / `tasks.py layouts` replace a layout by its variants (`LAYOUTS="..."` on `run_sim_eval.sh`
+still runs any of them by name); `sim_summary.py` keeps `reward.<layout>_v<k>` and rolls them up into `reward.<layout>`
 (mean over all the variants' episodes); the tiers average over base layouts.
 
 Region: the object-coverage grid cells rows 2-3 x columns B-E (`lerobot/adhocs/object_coverage`, where the real data put the
@@ -135,9 +137,9 @@ clippers seated exist as bodies); L3 = the full twin desk (tape / pill bottle ta
 closed; the basket stays at its twin pose with its contents); L4 = the full desk, sequential multi-object tasks (`twin_tasks.sequence_scorer`, equal ladder
 shares in task order). Built by `migration/digital_twin_2026-10-29/envs/build_twin_envs.py` (seed 20261030, byte-identical; report
 `envs/ENVS_REPORT.md`). Scorers in `twin_tasks.py` are staged like the others and additionally dense (`reward_dense` in
-subtask_events.json / sim/index.json). `TWIN=1 run_sim_eval.sh ...` runs the 64 placements (16 configurations x 4), 4 episodes each, with a config copy
-whose top camera has no background composite; `tasks.py layouts` / `eval_layouts()` list the default set unless `TWIN=1` (or
-`layouts --twin`). `twin_l3_close_lid` (T071 on the twin's headphone case, `easy_tasks.CloseLidScorer`) is the one full-desk
+subtask_events.json / sim/index.json). This is the eval set (2026-11-05; `TWIN=1` selected it from 10-30 to 11-05): `tasks.py LAYOUTS`
+is the twin configurations, `tasks.py layouts` / `eval_layouts()` list their placements on disk (64) and `run_sim_eval.sh` runs them with the config's `episodes: 4` each; config_rl_sim.yaml's top camera carries no background
+composite and its default `scene` is a twin placement. `twin_l3_close_lid` (T071 on the twin's headphone case, `easy_tasks.CloseLidScorer`) is the one full-desk
 configuration with the bit kit CLOSED: the fold asset's settled closed angles are baked into the strip / flap body frames (joint ranges
 and dead-band springs shifted alike), so the kit occupies one panel's footprint and the open headphone case fits far left with the lid
 toward the robot (both lid walls inside the pinch IK reach; the case is exempt from the region / reach rule like close_lid).

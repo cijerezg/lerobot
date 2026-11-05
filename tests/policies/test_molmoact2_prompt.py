@@ -268,6 +268,192 @@ def test_history_clause_off_when_zero():
     assert "recent states" not in build(num_history_states=0)
 
 
+# ── History slots (docs/notes/memory_history_slot.md §3) ───────────────────────
+
+
+SLOT_CLAUSE = (
+    "Images 3 to 4 are the same cameras as images 1 to 2, 2 seconds earlier, "
+    "with the frames from 4 and 6 seconds earlier folded in."
+)
+
+
+def test_history_image_clause_names_the_slots():
+    prompt = build(num_images=4, num_history_images=2, num_history_states=3)
+    assert prompt.startswith(
+        "Image 1<|image|>Image 2<|image|>Image 3<|image|>Image 4<|image|><|im_start|>user\n"
+    )
+    assert f" {SLOT_CLAUSE} " in prompt
+    # Past states first, then the slot clause, then the question.
+    assert prompt.index("The recent states") < prompt.index(SLOT_CLAUSE) < prompt.index("Given these")
+    # The ages word the clause: a 1 s / 3 s / 5 s ladder names them, newest first.
+    custom = build(num_images=4, num_history_images=2, history_ages_seconds=[5.0, 3.0, 1.0])
+    assert ", 1 seconds earlier, with the frames from 3 and 5 seconds earlier folded in." in custom
+
+
+def test_history_image_clause_absent_without_slots():
+    """No slots (history off, inplace mode, no history) = the legacy prompt, byte for byte."""
+    assert build(num_images=2, num_history_images=0) == build(num_images=2)
+    assert "folded in" not in build(num_images=2, num_history_states=3)
+
+
+def test_generation_prompt_carries_the_slot_clause_too():
+    from lerobot.policies.molmoact2.processor_molmoact2 import _build_subtask_generation_text
+
+    kwargs = {"task": "fold the towel", "discrete_state_string": ""}
+    with_slots = _build_subtask_generation_text(**kwargs, num_images=4, num_history_images=2)
+    assert f" {SLOT_CLAUSE} " in with_slots
+    assert "<|image|>" * 1 in with_slots and with_slots.count("<|image|>") == 4
+    assert "folded in" not in _build_subtask_generation_text(**kwargs, num_images=2)
+
+
+def test_max_sequence_length_budgets_the_slots_through_num_images():
+    """The slots are ordinary prompt images: C extra images = C x 196 more tokens, and
+    the clause text rides in the history clause budget."""
+    kwargs = {"state_dim": 7, "action_dim": 7, "action_horizon": 30, "include_discrete_action": True}
+    two = infer_molmoact2_max_sequence_length(num_images=2, history_num_samples=3, **kwargs)
+    four = infer_molmoact2_max_sequence_length(num_images=4, history_num_samples=3, **kwargs)
+    # Raw difference is 2 x 196; the cap rounds to a multiple of 64.
+    assert four - two >= 2 * 196 - 64
+
+
+def test_state_age_stamp_added_to_the_projected_past_states():
+    """Each past-state token = W s + b + e_d(t_k), e_d the ViT's sinusoid in the text
+    width, ages from history_image_times oldest → newest (memory_history_slot.md §5)."""
+    from types import SimpleNamespace
+
+    from torch import nn
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import (
+        MolmoAct2Policy,
+        _sinusoidal_seconds_embedding,
+    )
+
+    torch.manual_seed(0)
+    backbone = SimpleNamespace(vision_backbone=SimpleNamespace(_lerobot_history=None))
+    stub = SimpleNamespace(
+        _backbone=lambda: backbone,
+        model=nn.Linear(1, 1),
+        state_projector=nn.Linear(7, 6),
+    )
+    states = torch.randn(2, 3, 7)
+    times = torch.tensor([6.0, 4.0, 2.0])
+    batch = {
+        "state_values": states,
+        "state_values_mask": torch.ones(2, 3, dtype=torch.bool),
+        "state_token_id": torch.tensor(9),
+        "history_image_times": times,
+    }
+    MolmoAct2Policy._stash_history_inputs(stub, batch)
+    embeds, mask, token_id = backbone._lerobot_state_values
+    expected = stub.state_projector(states) + _sinusoidal_seconds_embedding(times, 6)
+    torch.testing.assert_close(embeds, expected)
+    assert token_id == 9 and mask.all()
+    # Two slots with different ages get different stamps on the same state.
+    same = torch.zeros(1, 3, 7)
+    batch["state_values"] = same
+    MolmoAct2Policy._stash_history_inputs(stub, batch)
+    embeds = backbone._lerobot_state_values[0][0]
+    assert not torch.allclose(embeds[0], embeds[2])
+
+
+# ── The packed prompt with the real processor (skipped without the base checkpoint) ──
+
+from pathlib import Path  # noqa: E402
+
+BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/MolmoAct2"
+CAM_KEYS = ["observation.images.external_0", "observation.images.external_1", "observation.images.wrist_0"]
+
+
+def _pack_step(**overrides):
+    from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
+
+    if not (BASE_PATH / "processor_config.json").is_file():
+        pytest.skip("MolmoAct2 base checkpoint not present")
+    kwargs = {
+        "base_path": str(BASE_PATH),
+        "action_mode": "continuous",
+        "image_keys": list(CAM_KEYS),
+        "chunk_size": 30,
+        "max_action_dim": 8,
+        "history_times_seconds": [-6.0, -4.0, -2.0],
+    }
+    kwargs.update(overrides)
+    return MolmoAct2PackInputsProcessorStep(**kwargs)
+
+
+def _history_transition(batch_size, present, history=True):
+    torch.manual_seed(0)
+    observation = {OBS_STATE: torch.zeros(batch_size, 8)}
+    complementary = {}
+    if history:
+        complementary[f"history.{OBS_STATE}"] = torch.zeros(batch_size, 3, 8)
+    for index, key in enumerate(CAM_KEYS):
+        observation[key] = torch.randint(0, 255, (batch_size, 3, 64, 64), dtype=torch.uint8)
+        if history:
+            complementary[f"history.{key}"] = torch.randint(
+                0, 255, (batch_size, 3, 3, 64, 64), dtype=torch.uint8
+            )
+        complementary[f"camera_is_present.{key}"] = torch.tensor([row[index] for row in present])
+    return create_transition(
+        observation=observation, action=torch.zeros(batch_size, 30, 8), complementary_data=complementary
+    )
+
+
+def test_packed_prompt_with_history_has_slots_placeholders_and_masked_absent_spans():
+    from lerobot.policies.depth_pointmap.modeling_stream import wrist_cam_token_indices
+
+    step = _pack_step()
+    out = step(_history_transition(2, [[True, True, True], [True, False, True]]))
+    comp = out[TransitionKey.COMPLEMENTARY_DATA]
+    ids, mask = comp["input_ids"], comp["attention_mask"]
+    text = step.processor.tokenizer.decode(ids[1][mask[1].bool()])
+    assert (
+        "Images 4 to 6 are the same cameras as images 1 to 3, 2 seconds earlier, "
+        "with the frames from 4 and 6 seconds earlier folded in." in text
+    )
+    assert text.count("<extra_0>") == 3 and comp["state_values_mask"].all()
+    patches = (ids == step._image_patch_id).sum(dim=1)
+    assert patches.tolist() == [6 * 196, 6 * 196]
+    # The absent camera (external_1, row 1) attends neither its current nor its history slot.
+    for cam_index in (1, 4):
+        sel = wrist_cam_token_indices(ids, image_patch_id=step._image_patch_id, num_images=6, cam_index=cam_index)
+        assert mask[1, sel[1]].sum() == 0
+        assert mask[0, sel[0]].sum() == 196
+    assert comp["history_images"].shape[:3] == (2, 3, 3)
+    assert comp["history_images_mask"].tolist() == [[True, True, True], [True, False, True]]
+    # The slot's pixels are the gathered window's newest (-2 s) frame, not the current
+    # one: with random windows the slot crops differ from the current crops; with the
+    # newest frame set to the current frame they are the same crops.
+    crops = comp["pixel_values"].view(2, 6, *comp["pixel_values"].shape[1:])
+    assert not torch.allclose(crops[:, 3:], crops[:, :3])
+    same = _history_transition(2, [[True, True, True], [True, True, True]])
+    for key in CAM_KEYS:
+        same[TransitionKey.COMPLEMENTARY_DATA][f"history.{key}"][:, -1] = same[TransitionKey.OBSERVATION][key]
+    crops = step(same)[TransitionKey.COMPLEMENTARY_DATA]["pixel_values"]
+    crops = crops.view(2, 6, *crops.shape[1:])
+    torch.testing.assert_close(crops[:, 3:], crops[:, :3])
+
+
+def test_packed_prompt_without_history_is_the_legacy_layout():
+    step = _pack_step()
+    out = step(_history_transition(1, [[True, True, True]], history=False))
+    comp = out[TransitionKey.COMPLEMENTARY_DATA]
+    text = step.processor.tokenizer.decode(comp["input_ids"][0][comp["attention_mask"][0].bool()])
+    assert "folded in" not in text and "<extra_0>" not in text
+    assert (comp["input_ids"] == step._image_patch_id).sum() == 3 * 196
+    assert "history_images" not in comp
+
+
+def test_packed_prompt_inplace_mode_adds_no_slots():
+    step = _pack_step(history_image_mode="inplace")
+    out = step(_history_transition(1, [[True, True, True]]))
+    comp = out[TransitionKey.COMPLEMENTARY_DATA]
+    text = step.processor.tokenizer.decode(comp["input_ids"][0][comp["attention_mask"][0].bool()])
+    assert "folded in" not in text and text.count("<extra_0>") == 3
+    assert (comp["input_ids"] == step._image_patch_id).sum() == 3 * 196
+    assert comp["history_images"].shape[:3] == (1, 3, 3)
+
+
 def test_history_state_normalized_same_as_current_state():
     """history.{OBS_STATE} rides in COMPLEMENTARY_DATA (batch_to_transition routes any
     "history.*" key there, not OBSERVATION), so the base NormalizerProcessorStep would

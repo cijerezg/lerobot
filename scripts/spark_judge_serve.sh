@@ -17,8 +17,12 @@ set -euo pipefail
 # This script runs ON THE SPARK only (2026-10-30: it was run on the workstation by mistake, creating ~/judge-venv there and starting a
 # 60 GB download on a disk with 200 GB free). From the workstation: ssh dgx-ip 'cd ~/Documents/Research/RL/LeRobot && bash lerobot/scripts/<this script>'
 [[ "$(hostname)" == spark-5ef0 ]] || { echo "refusing: run this on the Spark (hostname spark-5ef0), e.g. ssh dgx-ip 'cd ~/Documents/Research/RL/LeRobot && bash $0'" >&2; exit 1; }
-export PATH="$HOME/.local/bin:$PATH"
 JUDGE_VENV="${JUDGE_VENV:-$HOME/judge-venv}"
+# 2026-11-04: the venv's bin (ninja) and the CUDA toolkit go on PATH, else flashinfer's JIT dies on 'ninja' not found; the flashinfer
+# sampler is off (torch sampler; the clients decode greedily) so no kernel is JIT-built on the GB10 at warm-up.
+export PATH="$JUDGE_VENV/bin:/usr/local/cuda/bin:$HOME/.local/bin:$PATH"
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 RBM_VENV="${RBM_VENV:-$HOME/robometer-venv}"
 REPO="${REPO:-$HOME/Documents/Research/RL/LeRobot}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"

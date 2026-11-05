@@ -1,37 +1,43 @@
 """Input swap: which input stream does the action chunk follow?
 
 Take an ANCHOR frame from the validation set and a DONOR frame. Build every input in
-which each of the switched streams comes either from the anchor or from the donor:
+which each of the switched streams comes either from the anchor or from the donor. The
+switches are chosen in the config (``probe_parameters.input_swap_factors``, a comma list
+in bit order) from:
 
     S  state          ``observation.state`` — the current joints, which is also the
                       anchor the relative action chunk is decoded against
     I  image          both cameras (``observation.images.*``)
-    T  subtask text   the prompt's subtask clause ("The current step is ...")
+    T  subtask        the prompt's subtask clause ("The current step is ...")
+    P  state_history  the MEM past-state window (``history.observation.state``)
+    H  image_history  the MEM history slots (``history.observation.images.*``)
 
-A stream's MEM history (``history.observation.images.*``, ``history.observation.state``)
-travels with its switch. Everything else — wrist depth and its history, the metadata
-clause, the task string — stays the anchor's own in every cell. The switches give
-$2^3 = 8$ inputs, the cells of the S/I/T cube. A cell is named by the switches flipped
-to the donor: ``...`` is the
-anchor's own prompt (the reference), ``.I.`` has only the donor's images, ``..T`` is
-the anchor's frame under the donor's subtask text, ``SIT`` the donor's frame and text
-under the anchor's depth.
+The default is ``state,image,subtask``, the S/I/T cube of every run so far; with memory
+on, ``state,image,state_history,image_history`` asks whether the past is read at all,
+separately from the present. A history that has no switch of its own travels with the
+stream it remembers (image history with I, state history with S). Everything else — wrist
+depth and its history, the metadata clause, the task string — stays the anchor's own in
+every cell. $k$ switches give $2^k$ inputs, the cells of the cube. A cell is named by the
+switches flipped to the donor: ``...`` is the anchor's own prompt (the reference),
+``.I.`` has only the donor's images, ``..T`` is the anchor's frame under the donor's
+subtask text, ``SIT`` the donor's frame and text under the anchor's depth.
 
 All cells run in ONE forward pass with ONE flow-noise draw (``adapter.flow_noise_like``),
 so two cells differ only in what was swapped; the pack step builds every row's prompt
 from its own subtask string, so the T cells share the batch too.
 
-The S and I readouts are the same measurements as in the probe's runs from before the
-T switch existed, so they compare across them.
+A switch's single-stream readouts are the same measurements whatever the other switches
+are (the S-only cell under S/I/T is the S-only cell under S/I/P/H), so they compare across
+runs with different factor sets; the all-donor corner and the variance shares do not.
 
 **The T switch is a no-op when both frames carry the same subtask text** (a same-episode
 donor inside the same segment, a matched donor at the same phase of the same object):
 the T cells then duplicate their partners and every T contrast is exactly zero. Each
-pair records ``subtask_differs``, and every T-specific number in the summary — the T
-cells' displacement, the T main effect, the T and interaction variance shares — is
-taken over the pairs whose texts differ, with its own ``n``. The S and I numbers, the
-spread and the all-donor corner stay over every pair: a duplicated T cell leaves them
-unchanged.
+pair records ``subtask_differs``, and when T is a switch every T-specific number in the
+summary — the T cells' displacement, the T main effect, the T and interaction variance
+shares — is taken over the pairs whose texts differ, with its own ``n``. The other
+switches' numbers, the spread and the all-donor corner stay over every pair: a
+duplicated T cell leaves them unchanged.
 
 **Donors.** Three per anchor, and every figure shows the three side by side:
 
@@ -59,7 +65,7 @@ $a_c$ the chunk of cell $c$ and $\\|\\cdot\\|$ the RMS over chunk steps and join
 * ``state_follow``: for the ``S..`` cell in absolute degrees,
   $(A_t^{S..} - A_t^{...})_j / \\Delta s_j$ per step, median over the joints the donor
   moved by more than $0.05\\,\\sigma_j$. Flat at 1: the chunk is a fixed delta riding on
-  the state. Falling: it converges on something the images fix;
+  the state. Falling: it converges on something the images fix. Only when S is a switch;
 * ``reseed_distance``: $\\|a_{...}^{(\\mathrm{seed}')} - a_{...}\\|$ for ``n_seeds - 1``
   other flow seeds on the anchor's own input. The sampler's own spread, drawn on the
   figures for scale. Not a floor: every cell shares one seed.
@@ -91,7 +97,9 @@ must also carry different subtask texts (another object, another container, anot
 ``migration/pick_input_swap_pairs.py`` searches a dataset for them.
 
 Runs inside rl_offline's validation loop when ``probe_parameters.enable_input_swap`` is
-set, or standalone on the validation set (output lands in
+set (``probe_parameters.input_swap_factors`` picks the switches; a history switch on a
+run without memory, or any switch with no key to move, is an error), or standalone on
+the validation set (output lands in
 ``<output_dir>/validation/step_<ckpt>/input_swap`` so ``view_probes <output_dir>`` shows it):
 
     .venv/bin/python -m lerobot.probes.input_swap --config config_rl.yaml \\
@@ -138,12 +146,17 @@ from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
-# The switches in bit order: the state is bit 0 (``_state_follow`` reads the S-only cell
-# there), the images bit 1, the subtask text bit 2.
-FACTOR_LETTERS = {"state": "S", "image": "I", "subtask": "T"}
-INTERACTION_NAMES = {2: "two_way", 3: "three_way"}
+# Every switch the config may name, with its one-letter cell code. The config's order is
+# the bit order of the cube.
+FACTOR_LETTERS = {"state": "S", "image": "I", "subtask": "T", "state_history": "P", "image_history": "H"}
+FACTOR_WORDS = {
+    "state": "state", "image": "images", "subtask": "subtask text",
+    "state_history": "past states", "image_history": "past images",
+}
+INTERACTION_NAMES = {2: "two_way", 3: "three_way", 4: "four_way", 5: "five_way"}
 # Switches that select observation keys; the subtask switch selects the prompt text.
-OBS_FACTORS = ("state", "image")
+OBS_FACTORS = ("state", "image", "state_history", "image_history")
+DEFAULT_FACTORS = "state,image,subtask"
 DONOR_KINDS = ("same_episode", "matched", "random")
 # A same-episode donor sits at least this far from the anchor in time: closer frames
 # share the pose and the scene and swapping them changes nothing worth measuring.
@@ -155,8 +168,8 @@ MATCH_GRIPPER_TOL = 25.0
 # before its state-follow ratio is read; below it the ratio is a division by noise.
 STATE_FOLLOW_MIN_STD = 0.05
 
-FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "subtask": "#ff7f0e"}
-FACTOR_LEGEND = {"state": "blue state", "image": "green images", "subtask": "orange subtask text"}
+FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "subtask": "#ff7f0e", "state_history": "#9467bd", "image_history": "#17becf"}
+INTERACTION_COLORS = ["#bbbbbb", "#777777", "#444444", "#222222"]  # two-way, three-way, ... in the shares figure
 REF_COLOR = "#000000"
 ALL_DONOR_COLOR = "#d62728"
 KIND_COLORS = {"same_episode": "#2a9d8f", "matched": "#e07b00", "random": "#5b2c83"}
@@ -206,12 +219,24 @@ class Cube:
 
     @property
     def streams_text(self) -> str:
-        names = {"state": "state", "image": "images", "subtask": "subtask text"}
-        words = [names[f] for f in self.factors]
+        words = [FACTOR_WORDS[f] for f in self.factors]
         return ", ".join(words[:-1]) + " or " + words[-1]
+
+    @property
+    def has_text(self) -> bool:
+        return "subtask" in self.factors
+
+    @property
+    def text_bit(self) -> int:
+        """The T switch's bit, or 0 when the subtask text is not a switch (no cell then
+        depends on whether the two texts differ)."""
+        return 1 << self.index("subtask") if self.has_text else 0
 
     def index(self, factor: str) -> int:
         return self.factors.index(factor)
+
+    def bit(self, factor: str) -> int:
+        return 1 << self.index(factor)
 
     def single_in(self, factor_idx: int) -> int:
         return 1 << factor_idx
@@ -238,10 +263,21 @@ class Cube:
     def shown_cells(self) -> list[int]:
         """Single-stream cells, then two-stream cells, then the all-donor corner."""
         n = len(self.factors)
-        return [self.single_in(i) for i in range(n)] + [self.all_but(i) for i in range(n)] + [self.all_donor]
+        cells = [self.single_in(i) for i in range(n)] + [self.all_but(i) for i in range(n)] + [self.all_donor]
+        return list(dict.fromkeys(cells))  # with two switches "all but" repeats the singles
 
 
-CUBE = Cube(("state", "image", "subtask"))
+def cube_from_spec(spec: str | None) -> Cube:
+    """The cube named by ``probe_parameters.input_swap_factors`` (comma list, bit order)."""
+    factors = tuple(f.strip() for f in str(spec or DEFAULT_FACTORS).split(",") if f.strip())
+    unknown = [f for f in factors if f not in FACTOR_LETTERS]
+    if unknown:
+        raise ValueError(f"input_swap_factors: unknown switch(es) {unknown}; choose from {list(FACTOR_LETTERS)}")
+    if len(set(factors)) != len(factors):
+        raise ValueError(f"input_swap_factors: a switch is named twice in {factors}")
+    if len(factors) < 2:
+        raise ValueError(f"input_swap_factors: at least two switches are needed, got {factors}")
+    return Cube(factors)
 
 
 def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]]:
@@ -254,24 +290,35 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
     """
     groups: dict[str, list[str]] = {factor: [] for factor in cube.factors if factor in OBS_FACTORS}
     fixed: list[str] = []
+
+    def claim(factor: str, key) -> None:
+        if factor not in groups:
+            raise KeyError(f"observation key {key!r} needs the {factor!r} switch, which is not in {cube.factors}")
+        groups[factor].append(key)
+
     for key in obs:
         name = str(key)
-        # MEM history rides with the stream it remembers: the image switch moves the
-        # cameras' past with their present, the state switch the past states with the
-        # current one, and depth history stays the anchor's like the depth frame. A
-        # camera's present flag rides with its image.
+        # A history window gets its own switch when the cube has one; otherwise it rides
+        # with the stream it remembers (the image switch moves the cameras' past with
+        # their present, the state switch the past states with the current one). Depth
+        # history stays the anchor's like the depth frame. A camera's present flag rides
+        # with its image.
+        is_history = name.startswith("history.")
         stream = name.removeprefix("history.").removeprefix("probe_complementary.camera_is_present.")
         if stream == OBS_STATE:
-            groups["state"].append(key)
+            claim("state_history" if is_history and "state_history" in groups else "state", key)
         elif stream.startswith("observation.images."):
-            groups["image"].append(key)
+            claim("image_history" if is_history and "image_history" in groups else "image", key)
         elif stream.startswith(("observation.depth.", "probe_complementary.depth.", "depth.")):
             fixed.append(key)   # the depth frame and its present flag / intrinsics stay the anchor's
         else:
             raise KeyError(f"observation key {key!r} belongs to no swap switch")
     empty = [factor for factor, keys in groups.items() if not keys]
     if empty:
-        raise KeyError(f"no observation keys for switch(es) {empty}; the cube would have duplicate cells")
+        raise KeyError(
+            f"no observation keys for switch(es) {empty}; the cube would have duplicate cells "
+            "(a history switch needs memory on: policy.memory.history_keys)"
+        )
     return groups, fixed
 
 
@@ -286,8 +333,8 @@ def _cell(anchor: dict, donor: dict, mask: int, groups: dict[str, list[str]], fi
 
 def _cell_subtasks(anchor_subtask: str | None, donor_subtask: str | None, cube: Cube) -> list[str | None]:
     """The prompt's subtask text per cell: the donor's where the T bit is set, else the anchor's."""
-    bit = cube.index("subtask")
-    return [(donor_subtask if mask >> bit & 1 else anchor_subtask) or None for mask in range(cube.n_cells)]
+    bit = cube.text_bit
+    return [(donor_subtask if mask & bit else anchor_subtask) or None for mask in range(cube.n_cells)]
 
 
 # ── Frames and donors ─────────────────────────────────────────────────────────
@@ -392,8 +439,8 @@ def _factorial_shares(cells: np.ndarray, cube: Cube) -> dict[str, float]:
     total = sum(beta.values())
     scale = total if total > 0 else 1.0
     shares = {factor: beta[1 << i] / scale for i, factor in enumerate(cube.factors)}
-    for order, name in INTERACTION_NAMES.items():
-        shares[name] = sum(v for s, v in beta.items() if bin(s).count("1") == order) / scale
+    for order in range(2, len(cube.factors) + 1):
+        shares[INTERACTION_NAMES[order]] = sum(v for s, v in beta.items() if bin(s).count("1") == order) / scale
     shares["spread"] = float(np.sqrt(total / x.shape[1]))
     return shares
 
@@ -407,13 +454,15 @@ def _main_effects(cells: np.ndarray, cube: Cube) -> dict[str, float]:
     return out
 
 
-def _state_follow(unnorm: np.ndarray, anchor_state: np.ndarray, donor_state: np.ndarray, std: np.ndarray):
+def _state_follow(unnorm: np.ndarray, anchor_state: np.ndarray, donor_state: np.ndarray, std: np.ndarray, cube: Cube):
     """Per-step ratio of the state-only cell's absolute shift to the state shift."""
+    if "state" not in cube.factors:
+        return None
     delta = donor_state - anchor_state
     moved = np.abs(delta) >= STATE_FOLLOW_MIN_STD * std
     if not moved.any():
         return None
-    shift = unnorm[1] - unnorm[0]  # the S-only cell (the state is bit 0), [T, D] degrees
+    shift = unnorm[cube.bit("state")] - unnorm[0]  # the S-only cell, [T, D] degrees
     return np.median(shift[:, moved] / delta[moved][None, :], axis=1)
 
 
@@ -453,11 +502,15 @@ def _summarize(rows: list[dict], horizon: int, cube: Cube) -> dict:
     by_kind = {kind: [r for r in rows if r["donor_kind"] == kind] for kind in DONOR_KINDS}
     codes = [cube.code(m) for m in range(cube.n_cells)]
     n_joints = len(rows[0]["per_joint"][0])
-    t_bit = 1 << cube.index("subtask")
+    t_bit = cube.text_bit
     # Numbers that isolate the T switch are read over the pairs whose texts differ: the
     # T cells (other than the all-donor corner, which a duplicated T cell leaves as it
-    # was), the T main effect, and the variance shares that carry T contrasts.
-    t_share_keys = {"subtask", *cube.interaction_keys}
+    # was), the T main effect, and the variance shares that carry T contrasts. Without a
+    # T switch nothing is filtered (t_bit is 0 and t_share_keys empty).
+    t_share_keys = {"subtask", *cube.interaction_keys} if cube.has_text else set()
+    # The cell the demo-gap readouts compare the whole frame against: the images alone,
+    # or the first switch when the images are not one.
+    scene_factor = "image" if "image" in cube.factors else cube.factors[0]
     summary: dict = {
         "cells": codes,
         "cell_labels": {code: cube.label(m) for m, code in enumerate(codes)},
@@ -467,16 +520,17 @@ def _summarize(rows: list[dict], horizon: int, cube: Cube) -> dict:
         "n_pairs": {kind: len(v) for kind, v in by_kind.items()},
         "reseed_distance": _quartiles([r["reseed_distance"] for r in rows if r["reseed_distance"] is not None]),
         "horizon": horizon,
+        "scene_factor": scene_factor,
         "over_subtask_differs": {
             "cells": [code for c, code in enumerate(codes) if c & t_bit and c != cube.all_donor],
-            "main_effect": ["subtask"],
+            "main_effect": ["subtask"] if cube.has_text else [],
             "variance_share": sorted(t_share_keys),
         },
         "kinds": {},
     }
     for kind in DONOR_KINDS:
         rows_k = by_kind[kind]
-        rows_t = [r for r in rows_k if r["subtask_differs"]]
+        rows_t = [r for r in rows_k if r["subtask_differs"]] if cube.has_text else rows_k
 
         def rows_for_cell(mask: int) -> list[dict]:
             return rows_t if mask & t_bit and mask != cube.all_donor else rows_k
@@ -486,7 +540,7 @@ def _summarize(rows: list[dict], horizon: int, cube: Cube) -> dict:
 
         gaps = np.array([r["demo_gap"] for r in rows_k])
         policy = np.array([r["rms"][cube.all_donor] for r in rows_k])
-        image_only = np.array([r["rms"][cube.single_in(1)] for r in rows_k])
+        image_only = np.array([r["rms"][cube.bit(scene_factor)] for r in rows_k])
         curves = [r["state_follow"] for r in rows_k if r["state_follow"] is not None]
         block: dict = {
             "n_pairs": len(rows_k),
@@ -519,7 +573,7 @@ def _summarize(rows: list[dict], horizon: int, cube: Cube) -> dict:
             "demo_gap": _quartiles(gaps),
             "policy_over_demo_gap": _quartiles(policy / np.maximum(gaps, 1e-9)),
             "spearman_all_donor_vs_demo_gap": _spearman(policy, gaps),
-            "spearman_image_only_vs_demo_gap": _spearman(image_only, gaps),
+            "spearman_scene_only_vs_demo_gap": _spearman(image_only, gaps),
             "state_follow": {
                 "n": len(curves),
                 "median": np.median(curves, axis=0).tolist() if curves else None,
@@ -557,6 +611,7 @@ def _summarize_pairs(rows: list[dict], horizon: int, cube: Cube) -> dict:
         "n_pairs": {"picked": len(rows)},
         "reseed_distance": _quartiles([r["reseed_distance"] for r in rows if r["reseed_distance"] is not None]),
         "horizon": horizon,
+        "scene_factor": "image" if "image" in cube.factors else cube.factors[0],
         "pairs": {},
     }
     for k, row in enumerate(rows, start=1):
@@ -612,7 +667,8 @@ def _kind_legend(ax, summary: dict, loc: str = "upper left") -> None:
             if kind == "same_episode"
             else f"median arm gap {block['arm_gap_deg']['median']:.0f} deg"
         )
-        detail += f"; T differs on {block['subtask_differs_n']}/{block['n_pairs']}"
+        if "subtask" in summary["factors"]:
+            detail += f"; T differs on {block['subtask_differs_n']}/{block['n_pairs']}"
         handles.append(Patch(facecolor=KIND_COLORS[kind], label=f"{KIND_LABELS[kind]}  ({detail})"))
     ax.legend(handles=handles, fontsize=8, loc=loc, title="donor", title_fontsize=8)
 
@@ -623,7 +679,7 @@ def _render_distributions(rows: list[dict], summary: dict, output_path: str, cub
     reseed = summary["reseed_distance"]["median"]
     fig, ax = plt.subplots(figsize=(13, 6.4))
     offsets = np.linspace(-0.27, 0.27, len(DONOR_KINDS))
-    t_bit = 1 << cube.index("subtask")
+    t_bit = cube.text_bit
     for pos, mask in enumerate(cells):
         for offset, kind in zip(offsets, DONOR_KINDS):
             rows_k = by_kind[kind]
@@ -650,10 +706,11 @@ def _render_distributions(rows: list[dict], summary: dict, output_path: str, cub
     caption = [
         "One box per (cell, donor). The box is the distribution over anchors of that cell's RMS distance from the",
         "anchor's own chunk, all cells at the same flow seed. Left: one switch flipped to the donor, the rest kept. Middle:",
-        "all switches but one flipped. Right: the donor's whole frame and subtask text under the anchor's depth. Cells with",
-        "the T switch flipped are read over the pairs whose subtask texts differ (counts in the legend). Dashed line: median",
-        "distance between two flow seeds on the anchor's own input, for scale.",
-    ]
+        f"all switches but one flipped. Right: every switch ({cube.streams_text}) from the donor under the anchor's depth.",
+    ] + (
+        ["Cells with the T switch flipped are read over the pairs whose subtask texts differ (counts in the legend)."]
+        if cube.has_text else []
+    ) + ["Dashed line: median distance between two flow seeds on the anchor's own input, for scale."]
     panel_caption(ax, caption, y=-0.18)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -698,8 +755,8 @@ def _render_per_joint(summary: dict, joint_names: list[str], output_path: str, c
 
 def _render_shares(summary: dict, output_path: str, cube: Cube) -> None:
     keys = (*cube.factors, *cube.interaction_keys)
-    labels = {**{f: f"{f} (main effect)" for f in cube.factors}, "two_way": "two-way interactions", "three_way": "three-way interaction"}
-    colors = [*(FACTOR_COLORS[f] for f in cube.factors), "#bbbbbb", "#777777"]
+    labels = {**{f: f"{f} (main effect)" for f in cube.factors}, **{k: f"{k.replace('_', '-')} interactions" for k in cube.interaction_keys}}
+    colors = [*(FACTOR_COLORS[f] for f in cube.factors), *INTERACTION_COLORS[: len(cube.interaction_keys)]]
     fig, ax = plt.subplots(figsize=(8.5, 4.8))
     for x, kind in enumerate(DONOR_KINDS):
         block = summary["kinds"][kind]["variance_share"]
@@ -722,8 +779,9 @@ def _render_shares(summary: dict, output_path: str, cube: Cube) -> None:
     panel_caption(ax, [
         f"For one anchor and one donor the {cube.n_cells} chunks differ; their total variance splits exactly into what each switch",
         "does on its own (colours) and what only appears when switches flip together (greys). Bars are medians over",
-        f"anchors, renormalized to 1; the subtask and interaction shares over the pairs whose subtask texts differ. 'spread'",
-        f"is the RMS deviation of the {cube.n_cells} chunks around their mean, normalized units.",
+        "anchors, renormalized to 1"
+        + ("; the subtask and interaction shares over the pairs whose subtask texts differ" if cube.has_text else "")
+        + f". 'spread' is the RMS deviation of the {cube.n_cells} chunks around their mean, normalized units.",
     ], y=-0.22)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -764,7 +822,9 @@ def _render_anchors(rows: list[dict], episode_lengths: dict[int, int], fps: floa
 
 def _render_demo_gap(rows: list[dict], summary: dict, output_path: str, cube: Cube) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(12, 5.2))
-    for ax, (mask, title) in zip(axes, ((cube.all_donor, "all donor: the donor's whole frame"), (cube.single_in(1), "I only: the donor's images"))):
+    scene = summary["scene_factor"]
+    panels = ((cube.all_donor, "all donor: the donor's whole frame"), (cube.bit(scene), f"{FACTOR_LETTERS[scene]} only: the donor's {FACTOR_WORDS[scene]}"))
+    for ax, (mask, title) in zip(axes, panels, strict=True):
         lo, hi = np.inf, 0.0
         for kind in DONOR_KINDS:
             rows_k = [r for r in rows if r["donor_kind"] == kind]
@@ -787,7 +847,7 @@ def _render_demo_gap(rows: list[dict], summary: dict, output_path: str, cube: Cu
     panel_caption(axes[0], [
         "x: how far apart the humans' next second was for the anchor and the donor frame (normalized anchor-delta space,",
         "each chunk with its own anchor). y: how far the donor's inputs move the policy's chunk. On the diagonal the policy",
-        "varies between the two frames as much as the humans did; below it, less. Left: whole frame; right: images only.",
+        f"varies between the two frames as much as the humans did; below it, less. Left: whole frame; right: {FACTOR_WORDS[scene]} only.",
     ], y=-0.17)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -817,8 +877,7 @@ def _render_state_follow(summary: dict, output_path: str, cube: Cube) -> None:
     ax.grid(alpha=0.25)
     ax.tick_params(labelsize=7.5)
     panel_caption(ax, [
-        "Only the state (and with it the action anchor) comes from the donor; the other streams and the subtask text stay",
-        "the anchor's.",
+        "Only the state (and with it the action anchor) comes from the donor; every other switch stays the anchor's.",
         "1 at every step: the chunk is a fixed delta riding on the state. Falling toward 0: the chunk converges on a target",
         "the pictures fix. Median over the joints the donor moved by more than 0.05 std; band = IQR over anchors.",
     ], y=-0.17)
@@ -850,7 +909,7 @@ def _pair_notes(kind: str, label: str, subtask: str | None, row: dict, cube: Cub
     gap = f"arm gap {row['donor']['arm_gap_deg']:.1f} deg, gripper gap {row['donor']['gripper_gap']:.0f}"
     if row["donor"]["time_gap_s"] is not None:
         gap = f"time gap {row['donor']['time_gap_s']:.0f} s, " + gap
-    same_text = "" if row["subtask_differs"] else "   (same text: the T cells duplicate their partners)"
+    same_text = "" if row["subtask_differs"] or not cube.has_text else "   (same text: the T cells duplicate their partners)"
     return (
         f"donor: {KIND_LABELS[kind]}  ({gap});  {label};  cube spread {row['shares']['spread']:.4f}\n"
         f"subtask  anchor: {subtask!r}   donor: {row['donor_subtask']!r}{same_text}\n"
@@ -1155,8 +1214,8 @@ def _render_trace(records: list[dict], output_path: str, joint_names: list[str],
             "Orbit the end-effector paths, read which frame each cell follows, then check the two frames on the right."
         ),
         legend_note=(
-            "Black: the anchor's own chunk. Red: the donor's whole frame and subtask text. Solid colours: one switch flipped "
-            f"to the donor ({', '.join(FACTOR_LEGEND[f] for f in cube.factors)}). Dotted: all but one. Dashed grey / pink: the anchor's / "
+            f"Black: the anchor's own chunk. Red: every switch ({cube.streams_text}) from the donor. Solid colours: one switch flipped "
+            f"to the donor ({', '.join(f'{FACTOR_LETTERS[f]} = {FACTOR_WORDS[f]}' for f in cube.factors)}). Dotted: all but one. Dashed grey / pink: the anchor's / "
             "the donor's demonstration. Diamonds: the anchor's (black) and the donor's (red) measured pose. Paths are "
             "Butterworth-filtered as the runtime sends them; demonstrations are raw."
         ),
@@ -1210,15 +1269,16 @@ def _write_manifest(output_dir: str, summary: dict, example_files: list[tuple[st
                 )
             )
         metrics.append(Metric(f"kinds.{kind}.headline.interactions", f"{kind}: share of the cube's variance from interactions", fmt=2))
-        metrics.append(
-            Metric(
-                f"kinds.{kind}.headline.subtask_differs_fraction",
-                f"{kind}: fraction of pairs whose subtask texts differ",
-                fmt=2,
-                good="none",
-                note="The T switch is a no-op on the other pairs; every subtask-specific number is read over these.",
+        if cube.has_text:
+            metrics.append(
+                Metric(
+                    f"kinds.{kind}.headline.subtask_differs_fraction",
+                    f"{kind}: fraction of pairs whose subtask texts differ",
+                    fmt=2,
+                    good="none",
+                    note="The T switch is a no-op on the other pairs; every subtask-specific number is read over these.",
+                )
             )
-        )
         metrics.append(
             Metric(
                 f"kinds.{kind}.headline.policy_over_demo_gap",
@@ -1238,17 +1298,17 @@ def _write_manifest(output_dir: str, summary: dict, example_files: list[tuple[st
             "How far each cell moves the chunk, per donor kind",
             how=(
                 "One box per (cell, donor kind), the distribution over anchors of $\\|a_c - a_{...}\\|$ at one shared "
-                "flow seed. Left: one switch flipped to the donor. Middle: all but one flipped. Right: the donor's whole "
-                "frame and subtask text under the anchor's depth. A switch whose box sits near the reseed line moves the "
-                "chunk as much as changing the noise does; one near the bottom is barely read. T cells are read over the "
-                "pairs whose subtask texts differ."
+                f"flow seed. Left: one switch flipped to the donor. Middle: all but one flipped. Right: every switch "
+                f"({cube.streams_text}) from the donor under the anchor's depth. A switch whose box sits near the reseed "
+                "line moves the chunk as much as changing the noise does; one near the bottom is barely read."
+                + (" T cells are read over the pairs whose subtask texts differ." if cube.has_text else "")
             ),
             primary=True,
         ),
         Panel("variance_shares.png", "Which switch the cube varies with", how="Stacked main-effect shares per donor kind; the greys are interactions.", primary=True),
         Panel("per_joint.png", "Where a single switch's displacement lands", how="Per joint and per chunk step, median over anchors, one switch flipped to the donor."),
         Panel("demo_gap.png", "Policy displacement against the demonstrations' own gap", how="Diagonal: the policy varies between the two frames as much as the humans did.", primary=True),
-        Panel("state_follow.png", "S only, in degrees", how="Ratio of the chunk's absolute shift to the state shift per step: 1 is a delta riding on the state."),
+        *([Panel("state_follow.png", "S only, in degrees", how="Ratio of the chunk's absolute shift to the state shift per step: 1 is a delta riding on the state.")] if "state" in cube.factors else []),
         Panel("anchors.png", "Where the anchors sit and where their matched donors come from", how="Colour is the arm-joint gap to the matched donor; a line joins each anchor to its donor's position."),
         Panel("input_swap.json", "Summary and every pair", how=f"Per pair: donor provenance and gaps, the {cube.n_cells} cells' displacements (normalized, from the all-donor cell, and in degrees), per-joint and per-step displacement, variance shares, demonstrations' gap, state-follow curve."),
     ]
@@ -1285,7 +1345,7 @@ def _write_pairs_manifest(output_dir: str, summary: dict, example_files: list[tu
             metrics.append(Metric(
                 f"pairs.{name}.headline.single_in_displacement.{factor}",
                 f"{name} ({where}): chunk displacement when only the {factor} comes from the donor",
-                fmt=3, baseline=reseed, primary=(factor == "image"), trend=True,
+                fmt=3, baseline=reseed, primary=(factor == summary["scene_factor"]), trend=True,
                 note="Normalized RMS distance from the anchor's own chunk. The baseline is the distance between two flow seeds on the same input, for scale.",
             ))
         metrics.append(Metric(
@@ -1340,7 +1400,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     seed = int(p.random_seed)
     n_reseeds = max(int(p.n_seeds) - 1, 1)
     rng = np.random.RandomState(seed)
-    cube = CUBE
+    cube = cube_from_spec(getattr(p, "input_swap_factors", None))
 
     table = _frame_table(dataset, stride)
     grid = table["global_idx"]
@@ -1424,7 +1484,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
                 gt_donor_norm = adapter.normalize_gt_actions(donor["gt_actions"], donor["state"]).numpy()[:, :n_joints]
                 donor_state = donor["state"].numpy().astype(np.float64)
-                follow = _state_follow(cells_deg, anchor_state[:n_joints], donor_state[:n_joints], table["state_std"][:n_joints])
+                follow = _state_follow(cells_deg, anchor_state[:n_joints], donor_state[:n_joints], table["state_std"][:n_joints], cube)
                 rows.append({
                     "donor_kind": kind,
                     "anchor": {"global_idx": int(anchor_gidx), "episode": int(anchor["episode_idx"]), "frame": int(anchor["frame_idx"])},
@@ -1459,7 +1519,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 f"[input_swap] anchor {a_idx + 1}/{len(anchors)} ep{anchor['episode_idx']} fr{anchor['frame_idx']}"
                 f"  {focus_kind} (arm gap {focus['donor']['arm_gap_deg']:.1f} deg) {'/'.join(cube.letters)} only = "
                 f"{singles}  all {focus['rms'][cube.all_donor]:.3f}"
-                f"{'' if focus['subtask_differs'] else '  [same subtask text]'}"
+                f"{'' if focus['subtask_differs'] or not cube.has_text else '  [same subtask text]'}"
                 f"  ({elapsed / (a_idx + 1):.1f} s/anchor)"
             )
     finally:
@@ -1486,7 +1546,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         _render_shares(summary, os.path.join(output_dir, "variance_shares.png"), cube)
         _render_anchors(rows, episode_lengths, fps, os.path.join(output_dir, "anchors.png"))
         _render_demo_gap(rows, summary, os.path.join(output_dir, "demo_gap.png"), cube)
-        _render_state_follow(summary, os.path.join(output_dir, "state_follow.png"), cube)
+        if "state" in cube.factors:
+            _render_state_follow(summary, os.path.join(output_dir, "state_follow.png"), cube)
         # Examples stratified by the cube's spread: concentrated, typical, spread out.
         for kind in DONOR_KINDS:
             rows_k = sorted((r for r in rows if r["donor_kind"] == kind), key=lambda r: r["shares"]["spread"])
@@ -1524,7 +1585,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 f"[input_swap] {name} ep{block['anchor']['episode']} fr{block['anchor']['frame']} ← "
                 f"ep{block['donor']['episode']} fr{block['donor']['frame']}: single-stream displacement {single}  "
                 f"all donor {head['all_donor_displacement']:.3f}  demo gap {block['demo_gap']:.3f}"
-                f"{'' if block['subtask_differs'] else '  [same subtask text: T is a no-op]'}"
+                f"{'' if block['subtask_differs'] or not cube.has_text else '  [same subtask text: T is a no-op]'}"
             )
     else:
         _write_manifest(output_dir, summary, example_files, cube)
@@ -1535,8 +1596,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             block = summary["kinds"][kind]
             logging.info(
                 f"[input_swap] {kind}: variance shares {shares}  single-stream displacement {single}  "
-                f"all donor {head['all_donor_displacement']:.3f}  policy/demo gap {head['policy_over_demo_gap']:.2f}  "
-                f"(subtask text differs on {block['subtask_differs_n']}/{block['n_pairs']} pairs)"
+                f"all donor {head['all_donor_displacement']:.3f}  policy/demo gap {head['policy_over_demo_gap']:.2f}"
+                + (f"  (subtask text differs on {block['subtask_differs_n']}/{block['n_pairs']} pairs)" if cube.has_text else "")
             )
     logging.info(
         f"[input_swap] reseed distance {summary['reseed_distance']['median']:.3f}; wrote {output_dir} in {time.time() - started:.0f} s"

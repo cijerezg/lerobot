@@ -94,10 +94,10 @@ uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 
 `config_rl_sim.yaml` = config_rl.yaml with `env.robot: rebot_b601_sim` (layouts in `lerobot/src/lerobot/robots/rebot_b601_sim/scenes/`, README there), `sim_autostart` instead of the leader, task T085 and the auto subtask scorer. One layout, the checkpoint of the yaml; the run ends by itself after `env.robot.episodes` parks:
 
-MUJOCO_GL=egl uv run python -m lerobot.rl.inference_async --config_path=config_rl_sim.yaml [--env.robot.scene=ep1]
+MUJOCO_GL=egl uv run python -m lerobot.rl.inference_async --config_path=config_rl_sim.yaml [--env.robot.scene=twin_l1_tape_basket_right_p1]
 uv run rerun "$(ls -dt outputs/train/$(date +%F)/*rebot-sim-nail* | head -1)/rerun.rrd"
 
-Every layout on one checkpoint (what the chase runs on the DGX): `<run>/validation/step_<step>/sim/<layout>/{rerun.rrd,subtask_events.json}` + `sim/summary.md` (staged reward per episode, per-scene and easy/hard tier means; `sim_nail/` dirs are the pre-2026-10-22 nail-only eval). `LAYOUTS="ep0 ep2"` and `SIM_EVAL_ARGS="--env.robot.episodes=1 --env.processor.reset.control_time_s=20"` for a short run:
+Every layout on one checkpoint (what the chase runs on the DGX): `<run>/validation/step_<step>/sim/<layout>/{rerun.rrd,subtask_events.json}` + `sim/summary.md` (staged reward per episode, per-scene and per-tier means; `sim_nail/` dirs are the pre-2026-10-22 nail-only eval). `LAYOUTS="twin_l1_tape_basket_right_p1 twin_l2_pill_case_p1"` and `SIM_EVAL_ARGS="--env.robot.episodes=1 --env.processor.reset.control_time_s=20"` for a short run:
 
 lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
 

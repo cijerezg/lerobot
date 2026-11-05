@@ -119,13 +119,16 @@ def test_an_absent_camera_has_zero_attended_patch_tokens() -> None:
     out = step(_transition(2, [[True, True, True], [True, False, True]]))
     complementary = out[TransitionKey.COMPLEMENTARY_DATA]
     mask, ids = complementary["attention_mask"], complementary["input_ids"]
+    # Six prompt images: the three current frames, then one history slot per camera in
+    # the same order (docs/notes/memory_history_slot.md); an absent camera loses both.
     for cam_index in range(3):
-        span = wrist_cam_token_indices(
-            ids, image_patch_id=step._image_patch_id, num_images=3, cam_index=cam_index
-        )
-        assert mask[0, span[0]].sum() == span.shape[1], "row 0 records every camera"
-        expected = 0 if cam_index == 1 else span.shape[1]
-        assert mask[1, span[1]].sum() == expected
+        for image_index in (cam_index, cam_index + 3):
+            span = wrist_cam_token_indices(
+                ids, image_patch_id=step._image_patch_id, num_images=6, cam_index=image_index
+            )
+            assert mask[0, span[0]].sum() == span.shape[1], "row 0 records every camera"
+            expected = 0 if cam_index == 1 else span.shape[1]
+            assert mask[1, span[1]].sum() == expected
 
 
 def test_the_absent_camera_also_loses_its_temporal_history() -> None:

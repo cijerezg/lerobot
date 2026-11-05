@@ -496,9 +496,14 @@ class ProbeConfig:
     objective_max_episodes: int | None = None
 
     # Input swap. Anchors are n_frames_per_episode evenly spaced per episode unless
-    # overridden; every anchor gets three donors (same_episode / matched / random) and 8
-    # cells each, in one stacked forward per donor, so the cost is anchors x 3 forwards.
+    # overridden; every anchor gets three donors (same_episode / matched / random) and
+    # 2^k cells each (k switches), in one stacked forward per donor, so the cost is
+    # anchors x 3 forwards of batch 2^k.
     input_swap_n_frames_per_episode: int | None = None
+    # The switches, comma-separated in bit order, from state / image / subtask /
+    # state_history / image_history. A history switch needs memory on; a history with no
+    # switch of its own travels with the stream it remembers (probes/input_swap.py).
+    input_swap_factors: str = "state,image,subtask"
     # Deterministic generated-vs-GT 3-D action traces at each of p5 / p50 / p95.
     objective_exemplars_per_band: int = 3
 

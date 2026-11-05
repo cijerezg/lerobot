@@ -272,6 +272,23 @@ def _history_time_stamps(
     )
 
 
+def _history_images_clause(num_images: int, num_history_images: int, ages_seconds) -> str:
+    """The history-slot sentence (docs/notes/memory_history_slot.md §3): the last
+    num_history_images prompt images are the same cameras as the first ones taken
+    ages_seconds[-1] s earlier, with the older frames (ages_seconds[:-1], named newest
+    to oldest) folded in by the video encoder. "" when there are no slots."""
+    if num_history_images <= 0:
+        return ""
+    num_current = num_images - num_history_images
+    ages = [float(t) for t in ages_seconds]
+    older = " and ".join(f"{t:g}" for t in reversed(ages[:-1]))
+    return (
+        f" Images {num_current + 1} to {num_images} are the same cameras as images 1 to "
+        f"{num_current}, {ages[-1]:g} seconds earlier, with the frames from {older} seconds "
+        f"earlier folded in."
+    )
+
+
 def _build_robot_text(
     *,
     task: str,
@@ -283,6 +300,8 @@ def _build_robot_text(
     metadata: dict[str, Any] | None = None,
     num_history_states: int = 0,
     num_depth_tokens: int = 0,
+    num_history_images: int = 0,
+    history_ages_seconds=(6.0, 4.0, 2.0),
 ) -> str:
     """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
 
@@ -292,8 +311,14 @@ def _build_robot_text(
 
     num_history_states: past proprio states rendered as continuous placeholder
     positions (one STATE_HISTORY_TOKEN per timestep, oldest to newest; the model
-    scatters projected states onto them — 04_memory.md §2.4). Image history is
-    NOT in the prompt: it enters through the MEM video encoder.
+    scatters projected states onto them — 04_memory.md §2.4).
+
+    num_history_images: history slots (docs/notes/memory_history_slot.md §3): the last
+    num_history_images of the num_images prompt images are the same cameras as the
+    first ones at the newest history age, with the older history frames folded in by
+    the MEM video encoder. history_ages_seconds (oldest -> newest) words the clause;
+    0 slots = no clause (image history then rewrites the current frames in place, or
+    there is none).
 
     num_depth_tokens: point-map depth tokens rendered as DEPTH_TOKEN placeholders,
     row-major like the encoder's patch grid. The clause sits immediately after the
@@ -336,6 +361,7 @@ def _build_robot_text(
         if num_history_states > 0
         else ""
     )
+    history_images_clause = _history_images_clause(num_images, num_history_images, history_ages_seconds)
     metadata_clause = ""
     if metadata is not None:
         if "quality" in metadata:
@@ -352,7 +378,7 @@ def _build_robot_text(
             metadata_clause += f" The contact is {contact_phrase_for(int(metadata['contact']))}."
     prompt = (
         f"{embodiment_clause}{control_mode_clause}The task is to {task}."
-        f"{depth_clause}{subtask_clause}{state_clause}{history_clause}"
+        f"{depth_clause}{subtask_clause}{state_clause}{history_clause}{history_images_clause}"
         f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
@@ -372,12 +398,14 @@ def _build_subtask_generation_text(
     num_images: int,
     embodiment: str | None = None,
     control_mode: str | None = None,
+    num_history_images: int = 0,
+    history_ages_seconds=(6.0, 4.0, 2.0),
 ) -> str:
     """Generation prompt (two-prompt design): same visual/state context as the action
     prompt, but the question asks for the next step. The assistant's answer is the
     subtask alone; at training time the caller appends it (+eos) and puts CE labels
-    on it. The embodiment and control-mode clauses render exactly as in the action
-    prompt (see _build_robot_text); None omits either."""
+    on it. The embodiment, control-mode and history-slot clauses render exactly as in
+    the action prompt (see _build_robot_text); None / 0 omits them."""
     embodiment_clause = (
         f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
     )
@@ -387,8 +415,10 @@ def _build_subtask_generation_text(
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
+    history_images_clause = _history_images_clause(num_images, num_history_images, history_ages_seconds)
     prompt = (
-        f"{embodiment_clause}{control_mode_clause}The task is to {task}.{state_clause} "
+        f"{embodiment_clause}{control_mode_clause}The task is to {task}.{state_clause}"
+        f"{history_images_clause} "
         f"Given these, what step should the robot perform next?"
     )
     if num_images <= 0:
@@ -1353,6 +1383,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     history_dropout: float = 0.0
     history_stride_seconds: float = 1.0
     history_times_seconds: list[float] | None = None
+    # "slot": a sample with image history gets one extra prompt image per camera (its
+    # newest history frame, images C+1..2C) that the video encoder folds the older
+    # frames into, plus the clause naming them; "inplace": no extra images, the encoder
+    # rewrites the current frames (MolmoAct2Config.history_image_mode).
+    history_image_mode: str = "slot"
     # Anti-laziness RGB dropout (depth_redesign_options.md §4.3): mask ONE camera's
     # <im_patch> span out of the attention mask (the depth camera's), so the sample
     # is solvable only through depth — nothing attends the span, no gradient flows
@@ -1451,6 +1486,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "history_dropout": self.history_dropout,
             "history_stride_seconds": self.history_stride_seconds,
             "history_times_seconds": self.history_times_seconds,
+            "history_image_mode": self.history_image_mode,
             "rgb_dropout": self.rgb_dropout,
             "rgb_dropout_key": self.rgb_dropout_key,
             "num_depth_tokens": self.num_depth_tokens,
@@ -1702,8 +1738,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
         control_modes = self._extract_control_modes(complementary, batch_size)
-        history_stack = self._extract_history_image_stack(
-            complementary, self._resolve_image_keys(observation), batch_size
+        image_keys = self._resolve_image_keys(observation)
+        history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
+        slot_images = (
+            self._newest_history_frames(complementary, image_keys, batch_size)
+            if history_stack is not None and self.history_image_mode == "slot"
+            else None
         )
 
         state_np = self._prompt_state(state).detach().cpu().numpy()
@@ -1713,18 +1753,23 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         history_on = torch.ones(batch_size, dtype=torch.bool)
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
-            flat_images.extend(images)
             name = subtask_texts[batch_idx]
             if name is not None and random.random() < self.history_dropout:
                 history_on[batch_idx] = False  # training text only; the encoder sees no history
+            num_slots = len(images) if slot_images is not None and history_on[batch_idx] else 0
+            flat_images.extend(images)
+            if num_slots:
+                flat_images.extend(slot_images[batch_idx])
             prompt = _build_subtask_generation_text(
                 task=tasks[batch_idx],
                 discrete_state_string=_build_discrete_state_string(
                     state_np[batch_idx], self.num_state_tokens
                 ),
-                num_images=len(images),
+                num_images=len(images) + num_slots,
                 embodiment=embodiment_texts[batch_idx],
                 control_mode=control_modes[batch_idx],
+                num_history_images=num_slots,
+                history_ages_seconds=history_stack[1].tolist() if num_slots else (),
             )
             prompts.append(prompt)
             fulls.append(f"{prompt}{name}{self._eos_token}" if name else prompt)
@@ -1924,6 +1969,23 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         return frames, times
 
     @staticmethod
+    def _newest_history_frames(
+        complementary: dict, image_keys: list[str], batch_size: int
+    ) -> list[list[np.ndarray]]:
+        """Per sample, per camera, the newest frame of the gathered window
+        ("history.{cam}"[..., -1]) normalized like a prompt image: the pixels of the
+        history slots in slot mode."""
+        newest: list[list[np.ndarray]] = []
+        for batch_idx in range(batch_size):
+            row = []
+            for key in image_keys:
+                frames = complementary[f"history.{key}"]
+                item = frames[batch_idx] if getattr(frames, "ndim", 0) >= 5 else frames
+                row.append(_normalize_image(item[-1]))
+            newest.append(row)
+        return newest
+
+    @staticmethod
     def _extract_metadata(complementary: dict, batch_size: int) -> list[dict | None]:
         metadata = complementary.get("metadata")
         if metadata is not None:
@@ -2022,6 +2084,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         history_states = self._extract_history_states(complementary, batch_size)
         image_keys = self._resolve_image_keys(observation)
         history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
+        slot_images = (
+            self._newest_history_frames(complementary, image_keys, batch_size)
+            if history_stack is not None and self.history_image_mode == "slot"
+            else None
+        )
         camera_present = self._extract_camera_presence(complementary, image_keys, batch_size)
 
         prompt_texts: list[str] = []
@@ -2049,24 +2116,31 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 if random.random() < self.metadata_dropout:
                     metadata = None
                 if random.random() < self.history_dropout:
-                    # One flip drops the whole short-term block: state placeholders
-                    # AND the sample's history keys in the video encoder, whose
-                    # temporal step is then left with the query's own timestep only.
-                    # No history is visible; this is NOT bit-identical to the
-                    # pretrained single-frame op (that invariant was dropped with the
-                    # separable rebuild, 2026-08-03).
+                    # One flip drops the whole short-term block: state placeholders,
+                    # the history slots (slot mode: the legacy prompt and the stock
+                    # single-frame ViT, byte-identical) and the sample's history keys
+                    # in the video encoder (inplace mode: the temporal step is left
+                    # with the query's own timestep, NOT bit-identical to the
+                    # pretrained op since the separable rebuild, 2026-08-03).
                     history_on[batch_idx] = False
                 if rgb_drop_cam is not None and random.random() < self.rgb_dropout:
                     # Anti-laziness RGB dropout: the camera's <im_patch> span is
                     # masked out of attention below — token layout unchanged, no
                     # consumer attends it, no gradient through its vision path.
                     rgb_dropped[batch_idx] = True
+            # History slots: the newest history frame per camera, so the stock processor
+            # allocates the tokens the video encoder's output lands on.
+            num_slots = len(images) if slot_images is not None and history_on[batch_idx] else 0
             flat_images.extend(images)
-            max_num_images = max(max_num_images, len(images))
+            if num_slots:
+                flat_images.extend(slot_images[batch_idx])
+            max_num_images = max(max_num_images, len(images) + num_slots)
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,
-                num_images=len(images),
+                num_images=len(images) + num_slots,
+                num_history_images=num_slots,
+                history_ages_seconds=history_stack[1].tolist() if num_slots else (),
                 embodiment=embodiment_texts[batch_idx],
                 control_mode=control_modes[batch_idx],
                 num_history_states=(
@@ -2128,6 +2202,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         # a recorded fact instead of a coin flip. The token layout stays uniform across
         # the batch (that is why the placeholder tensor exists at all); the ViT still
         # runs on the placeholder, which is wasted compute, not a wrong forward.
+        # A camera's history slot (image C + cam_index) follows its current slot.
+        slot_offsets = [0, len(image_keys)] if max_num_images > len(image_keys) else [0]
         if not bool(camera_present.all()):
             from lerobot.policies.depth_pointmap.modeling_stream import mask_camera_patch_span
 
@@ -2135,14 +2211,15 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 rows = (~camera_present[:, cam_index]).nonzero(as_tuple=True)[0]
                 if rows.numel() == 0:
                     continue
-                inputs["attention_mask"] = mask_camera_patch_span(
-                    inputs["attention_mask"],
-                    inputs["input_ids"],
-                    image_patch_id=self._image_patch_id,
-                    num_images=max_num_images,
-                    cam_index=cam_index,
-                    rows=rows,
-                )
+                for offset in slot_offsets:
+                    inputs["attention_mask"] = mask_camera_patch_span(
+                        inputs["attention_mask"],
+                        inputs["input_ids"],
+                        image_patch_id=self._image_patch_id,
+                        num_images=max_num_images,
+                        cam_index=cam_index + offset,
+                        rows=rows,
+                    )
 
         if rgb_drop_cam is not None and bool(rgb_dropped.any()):
             # RGB dropout = attention masking (depth_redesign_options.md §4.3): the
@@ -2155,14 +2232,15 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             from lerobot.policies.depth_pointmap.modeling_stream import mask_camera_patch_span
 
             rows = rgb_dropped.nonzero(as_tuple=True)[0]
-            inputs["attention_mask"] = mask_camera_patch_span(
-                inputs["attention_mask"],
-                inputs["input_ids"],
-                image_patch_id=self._image_patch_id,
-                num_images=max_num_images,
-                cam_index=rgb_drop_cam,
-                rows=rows,
-            )
+            for offset in slot_offsets:
+                inputs["attention_mask"] = mask_camera_patch_span(
+                    inputs["attention_mask"],
+                    inputs["input_ids"],
+                    image_patch_id=self._image_patch_id,
+                    num_images=max_num_images,
+                    cam_index=rgb_drop_cam + offset,
+                    rows=rows,
+                )
 
         if "future_visual_valid" in complementary:
             future_keys = [f"future.{key}" for key in image_keys]
@@ -2450,6 +2528,7 @@ def make_molmoact2_pre_post_processors(
             history_dropout=history_dropout,
             history_stride_seconds=config.history_stride_seconds,
             history_times_seconds=config.history_times_seconds,
+            history_image_mode=config.history_image_mode,
             rgb_dropout=rgb_dropout,
             rgb_dropout_key=rgb_dropout_key,
             num_depth_tokens=num_depth_tokens,
