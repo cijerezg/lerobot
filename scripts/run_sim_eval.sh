@@ -12,6 +12,8 @@
 # come from the registry (robots/rebot_b601_sim/tasks.py) as CLI overrides of the config's nail-task values.
 # The sim runs on a sim clock (config env.robot.inference_delay_steps, 2026-10-28): the env steps in lockstep with the
 # inference worker at a fixed RTC delay, so layouts can share the GPU without changing the policy's regime.
+# JUDGE=1 (2026-11-04): after the sims, Gemma 4 31B-it scores every recorded episode (probes/sim_judge.sh, Spark only) and
+# sim_summary.py adds reward_judge.* / judge_agreement.* next to the scorer's reward; JUDGE_EPISODES / JUDGE_MAX_QUERIES cap it.
 # Env: LAYOUTS (default: the registry's LAYOUTS), SIM_EVAL_ARGS (extra inference_async flags, e.g.
 # "--env.robot.episodes=1 --env.processor.reset.control_time_s=20"), PARALLEL (default 1; N runs up to N layouts at
 # once, each layout's console output then goes to <sim>/<layout>.console.log beside its folder).
@@ -129,5 +131,10 @@ for i in "${!running_pids[@]}"; do
   wait "${running_pids[$i]}"
   finish_layout "${running_layouts[$i]}" $?
 done
+if [[ "${JUDGE:-0}" == "1" ]]; then
+  # JUDGE=1 (2026-11-04): Gemma scores the recorded episodes after the sims (lerobot/scripts/probes/sim_judge.sh, Spark only); a judge
+  # failure keeps the sim results valid (summary without the judge columns), so it does not fail the pass.
+  bash lerobot/scripts/probes/sim_judge.sh "$sim_out" || echo "judge stage failed; summary without reward_judge" >&2
+fi
 .venv/bin/python lerobot/scripts/probes/sim_summary.py "$sim_out" || failed=1
 exit $failed

@@ -73,7 +73,10 @@ def score_sim_episode(cfg: JudgeConfig, sim_dir: Path, episode: int, out: Path, 
     m = compare(timeline, record, spec)
     lags = [v["lag_s"] for v in m["stage_lag_s"].values() if v["lag_s"] is not None]
     final_ok = m["judge_final"]["stage"] == m["scorer_final"]["stage"] or (m["scorer_final"]["stage"] is None and m["judge_final"]["stage"] == "none")
-    return dict(n=m["n_steps"], failures=failures, cursor_accuracy=m["cursor_accuracy"], stage_accuracy_running_max=m["stage_accuracy_running_max"],
+    # judge reward = the scorer's definition applied to the judge's answers: cumulative value of the furthest stage it named
+    judge_stage = spec.stages[max(r["stage_id"] for r in rows)]
+    return dict(n=m["n_steps"], failures=failures, judge_reward=judge_stage.value, judge_success=float(judge_stage.id == spec.stages[-1].id),
+                cursor_accuracy=m["cursor_accuracy"], stage_accuracy_running_max=m["stage_accuracy_running_max"],
                 spearman_progress_max=m["spearman_progress_max"], stage_lag_mean_s=round(sum(lags) / len(lags), 2) if lags else None,
                 final_stage_match=float(final_ok), judge_progress_max=m["judge_final"]["progress_max"],
                 scorer_reward=m["scorer_final"]["reward"], scorer_success=float(m["scorer_final"]["success"]),
@@ -110,8 +113,8 @@ def main() -> None:
         jobs = sim_episodes(args.sim_run, args.layouts, args.episodes)
         print(f"{len(jobs)} episodes, {args.workers} in flight, model {cfg.model} at {cfg.endpoint}")
         rows = run_batch(jobs, args.out_dir, "judge", lambda d, ep, out: score_sim_episode(cfg, d, ep, out, stride, args.max_queries), args.workers)
-        write_table(rows, ["cursor_accuracy", "stage_accuracy_running_max", "final_stage_match", "spearman_progress_max", "stage_lag_mean_s",
-                           "judge_progress_max", "reward_dense", "scorer_success"],
+        write_table(rows, ["judge_reward", "scorer_reward", "judge_success", "scorer_success", "final_stage_match", "stage_accuracy_running_max",
+                           "spearman_progress_max", "stage_lag_mean_s", "cursor_accuracy", "judge_progress_max", "reward_dense"],
                     args.out_dir / "summary.md", f"Judge {cfg.model} on {args.sim_run} (period {args.period} s, {args.frames_per_camera} frames/camera, stride {stride})")
         return
 

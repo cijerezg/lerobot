@@ -189,7 +189,7 @@ else
   run sshx "mkdir -p '$RUN_DIR' '$WS/lerobot/scripts/probes'" || die "cannot prepare probe config directory"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$CONFIG" "$HOST:$REMOTE_CONFIG" || die "config rsync failed"
   (( ! WITH_SIM )) || run rsync -a -e "ssh ${SSH_OPTS[*]}" "$SIM_CONFIG" "$HOST:$REMOTE_SIM_CONFIG" || die "sim config rsync failed"
-  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/run_probes.sh" "$WS/lerobot/scripts/run_sim_eval.sh" "$HOST:$WS/lerobot/scripts/" || die "probe launcher rsync failed"
+  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/run_probes.sh" "$WS/lerobot/scripts/run_sim_eval.sh" "$WS/lerobot/scripts/spark_judge_serve.sh" "$HOST:$WS/lerobot/scripts/" || die "probe launcher rsync failed"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/probes/" "$HOST:$WS/lerobot/scripts/probes/" || die "probe helpers rsync failed"
 
   # ── Sync checkpoint ───────────────────────────────────────────────────────────
@@ -215,6 +215,8 @@ export PYTHONPATH='$WS/lerobot/src'
 export PATH="\$HOME/.local/bin:\$PATH"
 # run_sim_eval.sh: layouts run at once on the DGX (SIM_PARALLEL on the local side, 2026-10-28; 5 fits the 128 GB).
 export PARALLEL='${SIM_PARALLEL:-1}'
+# JUDGE=1 (2026-11-04): Gemma judge stage after the sims (probes/sim_judge.sh on the Spark); JUDGE_EPISODES / JUDGE_MAX_QUERIES cap it.
+export JUDGE='${JUDGE:-0}' JUDGE_EPISODES='${JUDGE_EPISODES:-}' JUDGE_MAX_QUERIES='${JUDGE_MAX_QUERIES:-}' JUDGE_WORKERS='${JUDGE_WORKERS:-4}'
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
 bash lerobot/scripts/$LAUNCHER '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'
