@@ -43,7 +43,7 @@ import logging
 import os
 import shutil
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -774,6 +774,11 @@ def find_cache(
     """The cache directory for this corpus and spec, or None."""
     fingerprint = cache_fingerprint(root, spec, anchors=anchors, episodes=episodes)
     candidate = Path(cache_dir) / fingerprint
+    if not (candidate / "metadata.json").is_file() and not spec.load_depth:
+        # A cache built with depth is a superset of a depth-free contract: the layout is the
+        # same and DiverseFrameCache leaves the depth bank closed when load_depth is off.
+        fingerprint = cache_fingerprint(root, replace(spec, load_depth=True), anchors=anchors, episodes=episodes)
+        candidate = Path(cache_dir) / fingerprint
     metadata_path = candidate / "metadata.json"
     if not metadata_path.is_file():
         return None

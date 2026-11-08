@@ -11,13 +11,16 @@ in bit order) from:
     T  subtask        the prompt's subtask clause ("The current step is ...")
     P  state_history  the MEM past-state window (``history.observation.state``)
     H  image_history  the MEM history slots (``history.observation.images.*``)
+    D  depth          the wrist depth frame (``observation.depth.*``) with its present flag,
+                      intrinsics and depth history
 
 The default is ``state,image,subtask``, the S/I/T cube of every run so far; with memory
 on, ``state,image,state_history,image_history`` asks whether the past is read at all,
-separately from the present. A history that has no switch of its own travels with the
-stream it remembers (image history with I, state history with S). Everything else — wrist
-depth and its history, the metadata clause, the task string — stays the anchor's own in
-every cell. $k$ switches give $2^k$ inputs, the cells of the cube. A cell is named by the
+separately from the present; ``state,image,depth`` weighs the depth frame against the
+two streams it accompanies. A history that has no switch of its own travels with the
+stream it remembers (image history with I, state history with S, depth history with D).
+Everything else — wrist depth when D is not a switch, the metadata clause, the task
+string — stays the anchor's own in every cell. $k$ switches give $2^k$ inputs, the cells of the cube. A cell is named by the
 switches flipped to the donor: ``...`` is the anchor's own prompt (the reference),
 ``.I.`` has only the donor's images, ``..T`` is the anchor's frame under the donor's
 subtask text, ``SIT`` the donor's frame and text under the anchor's depth.
@@ -148,14 +151,14 @@ from lerobot.utils.utils import init_logging
 
 # Every switch the config may name, with its one-letter cell code. The config's order is
 # the bit order of the cube.
-FACTOR_LETTERS = {"state": "S", "image": "I", "subtask": "T", "state_history": "P", "image_history": "H"}
+FACTOR_LETTERS = {"state": "S", "image": "I", "subtask": "T", "state_history": "P", "image_history": "H", "depth": "D"}
 FACTOR_WORDS = {
     "state": "state", "image": "images", "subtask": "subtask text",
-    "state_history": "past states", "image_history": "past images",
+    "state_history": "past states", "image_history": "past images", "depth": "depth",
 }
 INTERACTION_NAMES = {2: "two_way", 3: "three_way", 4: "four_way", 5: "five_way"}
 # Switches that select observation keys; the subtask switch selects the prompt text.
-OBS_FACTORS = ("state", "image", "state_history", "image_history")
+OBS_FACTORS = ("state", "image", "state_history", "image_history", "depth")
 DEFAULT_FACTORS = "state,image,subtask"
 DONOR_KINDS = ("same_episode", "matched", "random")
 # A same-episode donor sits at least this far from the anchor in time: closer frames
@@ -168,7 +171,7 @@ MATCH_GRIPPER_TOL = 25.0
 # before its state-follow ratio is read; below it the ratio is a division by noise.
 STATE_FOLLOW_MIN_STD = 0.05
 
-FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "subtask": "#ff7f0e", "state_history": "#9467bd", "image_history": "#17becf"}
+FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "subtask": "#ff7f0e", "state_history": "#9467bd", "image_history": "#17becf", "depth": "#8c564b"}
 INTERACTION_COLORS = ["#bbbbbb", "#777777", "#444444", "#222222"]  # two-way, three-way, ... in the shares figure
 REF_COLOR = "#000000"
 ALL_DONOR_COLOR = "#d62728"
@@ -227,6 +230,11 @@ class Cube:
         return "subtask" in self.factors
 
     @property
+    def fixed_text(self) -> str:
+        """What every cell keeps from the anchor besides the switches, for captions."""
+        return "under the anchor's metadata" if "depth" in self.factors else "under the anchor's depth"
+
+    @property
     def text_bit(self) -> int:
         """The T switch's bit, or 0 when the subtask text is not a switch (no cell then
         depends on whether the two texts differ)."""
@@ -281,7 +289,7 @@ def cube_from_spec(spec: str | None) -> Cube:
 
 
 def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]]:
-    """Every observation key claimed by exactly one switch, or held fixed (depth).
+    """Every observation key claimed by exactly one switch, or held fixed (depth without a D switch).
 
     An unclaimed key would ride along as the anchor's in every cell without anyone
     knowing, and an empty switch would make half the cells silent duplicates, so both
@@ -300,9 +308,10 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
         name = str(key)
         # A history window gets its own switch when the cube has one; otherwise it rides
         # with the stream it remembers (the image switch moves the cameras' past with
-        # their present, the state switch the past states with the current one). Depth
-        # history stays the anchor's like the depth frame. A camera's present flag rides
-        # with its image.
+        # their present, the state switch the past states with the current one). The depth
+        # frame, its present flag, intrinsics and history move together under the depth
+        # switch, and stay the anchor's without one. A camera's present flag rides with its
+        # image.
         is_history = name.startswith("history.")
         stream = name.removeprefix("history.").removeprefix("probe_complementary.camera_is_present.")
         if stream == OBS_STATE:
@@ -310,7 +319,10 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
         elif stream.startswith("observation.images."):
             claim("image_history" if is_history and "image_history" in groups else "image", key)
         elif stream.startswith(("observation.depth.", "probe_complementary.depth.", "depth.")):
-            fixed.append(key)   # the depth frame and its present flag / intrinsics stay the anchor's
+            if "depth" in groups:
+                claim("depth", key)
+            else:
+                fixed.append(key)   # the depth frame and its present flag / intrinsics stay the anchor's
         else:
             raise KeyError(f"observation key {key!r} belongs to no swap switch")
     empty = [factor for factor, keys in groups.items() if not keys]
@@ -706,7 +718,7 @@ def _render_distributions(rows: list[dict], summary: dict, output_path: str, cub
     caption = [
         "One box per (cell, donor). The box is the distribution over anchors of that cell's RMS distance from the",
         "anchor's own chunk, all cells at the same flow seed. Left: one switch flipped to the donor, the rest kept. Middle:",
-        f"all switches but one flipped. Right: every switch ({cube.streams_text}) from the donor under the anchor's depth.",
+        f"all switches but one flipped. Right: every switch ({cube.streams_text}) from the donor {cube.fixed_text}.",
     ] + (
         ["Cells with the T switch flipped are read over the pairs whose subtask texts differ (counts in the legend)."]
         if cube.has_text else []
@@ -952,7 +964,8 @@ def _render_example(
     for col, (label, frame) in enumerate((("anchor", anchor_frame), ("donor", donor_frame))):
         obs = frame["obs"]
         panels = [(obs[k], k.rsplit(".", 1)[-1], False) for k in current_keys(obs, "observation.images.")]
-        panels += [(obs[k], "depth (always the anchor's)", True) for k in current_keys(obs, "observation.depth.")]
+        depth_name = "depth" if "depth" in cube.factors else "depth (always the anchor's)"
+        panels += [(obs[k], depth_name, True) for k in current_keys(obs, "observation.depth.")]
         for i, (tensor, name, is_depth) in enumerate(panels[:3]):
             ax = fig.add_subplot(grid[0, col * 3 + i])
             if is_depth:
@@ -1002,7 +1015,8 @@ def _render_example(
     fig.suptitle(
         f"input swap — anchor ep{anchor_frame['episode_idx']} fr{anchor_frame['frame_idx']} "
         f"← donor ep{donor_frame['episode_idx']} fr{donor_frame['frame_idx']}   "
-        "(joint panels in degrees; every cell at one flow seed; depth and metadata are the anchor's throughout)",
+        "(joint panels in degrees; every cell at one flow seed; "
+        + ("metadata is" if "depth" in cube.factors else "depth and metadata are") + " the anchor's throughout)",
         fontsize=10.5,
     )
     fig.savefig(output_path, dpi=130, bbox_inches="tight")
@@ -1299,7 +1313,7 @@ def _write_manifest(output_dir: str, summary: dict, example_files: list[tuple[st
             how=(
                 "One box per (cell, donor kind), the distribution over anchors of $\\|a_c - a_{...}\\|$ at one shared "
                 f"flow seed. Left: one switch flipped to the donor. Middle: all but one flipped. Right: every switch "
-                f"({cube.streams_text}) from the donor under the anchor's depth. A switch whose box sits near the reseed "
+                f"({cube.streams_text}) from the donor {cube.fixed_text}. A switch whose box sits near the reseed "
                 "line moves the chunk as much as changing the noise does; one near the bottom is barely read."
                 + (" T cells are read over the pairs whose subtask texts differ." if cube.has_text else "")
             ),

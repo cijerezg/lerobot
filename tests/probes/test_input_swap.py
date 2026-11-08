@@ -66,6 +66,22 @@ def test_history_switches_take_the_windows():
     assert isw._cell_subtasks("a", "b", isw.cube_from_spec("state,subtask")) == ["a", "a", "b", "b"]
 
 
+def test_depth_switch_takes_the_depth_frame_with_its_flags_and_history():
+    cube = isw.cube_from_spec("state,image,depth")
+    assert cube.letters == "SID" and cube.n_cells == 8 and cube.fixed_text == "under the anchor's metadata"
+    groups, fixed = isw._factor_keys(OBS, cube)
+    assert sorted(groups["depth"]) == [
+        "history.depth.wrist_0.depth",
+        "observation.depth.wrist_0",
+        "probe_complementary.depth.wrist_0.depth_is_present",
+    ]
+    assert fixed == [] and "history.observation.images.wrist_0" in groups["image"]
+    donor = {k: torch.ones_like(v) if v.dtype != torch.bool else v for k, v in OBS.items()}
+    cell = isw._cell(OBS, donor, cube.bit("depth"), groups, fixed, cube)
+    assert cell["observation.depth.wrist_0"].sum() > 0 and cell["history.depth.wrist_0.depth"].sum() > 0
+    assert cell["observation.images.wrist_0"].sum() == 0 and cell["observation.state"].sum() == 0
+
+
 def test_history_switch_without_memory_is_an_error():
     no_memory = {k: v for k, v in OBS.items() if not k.startswith("history.")}
     with pytest.raises(KeyError, match="image_history"):

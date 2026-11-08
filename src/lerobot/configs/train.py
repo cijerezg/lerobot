@@ -501,8 +501,9 @@ class ProbeConfig:
     # anchors x 3 forwards of batch 2^k.
     input_swap_n_frames_per_episode: int | None = None
     # The switches, comma-separated in bit order, from state / image / subtask /
-    # state_history / image_history. A history switch needs memory on; a history with no
-    # switch of its own travels with the stream it remembers (probes/input_swap.py).
+    # state_history / image_history / depth. A history switch needs memory on; a history with
+    # no switch of its own travels with the stream it remembers; depth without its own switch
+    # stays the anchor's (probes/input_swap.py).
     input_swap_factors: str = "state,image,subtask"
     # Deterministic generated-vs-GT 3-D action traces at each of p5 / p50 / p95.
     objective_exemplars_per_band: int = 3
