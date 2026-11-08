@@ -150,7 +150,8 @@ class MolmoAct2RLConfig(MolmoAct2Config):
 
     # ── LR schedule ───────────────────────────────────────────────────────
     # Names of the optimizer groups ("policy", "critic", "depth") that get the
-    # inherited MolmoAct2 cosine-with-warmup schedule; the rest hold a constant
+    # inherited MolmoAct2 warmup-then-decay schedule (scheduler_decay_shape:
+    # cosine or linear); the rest hold a constant
     # LR. Empty (the default) keeps the pre-scheduler behaviour of every group
     # flat. Shape comes from scheduler_warmup_steps / scheduler_decay_steps /
     # scheduler_decay_lr on MolmoAct2Config. scheduler_decay_lr is absolute and

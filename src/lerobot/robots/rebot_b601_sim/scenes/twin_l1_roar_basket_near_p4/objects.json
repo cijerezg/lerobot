@@ -4,18 +4,12 @@
  "letter": "d",
  "placement": 4,
  "tier": "twin_l1",
- "seed": [
-  20261030,
-  3
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "basket left at 45, bottle near centre-right",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,59 +33,52 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": true
+  ]
  },
  "task_objects": [
   "roar_bottle"
  ],
  "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "basket": {
    "xy": [
-    0.3166,
-    -0.2132
+    0.4,
+    -0.2
    ],
    "z": 0.002,
-   "yaw_deg": -14.65,
+   "yaw_deg": 45.0,
    "quat_wxyz": [
-    0.99183,
+    0.92388,
     0.0,
     0.0,
-    -0.12753
+    0.38268
    ],
-   "radius_from_base_m": 0.3817,
+   "radius_from_base_m": 0.4472,
    "role": "basket",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0166,
-    "dy_m": 0.0468,
-    "dyaw_deg": -14.65
-   }
+   "jittered": false,
+   "jitter": null
   },
   "roar_bottle": {
    "xy": [
-    0.3716,
-    0.1476
+    0.2,
+    0.12
    ],
    "z": 0.002,
-   "yaw_deg": -9.18,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.99679,
+    1.0,
     0.0,
     0.0,
-    -0.08006
+    0.0
    ],
-   "radius_from_base_m": 0.3999,
+   "radius_from_base_m": 0.2332,
    "role": "target",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0484,
-    "dy_m": -0.0124,
-    "dyaw_deg": -9.18
-   }
+   "jittered": false,
+   "jitter": null
   }
  },
  "unchanged": [],
@@ -99,42 +86,41 @@
   "roar_bottle": {
    "ok": true,
    "pos_err_mm": 0.0,
-   "angle_err_deg": 40.61,
+   "angle_err_deg": 33.67,
    "q_deg": [
-    18.0,
-    -85.4,
-    -54.0,
-    18.6,
-    -8.1,
+    20.7,
+    -49.8,
+    -37.5,
+    46.4,
+    -13.1,
     -0.0
    ],
    "target": [
-    0.3716,
-    0.1476,
+    0.2,
+    0.12,
     0.122
    ]
   },
   "basket": {
    "ok": true,
    "pos_err_mm": 0.0,
-   "angle_err_deg": 59.22,
+   "angle_err_deg": 61.61,
    "q_deg": [
-    -27.5,
-    -66.5,
-    -58.3,
-    23.6,
-    13.6,
+    -22.5,
+    -79.6,
+    -65.0,
+    14.3,
+    10.1,
     0.0
    ],
    "target": [
-    0.3166,
-    -0.2132,
+    0.4,
+    -0.2,
     0.264
    ]
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "basket": 2.02,

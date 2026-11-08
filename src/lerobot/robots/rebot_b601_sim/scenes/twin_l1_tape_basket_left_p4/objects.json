@@ -4,18 +4,12 @@
  "letter": "b",
  "placement": 4,
  "tier": "twin_l1",
- "seed": [
-  20261030,
-  1
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "basket far-right, tape close to the robot on its left",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,59 +33,52 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": true
+  ]
  },
  "task_objects": [
   "tape_roll"
  ],
  "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "basket": {
    "xy": [
-    0.3661,
-    -0.1824
+    0.42,
+    0.22
    ],
    "z": 0.002,
-   "yaw_deg": 17.14,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.98884,
+    1.0,
     0.0,
     0.0,
-    0.14901
+    0.0
    ],
-   "radius_from_base_m": 0.409,
+   "radius_from_base_m": 0.4741,
    "role": "basket",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0539,
-    "dy_m": -0.0224,
-    "dyaw_deg": 17.14
-   }
+   "jittered": false,
+   "jitter": null
   },
   "tape_roll": {
    "xy": [
-    0.2865,
-    0.1553
+    0.18,
+    -0.1
    ],
    "z": 0.017,
-   "yaw_deg": 39.41,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.94145,
+    1.0,
     0.0,
     0.0,
-    0.33715
+    0.0
    ],
-   "radius_from_base_m": 0.3259,
+   "radius_from_base_m": 0.2059,
    "role": "target",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0265,
-    "dy_m": 0.0153,
-    "dyaw_deg": 19.41
-   }
+   "jittered": false,
+   "jitter": null
   }
  },
  "unchanged": [],
@@ -101,40 +88,39 @@
    "pos_err_mm": 0.0,
    "angle_err_deg": 0.0,
    "q_deg": [
-    28.5,
-    -107.7,
-    -71.9,
-    54.2,
-    0.0,
-    24.8
+    -29.0,
+    -82.3,
+    -44.0,
+    51.7,
+    -0.0,
+    -26.0
    ],
    "target": [
-    0.2865,
-    0.1553,
+    0.18,
+    -0.1,
     0.032
    ]
   },
   "basket": {
    "ok": true,
    "pos_err_mm": 0.0,
-   "angle_err_deg": 59.86,
+   "angle_err_deg": 63.13,
    "q_deg": [
-    -21.8,
-    -71.9,
-    -61.0,
-    19.8,
-    10.4,
-    0.0
+    23.7,
+    -84.9,
+    -68.1,
+    10.6,
+    -10.2,
+    -0.0
    ],
    "target": [
-    0.3661,
-    -0.1824,
+    0.42,
+    0.22,
     0.264
    ]
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "basket": 2.02,
@@ -143,9 +129,9 @@
   "max_moved_mm": 2.14,
   "contact_dist_mm": {
    "basket": -1.16,
-   "tape_roll": -4.59
+   "tape_roll": -1.21
   },
-  "worst_contact_dist_mm": -4.59
+  "worst_contact_dist_mm": -1.21
  },
  "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
 }

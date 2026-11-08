@@ -130,12 +130,12 @@ folder. Contact sheets: `migration/sim_variants_2026-10-28/contact_<layout>.png`
 `twin_l<L>_<config>_p<1-4>` layouts: the digital-twin desk (`migration/digital_twin_2026-10-29/twin/scene_twin.xml`, room geometry
 instead of a real background composite, the aligned `ext` camera, package copies of the twin assets under `assets/twin/`, room files
 under `assets/twin/room/`). Four levels (tiers `twin_l1` .. `twin_l4`) x four hand-designed configurations x four placements: `p1` is
-the configuration itself, `p2`-`p4` jitter every movable body (xy +-6 cm, yaw +-20 deg) under the placement rules above (2 cm inside
+the configuration itself, `p2`-`p4` are three more hand-designed placements (v2, 2026-11-08: target side and distance, basket pose, distractor arrangement, kit open / mirrored / closed / closed and moved; until then they were xy +-6 cm, yaw +-20 deg jitters of p1) under the placement rules above (2 cm inside
 the desk, 2 cm clearance, no start contact with the parked arm, IK reach of the targets and 5 cm over the basket rim, 1 s settle
 < 5 mm). L1 = basket + one object; L2 = target + distractors (a second tape roll `tape_roll_2` and the clipper case with both
 clippers seated exist as bodies); L3 = the full twin desk (tape / pill bottle target, "Close the bit kit", "Close the headphone case lid" with the kit
 closed; the basket stays at its twin pose with its contents); L4 = the full desk, sequential multi-object tasks (`twin_tasks.sequence_scorer`, equal ladder
-shares in task order). Built by `migration/digital_twin_2026-10-29/envs/build_twin_envs.py` (seed 20261030, byte-identical; report
+shares in task order). Built by `migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py` (report `ENVS_REPORT_v2.md` there, v1 scenes in `scenes_v1_backup/`; the 10-30 jitter build was `migration/digital_twin_2026-10-29/envs/build_twin_envs.py`, report
 `envs/ENVS_REPORT.md`). Scorers in `twin_tasks.py` are staged like the others and additionally dense (`reward_dense` in
 subtask_events.json / sim/index.json). This is the eval set (2026-11-05; `TWIN=1` selected it from 10-30 to 11-05): `tasks.py LAYOUTS`
 is the twin configurations, `tasks.py layouts` / `eval_layouts()` list their placements on disk (64) and `run_sim_eval.sh` runs them with the config's `episodes: 4` each; config_rl_sim.yaml's top camera carries no background

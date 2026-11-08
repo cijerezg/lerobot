@@ -4,18 +4,12 @@
  "letter": "c",
  "placement": 1,
  "tier": "twin_l3",
- "seed": [
-  20261030,
-  10
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "A twin desk, kit at its twin pose",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,18 +33,19 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": false
+  ]
  },
  "task_objects": [
   "bits_kit"
  ],
  "basket_anchored": true,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "bits_kit": {
    "xy": [
-    0.3221,
-    -0.0551
+    0.322,
+    -0.055
    ],
    "z": 0.003,
    "yaw_deg": 245.6,
@@ -60,7 +55,7 @@
     0.0,
     0.84057
    ],
-   "radius_from_base_m": 0.3268,
+   "radius_from_base_m": 0.3267,
    "role": "target",
    "placed": true,
    "jittered": false,
@@ -531,15 +526,15 @@
    "angle_err_deg": 0.0,
    "q_deg": [
     20.0,
-    -134.0,
+    -133.9,
     -107.8,
     63.8,
-    -0.0,
+    0.0,
     16.9
    ],
    "target": [
-    0.4157,
-    0.1512,
+    0.4156,
+    0.1513,
     0.01
    ]
   },
@@ -550,14 +545,14 @@
    "q_deg": [
     -49.0,
     -113.9,
-    -75.2,
+    -75.1,
     51.2,
-    0.0,
+    -0.0,
     -42.0
    ],
    "target": [
-    0.2281,
-    -0.2623,
+    0.228,
+    -0.2622,
     0.01
    ]
   },
@@ -581,7 +576,6 @@
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "bits_kit": 3.15,

@@ -4,6 +4,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from torch.optim.lr_scheduler import LambdaLR
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import (
     AdamWConfig,
@@ -33,25 +35,49 @@ MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
 MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM = 0.95
 
 
-@LRSchedulerConfig.register_subclass("molmoact2_cosine_decay_with_warmup")
+@LRSchedulerConfig.register_subclass(
+    "molmoact2_cosine_decay_with_warmup"
+)  # name kept: saved train_config.json files carry it
 @dataclass
-class MolmoAct2CosineDecayWithWarmupSchedulerConfig(CosineDecayWithWarmupSchedulerConfig):
-    """MolmoAct2-local cosine scheduler with optional decay-step auto-match.
+class MolmoAct2DecayWithWarmupSchedulerConfig(CosineDecayWithWarmupSchedulerConfig):
+    """MolmoAct2-local warmup + decay scheduler.
 
-    LeRobot's generic cosine scheduler keeps an explicit integer decay length.
-    For MolmoAct2, leaving num_decay_steps unset means "decay across this run's
-    training steps"; build() is the first point where num_training_steps is known.
+    Differs from LeRobot's generic cosine scheduler in two ways: num_decay_steps
+    may be None, meaning "decay across this run's training steps" (build() is the
+    first point where num_training_steps is known), and decay_shape picks the
+    decay curve, "cosine" or "linear". Both run from peak_lr at the end of warmup
+    to decay_lr at num_decay_steps and hold there.
     """
 
     num_decay_steps: int | None
+    decay_shape: str = "cosine"
 
     def build(self, optimizer, num_training_steps: int):
-        return CosineDecayWithWarmupSchedulerConfig(
-            peak_lr=self.peak_lr,
-            decay_lr=self.decay_lr,
-            num_warmup_steps=self.num_warmup_steps,
-            num_decay_steps=num_training_steps if self.num_decay_steps is None else self.num_decay_steps,
-        ).build(optimizer, num_training_steps=num_training_steps)
+        num_decay_steps = num_training_steps if self.num_decay_steps is None else self.num_decay_steps
+        if self.decay_shape == "cosine":
+            return CosineDecayWithWarmupSchedulerConfig(
+                peak_lr=self.peak_lr,
+                decay_lr=self.decay_lr,
+                num_warmup_steps=self.num_warmup_steps,
+                num_decay_steps=num_decay_steps,
+            ).build(optimizer, num_training_steps=num_training_steps)
+        if self.decay_shape != "linear":
+            raise ValueError(f"scheduler_decay_shape must be 'cosine' or 'linear', got {self.decay_shape!r}.")
+
+        warmup_steps = self.num_warmup_steps
+        alpha = self.decay_lr / self.peak_lr
+
+        def lr_lambda(current_step):
+            if current_step < warmup_steps:
+                # Same ramp as the cosine preset: 1/(warmup+1) at step 0, 1 at warmup.
+                if current_step <= 0:
+                    return 1 / (warmup_steps + 1)
+                frac = 1 - current_step / warmup_steps
+                return (1 / (warmup_steps + 1) - 1) * frac + 1
+            progress = (current_step - warmup_steps) / max(1, num_decay_steps - warmup_steps)
+            return alpha + (1 - alpha) * max(0.0, 1 - progress)
+
+        return LambdaLR(optimizer, lr_lambda, -1)
 
 
 def _round_up(value: int, multiple: int) -> int:
@@ -476,6 +502,9 @@ class MolmoAct2Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 200
     scheduler_decay_steps: int | None = None
     scheduler_decay_lr: float = 1e-6
+    scheduler_decay_shape: str = (
+        "cosine"  # "cosine" or "linear", from peak at the end of warmup to scheduler_decay_lr
+    )
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -696,11 +725,12 @@ class MolmoAct2Config(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
-        return MolmoAct2CosineDecayWithWarmupSchedulerConfig(
+        return MolmoAct2DecayWithWarmupSchedulerConfig(
             peak_lr=self.optimizer_lr,
             decay_lr=self.scheduler_decay_lr,
             num_warmup_steps=self.scheduler_warmup_steps,
             num_decay_steps=self.scheduler_decay_steps,
+            decay_shape=self.scheduler_decay_shape,
         )
 
     def set_dataset_feature_metadata(self, features: dict[str, Any]) -> None:

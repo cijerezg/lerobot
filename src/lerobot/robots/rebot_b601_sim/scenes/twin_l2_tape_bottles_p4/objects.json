@@ -4,18 +4,12 @@
  "letter": "d",
  "placement": 4,
  "tier": "twin_l2",
- "seed": [
-  20261030,
-  7
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "basket left turned 90, tape near, orange bottle between tape and basket, pill far-right",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,105 +33,90 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": true
+  ]
  },
  "task_objects": [
   "tape_roll"
  ],
  "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "basket": {
    "xy": [
-    0.3253,
-    -0.2132
+    0.4,
+    -0.22
    ],
    "z": 0.002,
-   "yaw_deg": -4.74,
+   "yaw_deg": 90.0,
    "quat_wxyz": [
-    0.99914,
+    0.70711,
     0.0,
     0.0,
-    -0.04136
+    0.70711
    ],
-   "radius_from_base_m": 0.389,
+   "radius_from_base_m": 0.4565,
    "role": "basket",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0453,
-    "dy_m": 0.0468,
-    "dyaw_deg": -4.74
-   }
+   "jittered": false,
+   "jitter": null
   },
   "tape_roll": {
    "xy": [
-    0.4285,
-    0.1476
+    0.2,
+    0.08
    ],
    "z": 0.017,
-   "yaw_deg": -15.81,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.9905,
+    1.0,
     0.0,
     0.0,
-    -0.13754
+    0.0
    ],
-   "radius_from_base_m": 0.4532,
+   "radius_from_base_m": 0.2154,
    "role": "target",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0115,
-    "dy_m": -0.0124,
-    "dyaw_deg": -15.81
-   }
+   "jittered": false,
+   "jitter": null
   },
   "pill_bottle": {
    "xy": [
-    0.25,
-    0.0853
+    0.42,
+    0.26
    ],
    "z": 0.002,
-   "yaw_deg": 1.66,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.9999,
+    1.0,
     0.0,
     0.0,
-    0.01449
+    0.0
    ],
-   "radius_from_base_m": 0.2642,
+   "radius_from_base_m": 0.494,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.03,
-    "dy_m": -0.0547,
-    "dyaw_deg": 1.66
-   }
+   "jittered": false,
+   "jitter": null
   },
   "roar_bottle": {
    "xy": [
-    0.4079,
-    0.3977
+    0.32,
+    0.04
    ],
    "z": 0.002,
-   "yaw_deg": -10.43,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.99586,
+    1.0,
     0.0,
     0.0,
-    -0.0909
+    0.0
    ],
-   "radius_from_base_m": 0.5697,
+   "radius_from_base_m": 0.3225,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0079,
-    "dy_m": 0.0577,
-    "dyaw_deg": -10.43
-   }
+   "jittered": false,
+   "jitter": null
   }
  },
  "unchanged": [],
@@ -147,40 +126,39 @@
    "pos_err_mm": 0.0,
    "angle_err_deg": 0.0,
    "q_deg": [
-    19.0,
-    -135.7,
-    -116.1,
-    70.3,
-    0.0,
-    16.0
+    21.8,
+    -84.5,
+    -45.9,
+    51.4,
+    -0.0,
+    19.5
    ],
    "target": [
-    0.4285,
-    0.1476,
+    0.2,
+    0.08,
     0.032
    ]
   },
   "basket": {
    "ok": true,
    "pos_err_mm": 0.0,
-   "angle_err_deg": 59.41,
+   "angle_err_deg": 62.16,
    "q_deg": [
-    -27.1,
-    -68.0,
-    -59.0,
-    22.5,
-    13.2,
+    -24.5,
+    -81.5,
+    -66.1,
+    13.0,
+    10.8,
     0.0
    ],
    "target": [
-    0.3253,
-    -0.2132,
+    0.4,
+    -0.22,
     0.264
    ]
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "basket": 2.02,
@@ -191,11 +169,11 @@
   "max_moved_mm": 2.21,
   "contact_dist_mm": {
    "basket": -1.16,
-   "tape_roll": -2.58,
+   "tape_roll": -1.21,
    "pill_bottle": -1.32,
    "roar_bottle": -1.21
   },
-  "worst_contact_dist_mm": -2.58
+  "worst_contact_dist_mm": -1.32
  },
  "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
 }

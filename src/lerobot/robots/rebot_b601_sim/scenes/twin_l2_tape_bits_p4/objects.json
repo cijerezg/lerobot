@@ -4,18 +4,12 @@
  "letter": "a",
  "placement": 4,
  "tier": "twin_l2",
- "seed": [
-  20261030,
-  4
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "basket near-left turned 90, tape far-right with the pill next to it, bits in the four corners",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,174 +33,147 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": true
+  ]
  },
  "task_objects": [
   "tape_roll"
  ],
  "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "basket": {
    "xy": [
-    0.4583,
-    -0.1331
+    0.3,
+    -0.25
    ],
    "z": 0.002,
-   "yaw_deg": -12.48,
+   "yaw_deg": 90.0,
    "quat_wxyz": [
-    0.99407,
+    0.70711,
     0.0,
     0.0,
-    -0.10872
+    0.70711
    ],
-   "radius_from_base_m": 0.4772,
+   "radius_from_base_m": 0.3905,
    "role": "basket",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0383,
-    "dy_m": -0.0131,
-    "dyaw_deg": -12.48
-   }
+   "jittered": false,
+   "jitter": null
   },
   "tape_roll": {
    "xy": [
-    0.2904,
-    0.1404
+    0.38,
+    0.3
    ],
    "z": 0.017,
-   "yaw_deg": 15.46,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.99091,
+    1.0,
     0.0,
     0.0,
-    0.13454
+    0.0
    ],
-   "radius_from_base_m": 0.3225,
+   "radius_from_base_m": 0.4841,
    "role": "target",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0504,
-    "dy_m": -0.0196,
-    "dyaw_deg": 15.46
-   }
+   "jittered": false,
+   "jitter": null
   },
   "pill_bottle": {
    "xy": [
-    0.3831,
-    0.2182
+    0.42,
+    0.18
    ],
    "z": 0.002,
-   "yaw_deg": -10.99,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.99541,
+    1.0,
     0.0,
     0.0,
-    -0.09574
+    0.0
    ],
-   "radius_from_base_m": 0.4409,
+   "radius_from_base_m": 0.4569,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0231,
-    "dy_m": -0.0018,
-    "dyaw_deg": -10.99
-   }
+   "jittered": false,
+   "jitter": null
   },
   "bit_1": {
    "xy": [
-    0.2593,
-    0.2473
+    0.19,
+    0.02
    ],
    "z": 0.004,
-   "yaw_deg": 32.53,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.95998,
+    1.0,
     0.0,
     0.0,
-    0.28007
+    0.0
    ],
-   "radius_from_base_m": 0.3584,
+   "radius_from_base_m": 0.191,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0593,
-    "dy_m": -0.0527,
-    "dyaw_deg": 2.53
-   }
+   "jittered": false,
+   "jitter": null
   },
   "bit_2": {
    "xy": [
-    0.2797,
-    0.3013
+    0.22,
+    0.36
    ],
    "z": 0.004,
-   "yaw_deg": -52.67,
+   "yaw_deg": 90.0,
    "quat_wxyz": [
-    0.89621,
+    0.70711,
     0.0,
     0.0,
-    -0.44364
+    0.70711
    ],
-   "radius_from_base_m": 0.4111,
+   "radius_from_base_m": 0.4219,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0003,
-    "dy_m": -0.0287,
-    "dyaw_deg": -7.67
-   }
+   "jittered": false,
+   "jitter": null
   },
   "bit_3": {
    "xy": [
-    0.2921,
-    0.3882
+    0.46,
+    0.0
    ],
    "z": 0.004,
-   "yaw_deg": 75.33,
+   "yaw_deg": 45.0,
    "quat_wxyz": [
-    0.79162,
+    0.92388,
     0.0,
     0.0,
-    0.61102
+    0.38268
    ],
-   "radius_from_base_m": 0.4858,
+   "radius_from_base_m": 0.46,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0479,
-    "dy_m": 0.0082,
-    "dyaw_deg": -4.67
-   }
+   "jittered": false,
+   "jitter": null
   },
   "bit_4": {
    "xy": [
-    0.4977,
-    0.2589
+    0.48,
+    -0.2
    ],
    "z": 0.004,
-   "yaw_deg": 14.15,
+   "yaw_deg": -30.0,
    "quat_wxyz": [
-    0.99239,
+    0.96593,
     0.0,
     0.0,
-    0.12317
+    -0.25882
    ],
-   "radius_from_base_m": 0.561,
+   "radius_from_base_m": 0.52,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0477,
-    "dy_m": 0.0189,
-    "dyaw_deg": 4.15
-   }
+   "jittered": false,
+   "jitter": null
   }
  },
  "unchanged": [],
@@ -216,40 +183,39 @@
    "pos_err_mm": 0.0,
    "angle_err_deg": 0.0,
    "q_deg": [
-    25.8,
-    -107.0,
-    -71.0,
-    54.0,
+    38.3,
+    -145.7,
+    -134.3,
+    78.6,
     0.0,
-    22.5
+    33.0
    ],
    "target": [
-    0.2904,
-    0.1404,
+    0.38,
+    0.3,
     0.032
    ]
   },
   "basket": {
    "ok": true,
    "pos_err_mm": 0.0,
-   "angle_err_deg": 63.14,
+   "angle_err_deg": 59.83,
    "q_deg": [
-    -13.9,
-    -85.2,
-    -68.3,
-    10.2,
-    6.0,
+    -32.5,
+    -68.5,
+    -59.0,
+    22.0,
+    15.8,
     0.0
    ],
    "target": [
-    0.4583,
-    -0.1331,
+    0.3,
+    -0.25,
     0.264
    ]
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "basket": 2.02,
@@ -267,7 +233,7 @@
    "pill_bottle": -1.32,
    "bit_1": -0.99,
    "bit_2": -0.99,
-   "bit_3": -1.2,
+   "bit_3": -0.99,
    "bit_4": -0.99
   },
   "worst_contact_dist_mm": -1.32

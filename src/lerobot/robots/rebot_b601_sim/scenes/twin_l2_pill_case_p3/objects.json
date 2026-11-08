@@ -4,18 +4,12 @@
  "letter": "b",
  "placement": 3,
  "tier": "twin_l2",
- "seed": [
-  20261030,
-  5
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "basket far centre, pill far-right, case left turned 90: pill and case on opposite sides",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,97 +33,86 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": true
+  ]
  },
  "task_objects": [
   "pill_bottle"
  ],
  "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "basket": {
    "xy": [
-    0.3516,
-    0.2727
+    0.46,
+    0.02
    ],
    "z": 0.002,
-   "yaw_deg": -16.06,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.99019,
+    1.0,
     0.0,
     0.0,
-    -0.13969
+    0.0
    ],
-   "radius_from_base_m": 0.445,
+   "radius_from_base_m": 0.4604,
    "role": "basket",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0116,
-    "dy_m": 0.0127,
-    "dyaw_deg": -16.06
-   }
+   "jittered": false,
+   "jitter": null
   },
   "pill_bottle": {
    "xy": [
-    0.3212,
-    -0.1042
+    0.3,
+    0.32
    ],
    "z": 0.002,
-   "yaw_deg": 4.09,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.99936,
+    1.0,
     0.0,
     0.0,
-    0.03573
+    0.0
    ],
-   "radius_from_base_m": 0.3376,
+   "radius_from_base_m": 0.4386,
    "role": "target",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0212,
-    "dy_m": -0.0042,
-    "dyaw_deg": 4.09
-   }
+   "jittered": false,
+   "jitter": null
   },
   "clipper_case": {
    "xy": [
-    0.4745,
-    -0.1415
+    0.3,
+    -0.26
    ],
    "z": 0.002,
-   "yaw_deg": 189.63,
+   "yaw_deg": 90.0,
    "quat_wxyz": [
-    -0.08398,
+    0.70711,
     0.0,
     0.0,
-    0.99647
+    0.70711
    ],
-   "radius_from_base_m": 0.4951,
+   "radius_from_base_m": 0.397,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": 0.0545,
-    "dy_m": -0.0415,
-    "dyaw_deg": 9.63
-   }
+   "jittered": false,
+   "jitter": null
   },
   "clipper_large": {
    "xy": [
-    0.4892,
-    -0.135
+    0.3039,
+    -0.2756
    ],
    "z": 0.027,
-   "yaw_deg": 279.63,
+   "yaw_deg": 180.0,
    "quat_wxyz": [
-    -0.76399,
     0.0,
     0.0,
-    0.64523
+    0.0,
+    1.0
    ],
-   "radius_from_base_m": 0.5075,
+   "radius_from_base_m": 0.4103,
    "role": "rides_with_clipper_case",
    "placed": true,
    "jittered": false,
@@ -137,18 +120,18 @@
   },
   "clipper_small": {
    "xy": [
-    0.4579,
-    -0.1393
+    0.3049,
+    -0.244
    ],
    "z": 0.027,
-   "yaw_deg": 279.63,
+   "yaw_deg": 180.0,
    "quat_wxyz": [
-    -0.76399,
     0.0,
     0.0,
-    0.64523
+    0.0,
+    1.0
    ],
-   "radius_from_base_m": 0.4786,
+   "radius_from_base_m": 0.3905,
    "role": "rides_with_clipper_case",
    "placed": true,
    "jittered": false,
@@ -162,57 +145,56 @@
    "pos_err_mm": 0.0,
    "angle_err_deg": 0.0,
    "q_deg": [
-    -18.0,
-    -105.9,
-    -88.9,
-    73.0,
-    -0.0,
-    -15.5
+    46.8,
+    -131.6,
+    -127.7,
+    86.0,
+    0.0,
+    40.8
    ],
    "target": [
-    0.3212,
-    -0.1042,
+    0.3,
+    0.32,
     0.113
    ]
   },
   "basket": {
    "ok": true,
    "pos_err_mm": 0.0,
-   "angle_err_deg": 61.91,
+   "angle_err_deg": 62.06,
    "q_deg": [
-    32.0,
-    -79.5,
-    -64.8,
-    14.4,
-    -14.2,
+    2.1,
+    -81.8,
+    -66.3,
+    12.5,
+    -1.0,
     -0.0
    ],
    "target": [
-    0.3516,
-    0.2727,
+    0.46,
+    0.02,
     0.264
    ]
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "basket": 2.02,
    "pill_bottle": 2.21,
    "clipper_case": 2.17,
-   "clipper_large": 2.87,
+   "clipper_large": 2.89,
    "clipper_small": 3.99
   },
   "max_moved_mm": 3.99,
   "contact_dist_mm": {
    "basket": -1.16,
    "pill_bottle": -1.32,
-   "clipper_case": -2.39,
-   "clipper_large": -2.39,
+   "clipper_case": -1.85,
+   "clipper_large": -1.69,
    "clipper_small": -1.85
   },
-  "worst_contact_dist_mm": -2.39
+  "worst_contact_dist_mm": -1.85
  },
  "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
 }

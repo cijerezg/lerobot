@@ -20,7 +20,7 @@ with T048's "brown basket" wording, lift_bottle's follows T082/T089 (one-step gr
 
 Twin set (2026-10-30, scenes twin_l<L>_<config>_p<1-4>, migration/digital_twin_2026-10-29/envs/ENVS_REPORT.md): four levels
 twin_l1 .. twin_l4 on the digital-twin desk (single object / target + distractors / full desk / full desk sequential), four
-hand-designed configurations per level, four placements each (p1 = the configuration, p2-p4 jittered), dense staged scorers
+hand-designed configurations per level, four hand-designed placements each (v2 2026-11-08, migration/twin_eval_v2_2026-11-08; p2-p4 were +-6 cm jitters of p1 until then), dense staged scorers
 (twin_tasks.py). ``eval_layouts()`` returns its placements on disk (a configuration without a scene folder is skipped). Task strings: T054 / T038 verbatim, pill bottle after T051 steps
 1-3, orange bottle = T107's name for the ROAR bottle, the sequence tasks after T037 steps 1-6 (first object first), the fold
 task = T067 steps 1-5 ("Close the bit kit"), the lid task = close_lid's T071 wiring on the twin's headphone case (no scene yet).

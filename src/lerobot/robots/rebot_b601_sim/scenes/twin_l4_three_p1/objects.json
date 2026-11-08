@@ -4,18 +4,12 @@
  "letter": "d",
  "placement": 1,
  "tier": "twin_l4",
- "seed": [
-  20261030,
-  14
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "A twin desk, tape and cup near-right, pill far-right pocket",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,8 +33,7 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": false
+  ]
  },
  "task_objects": [
   "tape_roll",
@@ -48,6 +41,8 @@
   "paper_cup"
  ],
  "basket_anchored": true,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "bits_kit": {
    "xy": [
@@ -599,7 +594,6 @@
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "bits_kit": 3.15,

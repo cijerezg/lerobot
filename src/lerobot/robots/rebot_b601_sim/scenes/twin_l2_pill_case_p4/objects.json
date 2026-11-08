@@ -4,18 +4,12 @@
  "letter": "b",
  "placement": 4,
  "tier": "twin_l2",
- "seed": [
-  20261030,
-  5
- ],
- "generator": "migration/digital_twin_2026-10-29/envs/build_twin_envs.py",
+ "note": "basket right turned 90, pill near-left, case between pill and basket",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
  "twin_snapshot": "2026-10-30 11:05",
  "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
  "rules": {
-  "seed": 20261030,
-  "placements": 4,
-  "jitter_xy_m": 0.06,
-  "jitter_yaw_deg": 20.0,
+  "placements": "hand-designed (v2)",
   "margin_m": 0.02,
   "reach_m": 0.5,
   "basket_reach_m": 0.48,
@@ -39,97 +33,86 @@
     0.538,
     -0.302
    ]
-  ],
-  "jittered": true
+  ]
  },
  "task_objects": [
   "pill_bottle"
  ],
  "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
  "objects": {
   "basket": {
    "xy": [
-    0.2855,
-    0.3049
+    0.36,
+    0.3
    ],
    "z": 0.002,
-   "yaw_deg": -6.48,
+   "yaw_deg": 90.0,
    "quat_wxyz": [
-    0.9984,
+    0.70711,
     0.0,
     0.0,
-    -0.05648
+    0.70711
    ],
-   "radius_from_base_m": 0.4177,
+   "radius_from_base_m": 0.4686,
    "role": "basket",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0545,
-    "dy_m": 0.0449,
-    "dyaw_deg": -6.48
-   }
+   "jittered": false,
+   "jitter": null
   },
   "pill_bottle": {
    "xy": [
-    0.2739,
-    -0.1478
+    0.2,
+    -0.22
    ],
    "z": 0.002,
-   "yaw_deg": -11.42,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.99504,
+    1.0,
     0.0,
     0.0,
-    -0.0995
+    0.0
    ],
-   "radius_from_base_m": 0.3112,
+   "radius_from_base_m": 0.2973,
    "role": "target",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0261,
-    "dy_m": -0.0478,
-    "dyaw_deg": -11.42
-   }
+   "jittered": false,
+   "jitter": null
   },
   "clipper_case": {
    "xy": [
-    0.4025,
-    -0.0855
+    0.3,
+    -0.02
    ],
    "z": 0.002,
-   "yaw_deg": 172.29,
+   "yaw_deg": 0.0,
    "quat_wxyz": [
-    0.06719,
+    1.0,
     0.0,
     0.0,
-    0.99774
+    0.0
    ],
-   "radius_from_base_m": 0.4115,
+   "radius_from_base_m": 0.3007,
    "role": "distractor",
    "placed": true,
-   "jittered": true,
-   "jitter": {
-    "dx_m": -0.0175,
-    "dy_m": 0.0145,
-    "dyaw_deg": -7.71
-   }
+   "jittered": false,
+   "jitter": null
   },
   "clipper_large": {
    "xy": [
-    0.4185,
-    -0.0837
+    0.2844,
+    -0.0239
    ],
    "z": 0.027,
-   "yaw_deg": 262.29,
+   "yaw_deg": 90.0,
    "quat_wxyz": [
-    -0.658,
+    0.70711,
     0.0,
     0.0,
-    0.75302
+    0.70711
    ],
-   "radius_from_base_m": 0.4268,
+   "radius_from_base_m": 0.2854,
    "role": "rides_with_clipper_case",
    "placed": true,
    "jittered": false,
@@ -137,18 +120,18 @@
   },
   "clipper_small": {
    "xy": [
-    0.3873,
-    -0.0785
+    0.316,
+    -0.0249
    ],
    "z": 0.027,
-   "yaw_deg": 262.29,
+   "yaw_deg": 90.0,
    "quat_wxyz": [
-    -0.658,
+    0.70711,
     0.0,
     0.0,
-    0.75302
+    0.70711
    ],
-   "radius_from_base_m": 0.3952,
+   "radius_from_base_m": 0.317,
    "role": "rides_with_clipper_case",
    "placed": true,
    "jittered": false,
@@ -162,40 +145,39 @@
    "pos_err_mm": 0.0,
    "angle_err_deg": 0.0,
    "q_deg": [
-    -28.3,
-    -100.1,
-    -81.7,
-    71.6,
+    -47.7,
+    -97.1,
+    -78.2,
+    71.1,
     -0.0,
-    -24.7
+    -41.1
    ],
    "target": [
-    0.2739,
-    -0.1478,
+    0.2,
+    -0.22,
     0.113
    ]
   },
   "basket": {
    "ok": true,
    "pos_err_mm": 0.0,
-   "angle_err_deg": 61.32,
+   "angle_err_deg": 63.24,
    "q_deg": [
-    39.0,
-    -74.3,
-    -61.6,
-    17.6,
-    -18.1,
+    34.2,
+    -84.2,
+    -67.5,
+    11.1,
+    -14.5,
     -0.0
    ],
    "target": [
-    0.2855,
-    0.3049,
+    0.36,
+    0.3,
     0.264
    ]
   }
  },
  "start_contact_mm": 0.0,
- "attempts": 1,
  "settle": {
   "moved_mm": {
    "basket": 2.02,
