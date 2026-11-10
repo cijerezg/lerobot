@@ -1,0 +1,242 @@
+{
+ "config": "twin_l2_bit_clutter",
+ "level": 2,
+ "letter": "a",
+ "placement": 3,
+ "tier": "twin_l2",
+ "note": "basket out on the left side, bit at the far end in the clutter: tape and pill beside it, case in front of it",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
+ "twin_snapshot": "2026-10-30 11:05",
+ "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
+ "rules": {
+  "placements": "hand-designed (v2)",
+  "margin_m": 0.02,
+  "reach_m": 1.0,
+  "basket_reach_m": 1.0,
+  "settle_s": 1.0,
+  "settle_tol_m": 0.005,
+  "start_contact_tol_m": 0.001,
+  "region_xy": [
+   [
+    -0.05,
+    -0.61
+   ],
+   [
+    -0.05,
+    0.61
+   ],
+   [
+    0.72,
+    0.61
+   ],
+   [
+    0.72,
+    -0.61
+   ]
+  ]
+ },
+ "task_objects": [
+  "bit_1"
+ ],
+ "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
+ "objects": {
+  "basket": {
+   "xy": [
+    0.3,
+    -0.42
+   ],
+   "z": 0.002,
+   "yaw_deg": 90.0,
+   "quat_wxyz": [
+    0.70711,
+    0.0,
+    0.0,
+    0.70711
+   ],
+   "radius_from_base_m": 0.5161,
+   "role": "basket",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "bit_1": {
+   "xy": [
+    0.62,
+    0.02
+   ],
+   "z": 0.004,
+   "yaw_deg": 0.0,
+   "quat_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "radius_from_base_m": 0.6203,
+   "role": "target",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "tape_roll": {
+   "xy": [
+    0.58,
+    -0.18
+   ],
+   "z": 0.017,
+   "yaw_deg": 0.0,
+   "quat_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "radius_from_base_m": 0.6073,
+   "role": "distractor",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "pill_bottle": {
+   "xy": [
+    0.62,
+    0.18
+   ],
+   "z": 0.002,
+   "yaw_deg": 0.0,
+   "quat_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "radius_from_base_m": 0.6456,
+   "role": "distractor",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "clipper_case": {
+   "xy": [
+    0.4,
+    0.04
+   ],
+   "z": 0.002,
+   "yaw_deg": 90.0,
+   "quat_wxyz": [
+    0.70711,
+    0.0,
+    0.0,
+    0.70711
+   ],
+   "radius_from_base_m": 0.402,
+   "role": "distractor",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "clipper_large": {
+   "xy": [
+    0.4039,
+    0.0244
+   ],
+   "z": 0.027,
+   "yaw_deg": 180.0,
+   "quat_wxyz": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "radius_from_base_m": 0.4046,
+   "role": "rides_with_clipper_case",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "clipper_small": {
+   "xy": [
+    0.4049,
+    0.056
+   ],
+   "z": 0.027,
+   "yaw_deg": 180.0,
+   "quat_wxyz": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "radius_from_base_m": 0.4088,
+   "role": "rides_with_clipper_case",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  }
+ },
+ "unchanged": [],
+ "ik": {
+  "bit_1": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "tilt_deg": 30,
+   "q_deg": [
+    1.8,
+    -149.1,
+    -127.1,
+    38.0,
+    -0.0,
+    1.0
+   ],
+   "target": [
+    0.62,
+    0.02,
+    0.007
+   ]
+  },
+  "basket": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 67.2,
+   "q_deg": [
+    -48.0,
+    -93.8,
+    -73.3,
+    3.6,
+    18.5,
+    0.0
+   ],
+   "target": [
+    0.3,
+    -0.42,
+    0.264
+   ]
+  }
+ },
+ "start_contact_mm": 0.0,
+ "settle": {
+  "moved_mm": {
+   "basket": 2.02,
+   "bit_1": 1.03,
+   "tape_roll": 2.14,
+   "pill_bottle": 2.21,
+   "clipper_case": 2.17,
+   "clipper_large": 2.89,
+   "clipper_small": 3.99
+  },
+  "max_moved_mm": 3.99,
+  "contact_dist_mm": {
+   "basket": -1.16,
+   "bit_1": -0.46,
+   "tape_roll": -1.21,
+   "pill_bottle": -1.32,
+   "clipper_case": -1.85,
+   "clipper_large": -1.69,
+   "clipper_small": -1.85
+  },
+  "worst_contact_dist_mm": -1.85
+ },
+ "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
+}

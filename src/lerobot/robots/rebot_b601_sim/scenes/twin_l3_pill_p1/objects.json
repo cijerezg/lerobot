@@ -11,27 +11,27 @@
  "rules": {
   "placements": "hand-designed (v2)",
   "margin_m": 0.02,
-  "reach_m": 0.5,
-  "basket_reach_m": 0.48,
+  "reach_m": 1.0,
+  "basket_reach_m": 1.0,
   "settle_s": 1.0,
   "settle_tol_m": 0.005,
   "start_contact_tol_m": 0.001,
   "region_xy": [
    [
-    0.151,
-    -0.283
+    -0.05,
+    -0.61
    ],
    [
-    0.183,
-    0.48
+    -0.05,
+    0.61
    ],
    [
-    0.565,
-    0.422
+    0.72,
+    0.61
    ],
    [
-    0.538,
-    -0.302
+    0.72,
+    -0.61
    ]
   ]
  },
@@ -564,12 +564,12 @@
    "pill_bottle": 2.21,
    "roar_bottle": 2.14,
    "navy_bottle": 2.14,
-   "bit_1": 1.26,
-   "bit_2": 1.26,
-   "bit_3": 1.26,
-   "bit_4": 1.26,
-   "bit_5": 1.26,
-   "bit_6": 1.26,
+   "bit_1": 1.03,
+   "bit_2": 1.03,
+   "bit_3": 1.03,
+   "bit_4": 1.03,
+   "bit_5": 1.03,
+   "bit_6": 1.03,
    "bits_box": 2.11,
    "bit_holder": 2.11,
    "basket_bottle": 2.6,
@@ -591,12 +591,12 @@
    "pill_bottle": -1.32,
    "roar_bottle": -1.21,
    "navy_bottle": -1.21,
-   "bit_1": -1.2,
-   "bit_2": -0.99,
-   "bit_3": -1.03,
-   "bit_4": -0.99,
-   "bit_5": -1.03,
-   "bit_6": -1.03,
+   "bit_1": -0.46,
+   "bit_2": -0.46,
+   "bit_3": -0.46,
+   "bit_4": -0.46,
+   "bit_5": -0.46,
+   "bit_6": -0.46,
    "bits_box": -1.19,
    "bit_holder": -1.19,
    "basket_bottle": -0.85,

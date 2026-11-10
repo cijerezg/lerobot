@@ -238,10 +238,13 @@ def pick_place_scorer(body: str, cursors: tuple[int, ...]) -> type[DenseScorer]:
     return PickPlaceScorer
 
 
-def sequence_scorer(bodies: tuple[str, ...], cursors: tuple[tuple[int, ...], ...]) -> type[DenseScorer]:
+def sequence_scorer(bodies: tuple[str, ...], cursors: tuple[tuple[int, ...], ...], any_order: bool = False) -> type[DenseScorer]:
     """"Put the <a>, the <b> ... in the basket": one pick-and-place ladder per object in task order, the i-th scaled to
     [i / n, (i + 1) / n]; a ladder only runs once the previous object is placed (its carried time, drops and progress are
-    not counted before its turn). ``cursors[i]`` = the script step each of the i-th object's six stages justifies."""
+    not counted before its turn). ``cursors[i]`` = the script step each of the i-th object's six stages justifies.
+    ``any_order`` (identical objects, "the two bits"): slot i is not tied to bodies[i]; it binds to the first not yet bound
+    object lifted while the slot is active and, until then, reports the best of the unbound objects (stage names keep
+    bodies[i] as the slot label)."""
     values = (0.1, 0.2, 0.4, 0.7, 0.85, 1.0)
     n = len(bodies)
     assert n == len(cursors) >= 2
@@ -258,18 +261,30 @@ def sequence_scorer(bodies: tuple[str, ...], cursors: tuple[tuple[int, ...], ...
             super()._reset()
             for ladder in self.ladders:
                 ladder.reset()
+            self.slot = [None] * n if any_order else list(range(n))  # ladder index per slot
 
         def _predicates(self) -> dict[str, bool]:
             pred, prog = {}, {}
-            per_object = len(PickPlaceLadder.NAMES)
-            for i, (body, ladder) in enumerate(zip(bodies, self.ladders, strict=True)):
-                active = i == 0 or self.ladders[i - 1].placed or self.stage >= i * per_object - 1
+            names = PickPlaceLadder.NAMES
+            per_object = len(names)
+            for i, body in enumerate(bodies):
+                prev_placed = self.slot[i - 1] is not None and self.ladders[self.slot[i - 1]].placed if i else True
+                active = prev_placed or self.stage >= i * per_object - 1
+                cands = [self.slot[i]] if self.slot[i] is not None else [j for j in range(n) if j not in self.slot]
                 if active:
-                    p, g = ladder.update()
-                    self.frozen = ladder.frozen
+                    upd = {j: self.ladders[j].update() for j in cands}
+                    if self.slot[i] is None:
+                        self.slot[i] = next((j for j in cands if upd[j][0]["lifted"]), None)
+                    if self.slot[i] is not None:
+                        p, g = upd[self.slot[i]]
+                        self.frozen = self.ladders[self.slot[i]].frozen
+                    else:
+                        p = {k: any(upd[j][0][k] for j in cands) for k in names}; g = {k: max(upd[j][1][k] for j in cands) for k in names}
+                        self.frozen = False
                 else:
-                    ladder.last_t = self.t  # no carried time before its turn
-                    p = {name: False for name in PickPlaceLadder.NAMES}; g = {name: 0.0 for name in PickPlaceLadder.NAMES}
+                    for j in cands:
+                        self.ladders[j].last_t = self.t  # no carried time before its turn
+                    p = {name: False for name in names}; g = {name: 0.0 for name in names}
                 pred |= {f"{body}_{name}": p[name] for name in p}
                 prog |= {f"{body}_{name}": g[name] for name in g}
             self.progress = prog

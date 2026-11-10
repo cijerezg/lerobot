@@ -1,0 +1,116 @@
+{
+ "config": "twin_l1_kit_alone",
+ "level": 1,
+ "letter": "d",
+ "placement": 4,
+ "tier": "twin_l1",
+ "note": "kit turned +60 on the right side",
+ "generator": "migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py",
+ "twin_snapshot": "2026-10-30 11:05",
+ "source": "migration/digital_twin_2026-10-29/twin/scene_twin.xml",
+ "rules": {
+  "placements": "hand-designed (v2)",
+  "margin_m": 0.02,
+  "reach_m": 1.0,
+  "basket_reach_m": 1.0,
+  "settle_s": 1.0,
+  "settle_tol_m": 0.005,
+  "start_contact_tol_m": 0.001,
+  "region_xy": [
+   [
+    -0.05,
+    -0.61
+   ],
+   [
+    -0.05,
+    0.61
+   ],
+   [
+    0.72,
+    0.61
+   ],
+   [
+    0.72,
+    -0.61
+   ]
+  ]
+ },
+ "task_objects": [
+  "bits_kit"
+ ],
+ "basket_anchored": false,
+ "kit_closed": false,
+ "kit_closed_angles_deg": null,
+ "objects": {
+  "bits_kit": {
+   "xy": [
+    0.34,
+    0.14
+   ],
+   "z": 0.003,
+   "yaw_deg": 305.6,
+   "quat_wxyz": [
+    -0.88942,
+    0.0,
+    0.0,
+    0.4571
+   ],
+   "radius_from_base_m": 0.3677,
+   "role": "target",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  }
+ },
+ "unchanged": [],
+ "ik": {
+  "bits_kit_left": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 0.0,
+   "q_deg": [
+    57.3,
+    -121.4,
+    -86.7,
+    55.3,
+    -0.0,
+    47.9
+   ],
+   "target": [
+    0.2081,
+    0.3242,
+    0.01
+   ]
+  },
+  "bits_kit_right": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 0.0,
+   "q_deg": [
+    -5.4,
+    -142.8,
+    -123.7,
+    70.9,
+    -0.0,
+    -4.5
+   ],
+   "target": [
+    0.4724,
+    -0.045,
+    0.01
+   ]
+  }
+ },
+ "start_contact_mm": 0.0,
+ "settle": {
+  "moved_mm": {
+   "bits_kit": 3.15
+  },
+  "max_moved_mm": 3.15,
+  "contact_dist_mm": {
+   "bits_kit": -3.0
+  },
+  "worst_contact_dist_mm": -3.0
+ },
+ "assets": "meshes and textures under scenes/assets/twin/ and the package photoreal folders (assetdir ..); room = assets/twin/room/room.xml; no background composite"
+}

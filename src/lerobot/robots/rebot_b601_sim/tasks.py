@@ -22,8 +22,9 @@ Twin set (2026-10-30, scenes twin_l<L>_<config>_p<1-4>, migration/digital_twin_2
 twin_l1 .. twin_l4 on the digital-twin desk (single object / target + distractors / full desk / full desk sequential), four
 hand-designed configurations per level, four hand-designed placements each (v2 2026-11-08, migration/twin_eval_v2_2026-11-08; p2-p4 were +-6 cm jitters of p1 until then), dense staged scorers
 (twin_tasks.py). ``eval_layouts()`` returns its placements on disk (a configuration without a scene folder is skipped). Task strings: T054 / T038 verbatim, pill bottle after T051 steps
-1-3, orange bottle = T107's name for the ROAR bottle, the sequence tasks after T037 steps 1-6 (first object first), the fold
-task = T067 steps 1-5 ("Close the bit kit"), the lid task = close_lid's T071 wiring on the twin's headphone case (no scene yet).
+1-3, orange bottle = T107's name for the ROAR bottle, the bit after T056/T057 ("the bit", precision 5 top-pinch), the sequence
+tasks after T037 steps 1-6 (first object first; "the two bits" in any order), the fold task = T067 steps 1-5 ("Close the bit
+kit", also alone on the desk at L1 with the L3 time budget), the lid task = close_lid's T071 wiring on the twin's headphone case.
 """
 
 import json
@@ -53,6 +54,7 @@ class Task:
     eval_subtask_precisions: tuple[int, ...]
     eval_subtask_contacts: tuple[str, ...]
     scorer: type[TaskScorer]
+    time_s: float | None = None  # episode budget; None = the tier's (TIER_TIME_S)
 
     @property
     def stages(self) -> list[tuple[str, float, int]]:
@@ -65,7 +67,7 @@ class Task:
             f"--policy.eval_subtasks={json.dumps(list(self.eval_subtasks))}",
             f"--policy.eval_subtask_precisions={json.dumps(list(self.eval_subtask_precisions))}",
             f"--policy.eval_subtask_contacts={json.dumps(list(self.eval_subtask_contacts))}",
-        ] + ([f"--env.processor.reset.control_time_s={TIER_TIME_S[self.tier]}"] if self.tier in TIER_TIME_S else [])
+        ] + ([f"--env.processor.reset.control_time_s={self.time_s or TIER_TIME_S[self.tier]}"] if self.time_s or self.tier in TIER_TIME_S else [])
 
 
 NAIL = dict(
@@ -113,7 +115,11 @@ _TWIN_BASKET = {
     "paper_cup": ("the cup", "T038", "rim-pinch", True),
     "pill_bottle": ("the pill bottle", None, "side-pinch", True),
     "roar_bottle": ("the orange bottle", None, "side-pinch", True),
+    # hex bits: T056/T057 wording, "grasp the bit" annotated precision 5 / top-pinch there; no return step (as T056)
+    "bit_1": ("the bit", None, "top-pinch", False),
+    "bit_2": ("the other bit", None, "top-pinch", False),
 }
+_GRASP_PRECISION = {"bit_1": 5, "bit_2": 5}  # grasp step precision; 3 otherwise
 
 
 def _steps(body: str) -> tuple[list[str], str]:
@@ -127,48 +133,54 @@ def _basket_task(tier: str, body: str) -> Task:
     steps += ["return to home"] if home else []
     cursors = (0, 0, 1, 1, 2, 3 if home else 2)  # approach, contact, lifted, transport, over, inside
     return Task(tier=tier, task=f"Put {noun} in the basket", sheet_id=sheet_id, eval_subtasks=tuple(steps),
-                eval_subtask_precisions=(3, 1, 1, 1)[: len(steps)], eval_subtask_contacts=(contact, "na", "drop", "na")[: len(steps)],
-                scorer=pick_place_scorer(body, cursors))
+                eval_subtask_precisions=(_GRASP_PRECISION.get(body, 3), 1, 1, 1)[: len(steps)],
+                eval_subtask_contacts=(contact, "na", "drop", "na")[: len(steps)], scorer=pick_place_scorer(body, cursors))
 
 
-def _sequence_task(tier: str, task: str, bodies: tuple[str, ...]) -> Task:
+def _sequence_task(tier: str, task: str, bodies: tuple[str, ...], any_order: bool = False) -> Task:
     """"Put the <a> and the <b> in the basket": the single-object steps in order plus "return to home"; object i's stages point at
-    steps 3i (approach, contact), 3i + 1 (lifted, transport), 3i + 2 (over) and 3i + 3 (inside = the next grasp, or home)."""
+    steps 3i (approach, contact), 3i + 1 (lifted, transport), 3i + 2 (over) and 3i + 3 (inside = the next grasp, or home).
+    ``any_order``: identical objects (the two bits), the scorer takes them in whatever order the policy picks them."""
     steps, precisions, contacts = [], [], []
     for body in bodies:
         st, contact = _steps(body)
-        steps += st; precisions += [3, 1, 1]; contacts += [contact, "na", "drop"]
+        steps += st; precisions += [_GRASP_PRECISION.get(body, 3), 1, 1]; contacts += [contact, "na", "drop"]
     steps += ["return to home"]; precisions += [1]; contacts += ["na"]
     cursors = tuple((3 * i, 3 * i, 3 * i + 1, 3 * i + 1, 3 * i + 2, 3 * i + 3) for i in range(len(bodies)))
     return Task(tier=tier, task=task, sheet_id=None, eval_subtasks=tuple(steps), eval_subtask_precisions=tuple(precisions),
-                eval_subtask_contacts=tuple(contacts), scorer=sequence_scorer(bodies, cursors))
+                eval_subtask_contacts=tuple(contacts), scorer=sequence_scorer(bodies, cursors, any_order=any_order))
+
+
+FOLD_KIT = dict(
+    task="Close the bit kit", sheet_id=None,
+    eval_subtasks=("grasp the outer edge of the flap with the bits", "fold the flap with the bits over the middle of the kit",
+                   "grasp the outer edge of the flap with the white card", "fold the flap with the white card over the folded flap",
+                   "press the kit flat", "return to home"),
+    eval_subtask_precisions=(3, 2, 3, 2, 1, 1), eval_subtask_contacts=("cloth-pinch", "drop", "cloth-pinch", "set-down", "press", "na"),
+    scorer=FoldKitScorer,
+)
 
 
 TASKS.update({
+    # 2026-11-08 bits pass (user: the set was tape heavy): tape_basket_left, roar_basket_near, tape_bits and two_tapes replaced by
+    # bit_single, kit_alone, bit_clutter and two_bits; three reordered so the tape is last
     "twin_l1_tape_basket_right": _basket_task("twin_l1", "tape_roll"),
-    "twin_l1_tape_basket_left": _basket_task("twin_l1", "tape_roll"),
+    "twin_l1_bit_single": _basket_task("twin_l1", "bit_1"),
     "twin_l1_pill_basket_far": _basket_task("twin_l1", "pill_bottle"),
-    "twin_l1_roar_basket_near": _basket_task("twin_l1", "roar_bottle"),
-    "twin_l2_tape_bits": _basket_task("twin_l2", "tape_roll"),
+    "twin_l1_kit_alone": Task(tier="twin_l1", time_s=TIER_TIME_S["twin_l3"], **FOLD_KIT),  # the fold needs the L3 budget
+    "twin_l2_bit_clutter": _basket_task("twin_l2", "bit_1"),
     "twin_l2_pill_case": _basket_task("twin_l2", "pill_bottle"),
     "twin_l2_roar_tapes": _basket_task("twin_l2", "roar_bottle"),
     "twin_l2_tape_bottles": _basket_task("twin_l2", "tape_roll"),
     "twin_l3_tape": _basket_task("twin_l3", "tape_roll"),
     "twin_l3_pill": _basket_task("twin_l3", "pill_bottle"),
-    "twin_l3_fold_kit": Task(
-        tier="twin_l3", task="Close the bit kit", sheet_id=None,
-        eval_subtasks=("grasp the outer edge of the flap with the bits", "fold the flap with the bits over the middle of the kit",
-                       "grasp the outer edge of the flap with the white card", "fold the flap with the white card over the folded flap",
-                       "press the kit flat", "return to home"),
-        eval_subtask_precisions=(3, 2, 3, 2, 1, 1), eval_subtask_contacts=("cloth-pinch", "drop", "cloth-pinch", "set-down", "press", "na"),
-        scorer=FoldKitScorer,
-    ),
+    "twin_l3_fold_kit": Task(tier="twin_l3", **FOLD_KIT),
     # the twin's headphone_case / headphone_lid / lid_hinge are the close_lid asset: same scorer and script
     "twin_l3_close_lid": Task(tier="twin_l3", **{k: getattr(TASKS["close_lid"], k) for k in ("task", "sheet_id", "eval_subtasks", "eval_subtask_precisions", "eval_subtask_contacts", "scorer")}),
     "twin_l4_tape_cup": _sequence_task("twin_l4", "Put the tape roll and the cup in the basket", ("tape_roll", "paper_cup")),
-    "twin_l4_two_tapes": _sequence_task("twin_l4", "Put the two tape rolls in the basket", ("tape_roll", "tape_roll_2")),
+    "twin_l4_two_bits": _sequence_task("twin_l4", "Put the two bits in the basket", ("bit_1", "bit_2"), any_order=True),
     "twin_l4_pill_roar": _sequence_task("twin_l4", "Put the pill bottle and the orange bottle in the basket", ("pill_bottle", "roar_bottle")),
-    "twin_l4_three": _sequence_task("twin_l4", "Put the tape roll, the pill bottle and the cup in the basket", ("tape_roll", "pill_bottle", "paper_cup")),
+    "twin_l4_three": _sequence_task("twin_l4", "Put the pill bottle, the cup and the tape roll in the basket", ("pill_bottle", "paper_cup", "tape_roll")),
 })
 
 # The eval set (run_sim_eval.sh): the twin levels in order; a layout runs through its placements twin_<...>_p<k> on disk (``variants``).
