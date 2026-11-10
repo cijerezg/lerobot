@@ -858,10 +858,15 @@ def rtc_inference_worker(
                         if k in processed_batch
                     },
                 )
-                if prev_actions is not None:
-                    prev_actions = _normalize_prev_actions_length(prev_actions, target_steps=execution_horizon)
-
                 inference_delay = current_delay
+                # The trigger above fires with execution_horizon + delay steps left, so guide that whole overlap
+                # (RTC paper: weights 1 below the delay, ramp to the end of the overlap). Guiding only
+                # execution_horizon steps from index 0 puts every weighted step inside the delay, which merge drops.
+                # Capped at the leftover: zero-padding past it would pull the chunk toward zero.
+                guided_steps = execution_horizon + inference_delay
+                if prev_actions is not None:
+                    guided_steps = min(guided_steps, prev_actions.shape[0])
+                    prev_actions = _normalize_prev_actions_length(prev_actions, target_steps=guided_steps)
                 during_steps = 0
                 if sim_delay is not None:
                     # The env executes the delay's worth of queued actions while the chunk is computed. An empty
@@ -877,7 +882,7 @@ def rtc_inference_worker(
                     processed_batch,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_actions,
-                    execution_horizon=execution_horizon,
+                    execution_horizon=guided_steps,
                 )
                 if device.type == "cuda":
                     torch.cuda.synchronize()
