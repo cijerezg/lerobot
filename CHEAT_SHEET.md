@@ -32,8 +32,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/tidy-up-table-v1 \
-    --dataset.single_task="Tidy up the table" \
+    --dataset.repo_id=cijerezg/insert-floss-v1 \
+    --dataset.single_task="Insert tube into dental floss package" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \

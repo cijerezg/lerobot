@@ -1,10 +1,19 @@
 # Correction rubric: corrected action chunks from hindsight clips
 
-> **Status:** in use from 2026-11-09. Code: `annotation/corrections/`. Passes: `outputs/_annotation/corrections_v1` (grade 1-2 demos, annotated rollouts), `corrections_v2` (grade 3 demos, cut footage; skip added 2026-11-10).
+> **Status:** in use from 2026-11-09. Code: `annotation/corrections/`. Passes: `outputs/_annotation/corrections_v1` (grade 1-2 demos, annotated rollouts), `corrections_v2` (grade 3 demos, cut footage; skip added 2026-11-10), `corrections_v4_dense` (the 1 s grid frames between the 3 s frames of v1, v2's cut footage and v3), `corrections_v5`
+(the 2026-11-11 rollouts, 1 s grid from the start).
 
 One frame = one recorded chunk (30 actions, 1 s). The labeller reads the clip around the frame, works out what the
 hand was trying to do, and writes the manoeuvre it should have done as 1-3 tool poses. `corrections.build` turns the
 poses into a smooth path and keeps its first 1 s as the corrected chunk. Only corrected frames are trained on.
+
+## Frames of a pass
+
+One frame per second (user 2026-11-11; `every` 30 in `pass.json`, the default of `corrections.sample`). An annotated
+policy run is taken whole: policy frames, operator (teleop) frames and the footage cut out of it. Demonstrations
+give their grade 1-2 frames on the same 1 s grid. The one exception, settled 2026-11-11: grade 3 demo frames stay
+on the 3 s grid. Passes v1-v3 were sampled every 3 s (`every` 90 in their `pass.json`); v4_dense added their 1 s
+frames.
 
 ## Unit of work
 
@@ -15,6 +24,9 @@ episode is several jobs, done in order). It labels every frame folder of the job
 2. For each frame folder, in order: read each file once, write `waypoints.json`, move on.
 3. Each time an object's contact pose or a place (drop point, set-down point) is worked out or changes, append one
    line to `poses.txt`: frame folder, object or place, `tip`, `approach`, `jaw`, gripper angles, and why it changed.
+   A `poses.txt` that is already there may come from an earlier pass over the same episode on a coarser grid
+   (`# from corrections_v<N>` lines): it then covers the whole episode, later frames included. For each frame use
+   the line in force at that frame, and append only what a clip shows and those lines miss.
 4. No code, no second look. The only other file allowed is the `case.txt` of another frame folder of this episode,
    to find a row where the tool is at a place this clip does not reach.
 
@@ -38,6 +50,10 @@ A lost or stalled policy is not a reason to skip: that is the frame the correcti
 When the scene is no longer what the subtask assumes (object dropped, knocked over, in the wrong place), correct
 toward the object where it lies now and set `contact` to what that takes. The subtask label is normally right; where
 it plainly disagrees with the clip (labelled a carry with an empty gripper), follow the clip and say so in `note`.
+A hand heading to another object than the one the subtask names is not such a disagreement: on annotated frames
+(policy, operator, demo) the subtask's object is the target and the drift is the error, so the correction goes to
+the subtask's object (2026-11-11: the policy drifting to the purple bottle under "grasp the blue pill bottle").
+The correction always agrees with the subtask and `contact` of its frame.
 When the task is already done (object released, arm going back), go to the rest pose (`like_frame` 0) with
 `contact` `na`.
 

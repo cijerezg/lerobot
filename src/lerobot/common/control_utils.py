@@ -121,7 +121,7 @@ def predict_action(
     return action
 
 
-def init_keyboard_listener(*, enable_return_home: bool = False):
+def init_keyboard_listener(*, enable_return_home: bool = False, enable_freeze: bool = False):
     """
     Initializes a non-blocking keyboard listener for real-time user interaction.
 
@@ -129,6 +129,7 @@ def init_keyboard_listener(*, enable_return_home: bool = False):
     the program flow during execution, such as stopping recording or exiting loops. It gracefully
     handles headless environments where keyboard listening is not possible.
     With enable_return_home, H requests a return home before ending the episode.
+    With enable_freeze, F toggles a freeze (robot and leader hold, nothing is recorded).
 
     Returns:
         A tuple containing:
@@ -143,6 +144,7 @@ def init_keyboard_listener(*, enable_return_home: bool = False):
     events["rerecord_episode"] = False
     events["stop_recording"] = False
     events["return_home"] = False
+    events["frozen"] = False
 
     if is_headless():
         logging.warning(
@@ -165,6 +167,9 @@ def init_keyboard_listener(*, enable_return_home: bool = False):
                 events["exit_early"] = True
             elif enable_return_home and (getattr(key, "char", None) or "").lower() == "h":
                 events["return_home"] = True
+            elif enable_freeze and (getattr(key, "char", None) or "").lower() == "f":
+                events["frozen"] = not events["frozen"]
+                print("Freeze requested." if events["frozen"] else "Unfreeze requested.")
             elif key == keyboard.Key.esc:
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True

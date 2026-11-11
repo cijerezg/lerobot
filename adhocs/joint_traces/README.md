@@ -27,3 +27,9 @@ The root named `rebot_2026-11-10-annotated-v1` holds the 11-09 recordings and is
 
 `compare_repairs.py` overlays three candidate repairs (bridge, offset blend, local low-pass) on action and state. The
 offset blend was chosen; `lerobot.annotation.rebot.seam_repair_root` writes it into new `-seamfix1` roots.
+
+`check_other_sources.py` (2026-11-10) runs the same detector on random external ReBot and diverse episodes
+(`outputs/analysis/joint_traces/other_sources.html`). Neither source has chunk seams: detections there are small
+(median 1.2-1.7 deg), bunched 1-3 frames apart in fast motion, and only 0-7 % are spaced 13-18 frames, against 85 % for
+pre-fix rollouts. External ReBot, DROID, RoboChallenge UR5 and YAM 25 Hz commands are rougher than our own teleop
+(1-6 detections per 100 frames against 0.01).

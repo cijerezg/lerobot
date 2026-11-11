@@ -2,8 +2,9 @@
 
   uv run python -m lerobot.annotation.corrections.sample <work>
 
-Reads ``<work>/pass.json``. A frame is taken when it is on the 3 s grid of its episode (frame % 90 == 0), has 2 s of
-episode after it (the hindsight clip) and
+Reads ``<work>/pass.json``. A frame is taken when it is on the grid of its episode (frame % ``every`` == 0, default
+30 = 1 s; grade 3 demo frames stay on the 3 s grid, ``DEMO_GRADE_3_EVERY``), is not on the grid an earlier pass
+already labelled (frame % ``done_every`` == 0, default none), has 2 s of episode after it (the hindsight clip) and
   inference source   always: policy-controlled and operator-controlled frames alike; episodes flagged truncated
                      are left out whole
   rollout source     always (an annotated policy run is corrected whole)
@@ -25,7 +26,8 @@ import pandas as pd
 
 from lerobot.annotation.corrections.source import Episode, sources
 
-EVERY, AFTER = 90, 60  # frames: the 3 s grid, the 2 s of hindsight
+AFTER = 60  # frames: the 2 s of hindsight
+DEMO_GRADE_3_EVERY = 90  # frames: grade 3 demo frames are sampled every 3 s whatever the pass's grid (user 2026-11-11)
 
 
 def holds(episode: Episode) -> dict:
@@ -44,6 +46,7 @@ def main() -> None:
     work = Path(sys.argv[1])
     spec = json.loads((work / "pass.json").read_text())
     grades, skip_verbs = spec.get("demo_grades", [1, 2]), spec.get("demo_skip_verbs", [])
+    every, done_every = spec.get("every", 30), spec.get("done_every")
     rows, stalls = [], {}
     for source in sources(spec).values():
         for index in source.bounds:
@@ -52,10 +55,13 @@ def main() -> None:
                 stalls.setdefault(subtask, []).extend(angles)
             if source.kind == "inference" and e.truncated.any():
                 continue
-            for t in range(0, len(e.states) - AFTER, EVERY):
+            for t in range(0, len(e.states) - AFTER, every):
+                if done_every is not None and t % done_every == 0:
+                    continue
                 take = dict(
                     inference=True, rollout=True, cut=e.removed[t],
-                    rebot=e.grades[t] in grades and str(e.subtasks[t]).split(" ")[0] not in skip_verbs,
+                    rebot=e.grades[t] in grades and str(e.subtasks[t]).split(" ")[0] not in skip_verbs
+                    and (e.grades[t] != 3 or t % DEMO_GRADE_3_EVERY == 0),
                 )[source.kind]
                 if take:
                     rows.append(dict(

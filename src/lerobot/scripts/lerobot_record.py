@@ -321,6 +321,44 @@ def _park_and_record(
     return {f"{name}.pos": value for name, value in robot.config.park_pose.items()}
 
 
+def _hold_frozen(
+    robot: Robot,
+    teleop: rebot_102_leader.RebotArm102Leader,
+    events: dict,
+    fps: int,
+    teleop_action_processor: RobotProcessorPipeline,
+    robot_action_processor: RobotProcessorPipeline,
+    robot_observation_processor: RobotProcessorPipeline,
+    display_data: bool,
+    display_compressed_images: bool,
+) -> None:
+    """Hold the follower and the leader at the leader's current pose until F or another hotkey."""
+    hold = teleop.get_action()
+    logging.info("Frozen: follower and leader hold, nothing is recorded. Press F to resume.")
+    try:
+        teleop.enable_torque()
+        while events["frozen"] and not (
+            events["exit_early"] or events["stop_recording"] or events["return_home"]
+        ):
+            tick_start = time.perf_counter()
+            teleop.send_feedback(hold)
+            obs = robot.get_observation()
+            robot.send_action(robot_action_processor((teleop_action_processor((hold, obs)), obs)))
+            if display_data:
+                log_rerun_data(
+                    observation=robot_observation_processor(obs),
+                    action=hold,
+                    compress_images=display_compressed_images,
+                )
+            precise_sleep(max(0.0, 1 / fps - (time.perf_counter() - tick_start)))
+    except TeleopFeedbackError:
+        logging.exception("Leader feedback fault; unfreezing.")
+    finally:
+        events["frozen"] = False
+        teleop.disable_torque()
+    logging.info("Unfrozen: leader released, recording resumes.")
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -383,6 +421,26 @@ def record_loop(
         if events["exit_early"]:
             events["exit_early"] = False
             break
+
+        if events.get("frozen"):
+            if hold_position is not None:
+                # The follower is parked and the leader is free: nothing to freeze.
+                events["frozen"] = False
+            else:
+                _hold_frozen(
+                    robot=robot,
+                    teleop=teleop,
+                    events=events,
+                    fps=fps,
+                    teleop_action_processor=teleop_action_processor,
+                    robot_action_processor=robot_action_processor,
+                    robot_observation_processor=robot_observation_processor,
+                    display_data=display_data,
+                    display_compressed_images=display_compressed_images,
+                )
+                # Frozen time does not count toward the episode.
+                start_episode_t += time.perf_counter() - start_loop_t
+                continue
 
         if events.get("return_home"):
             events["return_home"] = False
@@ -570,11 +628,19 @@ def record(
             teleop.connect()
 
         enable_return_home = isinstance(robot, rebot_b601_follower.RebotB601Follower)
-        listener, events = init_keyboard_listener(enable_return_home=enable_return_home)
+        # Freeze needs a leader that can hold its pose, else the follower jumps on unfreeze.
+        enable_freeze = (
+            isinstance(teleop, rebot_102_leader.RebotArm102Leader) and teleop.config.variant == "102HD"
+        )
+        listener, events = init_keyboard_listener(
+            enable_return_home=enable_return_home, enable_freeze=enable_freeze
+        )
         if enable_return_home:
             logging.info(
                 "Recording controls: H = park and end episode, right = end, left = re-record, Esc = stop."
             )
+        if enable_freeze:
+            logging.info("F = freeze/unfreeze (follower and leader hold, nothing is recorded).")
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
