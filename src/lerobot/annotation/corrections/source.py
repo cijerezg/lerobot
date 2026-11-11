@@ -1,11 +1,13 @@
 """One dataset root of a correction pass, with the labels a correction needs for every frame.
 
-Three kinds of root:
+Four kinds of root:
   rollout     an annotated policy-run root: labels as a rebot root, operator takeover from
               ``meta/online_labels.parquet``
   inference   a recorded policy run: subtask, operator takeover and the truncated flag from
               ``meta/online_labels.parquet``; contact and precision from the pass's ``contact`` table by subtask
               ("unknown" for a subtask it does not list)
+  cut         a recorded policy run of which only the removed footage is wanted: as ``inference``, plus
+              ``removed`` (episode -> frame ranges no annotated root kept; ``cut_sources`` writes it)
   rebot       an annotated demonstration root: the frame grade and subtask from the segment rows split by the
               quality spans (``load_metadata_rows``, as the trainer reads them), contact and precision from their
               tables
@@ -27,7 +29,7 @@ DEPTH_UNITS_M = 1e-4  # the D405's depth unit
 
 
 class Source:
-    def __init__(self, name: str, root: str, kind: str, contact: dict, top: dict, cameras: dict):
+    def __init__(self, name: str, root: str, kind: str, contact: dict, top: dict, cameras: dict, removed: dict):
         self.name, self.root, self.kind = name, WORKSPACE / root, kind
         # ``top``: where ``fit_top`` starts; ``cameras``: the top camera (``arm.project``) of each episode it fitted
         self.top = dict(top, pos=np.asarray(top["pos"]), mat=np.asarray(top["mat"]))
@@ -41,8 +43,11 @@ class Source:
         self.tasks = {int(e.episode_index): str(e.tasks[0]) for e in episodes.itertuples()}
         self.depth = layout(self.root)[1]
         n = len(self.states)
-        self.grades, self.truncated = np.zeros(n, dtype=int), np.zeros(n, dtype=bool)
-        if kind == "inference":
+        self.grades, self.truncated, self.removed = np.zeros(n, dtype=int), np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+        for episode, ranges in removed.items():
+            for a, b in ranges:
+                self.removed[self.bounds[int(episode)][0] + a : self.bounds[int(episode)][0] + b] = True
+        if kind in ("inference", "cut"):
             labels = pd.read_parquet(self.root / "meta/online_labels.parquet").sort_values("index")
             self.subtasks, self.truncated = labels.subtask.to_numpy().astype(str), labels.truncated.to_numpy()
             self.kinds = np.where(labels.is_intervention, "operator", "policy")
@@ -74,6 +79,7 @@ class Episode:
         self.states, self.actions = source.states[self.start : end], source.actions[self.start : end]
         self.subtasks, self.kinds, self.grades = (x[self.start : end] for x in (source.subtasks, source.kinds, source.grades))
         self.contacts, self.precisions, self.truncated = (x[self.start : end] for x in (source.contacts, source.precisions, source.truncated))
+        self.removed = source.removed[self.start : end]
 
     def images(self, camera: str, frames: list[int]) -> list[np.ndarray]:
         """640 x 480 RGB frames of the top or wrist camera."""
@@ -96,5 +102,5 @@ def sources(spec: dict, names: list[str] | None = None) -> dict[str, Source]:
     for s in spec["sources"]:
         if names is None or s["name"] in names:
             cameras = {int(k.split("/ep")[1]): c for k, c in spec.get("cameras", {}).items() if k.split("/ep")[0] == s["name"]}
-            found[s["name"]] = Source(s["name"], s["root"], s["kind"], spec["contact"], spec["top"][s["top"]], cameras)
+            found[s["name"]] = Source(s["name"], s["root"], s["kind"], spec["contact"], spec["top"][s["top"]], cameras, s.get("removed", {}))
     return found

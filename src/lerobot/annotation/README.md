@@ -59,7 +59,7 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 | `gripper_events/` | Depth gripper-event labels and their review videos. |
 | `review/` | Review videos of training episodes with the labels the trainer consumes burned in; `audit_material` (one episode's labels, episode-local, and approach lines, for an audit checker). |
 | `segments/` | Proprio segmentation (`semantic_segment`). |
-| `corrections/` | Corrected 1 s action chunks from an LLM labeller's waypoints: `sample` (frames to label), `dump` (hindsight clip + `case.txt` per frame, and `jobs.txt`, the labelling jobs), `build` (waypoints -> smooth chunk, check, pass table), `export` (new training root: one 30-frame episode per ok correction, the frame's observation with the corrected chunk as its actions), `inspector` (Action Inspector page). Rubric: `rubrics/correction_rubric.md`; sources and contact table in `<work>/pass.json`. |
+| `corrections/` | Corrected 1 s action chunks from an LLM labeller's waypoints: `sample` (frames to label), `dump` (hindsight clip + `case.txt` per frame, and `jobs.txt`, the labelling jobs), `build` (waypoints -> smooth chunk, check, pass table), `export` (new training root: one 30-frame episode per ok correction, the frame's observation with the corrected chunk as its actions), `inspector` (Action Inspector page), `cut_sources` (adds the footage cut out of the annotated roots to a pass, traced through `meta/provenance.json`). Which demo grades a pass takes: `demo_grades` and `demo_skip_verbs` in `pass.json`. Rubric: `rubrics/correction_rubric.md`; sources and contact table in `<work>/pass.json`. |
 
 Tests: `tests/annotation/`.
 

@@ -7,7 +7,9 @@ episode after it (the hindsight clip) and
   inference source   always: policy-controlled and operator-controlled frames alike; episodes flagged truncated
                      are left out whole
   rollout source     always (an annotated policy run is corrected whole)
-  rebot source       its frame grade is 1 or 2
+  cut source         it is removed footage (``Source.removed``); the kind reads "policy cut" / "operator cut"
+  rebot source       its frame grade is in the pass's ``demo_grades`` (default 1 and 2) and its subtask does not
+                     start with one of the pass's ``demo_skip_verbs`` (default none)
 
 Writes ``<work>/frames.parquet``, one row per frame: source, episode, frame, kind (policy / operator / demo), grade
 (0 = not a graded demo), subtask, contact, precision; and ``<work>/stalls.json``: subtask -> median measured
@@ -40,18 +42,25 @@ def holds(episode: Episode) -> dict:
 
 def main() -> None:
     work = Path(sys.argv[1])
+    spec = json.loads((work / "pass.json").read_text())
+    grades, skip_verbs = spec.get("demo_grades", [1, 2]), spec.get("demo_skip_verbs", [])
     rows, stalls = [], {}
-    for source in sources(json.loads((work / "pass.json").read_text())).values():
+    for source in sources(spec).values():
         for index in source.bounds:
             e = Episode(source, index)
             for subtask, angles in holds(e).items():
                 stalls.setdefault(subtask, []).extend(angles)
-            if e.truncated.any():
+            if source.kind == "inference" and e.truncated.any():
                 continue
             for t in range(0, len(e.states) - AFTER, EVERY):
-                if source.kind != "rebot" or e.grades[t] in (1, 2):
+                take = dict(
+                    inference=True, rollout=True, cut=e.removed[t],
+                    rebot=e.grades[t] in grades and str(e.subtasks[t]).split(" ")[0] not in skip_verbs,
+                )[source.kind]
+                if take:
                     rows.append(dict(
-                        source=source.name, episode=index, frame=t, kind=str(e.kinds[t]), grade=int(e.grades[t]),
+                        source=source.name, episode=index, frame=t, grade=int(e.grades[t]),
+                        kind=str(e.kinds[t]) + (" cut" if source.kind == "cut" else ""),
                         subtask=str(e.subtasks[t]), contact=str(e.contacts[t]), precision=str(e.precisions[t]),
                     ))
     frames = pd.DataFrame(rows)

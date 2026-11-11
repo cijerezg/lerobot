@@ -1,6 +1,6 @@
 # Correction rubric: corrected action chunks from hindsight clips
 
-> **Status:** in use from 2026-11-09. Code: `annotation/corrections/`. First pass: `outputs/_annotation/corrections_v1`.
+> **Status:** in use from 2026-11-09. Code: `annotation/corrections/`. Passes: `outputs/_annotation/corrections_v1` (grade 1-2 demos, annotated rollouts), `corrections_v2` (grade 3 demos, cut footage; skip added 2026-11-10).
 
 One frame = one recorded chunk (30 actions, 1 s). The labeller reads the clip around the frame, works out what the
 hand was trying to do, and writes the manoeuvre it should have done as 1-3 tool poses. `corrections.build` turns the
@@ -18,13 +18,22 @@ episode is several jobs, done in order). It labels every frame folder of the job
 4. No code, no second look. The only other file allowed is the `case.txt` of another frame folder of this episode,
    to find a row where the tool is at a place this clip does not reach.
 
-Every frame gets a correction. There is no skip.
+Every frame gets a correction. The one exception is cut footage (below).
 
 | Frame kind (stated in `case.txt`) | What the recorded chunk is | What to write |
 |---|---|---|
 | policy | the policy's own actions | the manoeuvre that reaches the subtask's goal from here |
 | operator | a human taking over after the policy failed | the same; the operator's later motion is a hint, not the answer |
 | demo, grade 1 or 2 | a poor stretch of a human demonstration | the same |
+| demo, grade 3 | a passable stretch of a demonstration: a weaker grasp choice, a search or a hover | the same; where the grasp choice is the weakness, the object table's grasp replaces it |
+| policy cut, operator cut | footage of a policy run that the review removed: wandering with no clear target, resets, trims at the start and end, idle stretches | the same when the clip shows what the hand should do; otherwise skip |
+
+**Cut footage.** The subtask on these frames is the prompt the policy had at that moment, never checked by an
+annotator: a hint. Take the target from the clip (the object the hand is at or heading to, the object it holds) and
+set `contact` to match. Skip the frame, with `{"skip": "<reason in a few words>"}` as the whole `waypoints.json`,
+only when no correction can be written: no object the hand could be going for, a person's hand or a rearranged
+scene inside the clip (objects jump between tiles), the task over with the arm parked, images too dark or blocked.
+A lost or stalled policy is not a reason to skip: that is the frame the correction is for.
 
 When the scene is no longer what the subtask assumes (object dropped, knocked over, in the wrong place), correct
 toward the object where it lies now and set `contact` to what that takes. The subtask label is normally right; where

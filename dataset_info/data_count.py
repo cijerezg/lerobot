@@ -7,10 +7,12 @@ Sources: `dataset.sources` (ReBot roots and their episode_groups), `diverse.rebo
 `diverse.rebot_exclusions_manifest` and `diverse.diverse_exclusions_manifest` (usefulness cuts: frames whose action targets are never drawn), `diverse.root`
 (corpus/ and fmb/ episodes.jsonl minus holdout_episodes.json and excluded_episodes.json), `val_dataset_path`.
 Roots built but not yet in the config are listed in lerobot/dataset_info/pending.yaml (`- root: ..., note: ...`).
+Also writes lerobot/dataset_info/SUBTASKS.md: every subtask string in the sampled ReBot episodes (meta/episode_metadata.parquet).
 """
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +31,89 @@ def episode_lengths(root):
 
 def hours(frames, fps=30):
     return f"{frames / fps / 3600:.2f}"
+
+
+# Object families, matched in the object phrase (verb and destination stripped); the earliest match wins (ties: the longest), so
+# "move the bit to the compartment with the gray bits" -> bit and "push the bit kit next to ..." -> bit kit.
+FAMILIES = {
+    "bit kit": r"\bflap with the (?:bits|white card|shipping label)|\bflap\b|\bbit kit\b|\bthe kit\b",
+    "headphone case": r"headphone case|case with the headphones",
+    "nail clipper": r"nail clipper",
+    "bit": r"\bbits?\b",
+    "wall plug": r"wall plug",
+    "pill bottle": r"pill bottle|\bpills\b",
+    "sock": r"\bsock\b",
+    "shirt": r"\bshirt\b",
+    "towel": r"\btowel\b|\bcorner\b",
+    "tape roll": r"tape roll",
+    "eraser": r"\beraser\b",
+    "disk": r"\bdisk\b",
+    "drawer": r"\bdrawer\b",
+    "bowl": r"\bbowl\b",
+    "book": r"\bbooks?\b",
+    "microcontroller": r"microcontroller",
+    "floss": r"\bfloss\b",
+    "can": r"\bcan\b",
+    "deck of cards": r"deck of cards",
+}
+STOP = r"\b(?:to|in|into|on|onto|off|next|over|down|upright|out|from|back|toward|away|near\w*|farther|farthest|left|right|between|with|lying|apart|under|hanging|of|at|and|flat|open)\b"
+
+DEST = r"\b(?:to|in|into|on|onto|off|next|over|down|upright|out|from|back|toward|away|nearest|farther|farthest|between|lying|apart|under|hanging|at|and|flat|open)\b"
+
+
+def subtask_object(subtask):
+    """(family, variant) of a subtask string, or None for "return to home". Variant = the noun phrase that names the object."""
+    rest = subtask.split(" ", 1)[1] if " " in subtask else ""
+    if subtask == "return to home" or not rest:
+        return None
+    rest = re.sub(r"^(?:out|up)\s", "", rest)  # "shake out the towel", "line up the ends"
+    head_part = re.split(DEST, rest)[0]  # the object phrase, before any destination
+    hits = [(m.start(), -len(m.group()), fam, m) for fam, rx in FAMILIES.items() for m in [re.search(rx, head_part)] if m]
+    if hits:
+        _, _, fam, m = min(hits, key=lambda h: h[:2])
+        head = re.split(r"\b(?:the|a)\s", rest[: m.start()])[-1]
+        head = head if not re.search(STOP, head) else ""
+        return fam, (head + m.group()).strip()
+    phrase = re.sub(r"^(?:up\s|(?:one of )?the\s|a\s)", "", rest)
+    phrase = re.split(STOP, phrase)[0].strip()
+    return phrase, phrase
+
+
+def subtask_tables(cfg, shares):
+    """Segments and object grasp cycles in the sampled ReBot episodes. A cycle = a run of consecutive segments of one
+    episode on the same object family, split at each fresh grasp (grasp -> move -> release = 1, back-to-back regrasps = 1,
+    nine bits in a row = 9, each bit kit flap = 1)."""
+    seg = defaultdict(lambda: [0, set(), 0, 0, 0])  # subtask -> segments, episodes, frames, internal, external
+    obj = defaultdict(lambda: [0, set(), 0, 0, 0, defaultdict(int)])  # family -> cycles, episodes, frames, int, ext, variants
+    for s in cfg["dataset"]["sources"]:
+        meta = pd.read_parquet(WORKSPACE / s["root"] / "meta/episode_metadata.parquet")
+        for g, eps in s["episode_groups"].items():
+            if not shares.get(g, 0):
+                continue
+            col = 3 if g != "external_rebot" else 4
+            for e, rows in meta[meta.episode_index.isin(eps)].sort_values(["episode_index", "segment_index"]).groupby("episode_index"):
+                prev, prev_grasp = None, False
+                for r in rows.itertuples():
+                    n = r.to_index - r.from_index
+                    x = seg[r.subtask]
+                    x[0] += 1
+                    x[1].add((s["root"], e))
+                    x[2] += n
+                    x[col] += 1
+                    o = subtask_object(r.subtask)
+                    if o is None:
+                        prev = None
+                        continue
+                    y = obj[o[0]]
+                    grasp = r.subtask.startswith("grasp ")
+                    if o[0] != prev or (grasp and not prev_grasp):
+                        y[0] += 1
+                        y[col] += 1
+                        y[5][o[1]] += 1
+                    y[1].add((s["root"], e))
+                    y[2] += n
+                    prev, prev_grasp = o[0], grasp
+    return seg, obj
 
 
 def diverse_rows(root, cut_s):
@@ -126,6 +211,57 @@ def main():
             out.append(f"| `{p['root']}` | {len(lengths)} | {sum(lengths.values()):,} | {hours(sum(lengths.values()))} | {p.get('note', '')} |")
     else:
         out.append("None.")
+    seg, obj = subtask_tables(cfg, shares)
+    out.append("\n## Objects (sampled ReBot episodes)\n\nFrom each root's `meta/episode_metadata.parquet`, groups with share > 0. "
+               "Cycle = consecutive segments of one episode on the same object, split at each fresh grasp (grasp, move, release = 1; "
+               "back-to-back regrasps = 1; each bit kit flap = 1; a retry after a failed close or insert = 1 more). "
+               "Object = family matched in the subtask string (`FAMILIES` in data_count.py), else the noun phrase. Frames = segment frames, "
+               "return to home not counted. Variants = the noun phrase of each cycle's first segment. Full subtask list: `SUBTASKS.md`.\n")
+    out.append("| object | grasp cycles | internal | external | episodes | frames | hours | variants (cycles) |\n|---|---|---|---|---|---|---|---|")
+    for k, (n, eps, f, i, x, var) in sorted(obj.items(), key=lambda kv: (-kv[1][0], kv[0])):
+        v = ", ".join(f"{a} {b}" for a, b in sorted(var.items(), key=lambda ab: -ab[1])) if list(var) != [k] else ""
+        out.append(f"| {k} | {n} | {i} | {x} | {len(eps)} | {f:,} | {hours(f)} | {v} |")
+    verbs = defaultdict(lambda: [0, 0])
+    for k, (n, _, f, _, _) in seg.items():
+        v = "return to home" if k == "return to home" else k.split(" ")[0]
+        verbs[v][0] += n
+        verbs[v][1] += f
+    out.append("\n## Subtasks by verb (sampled ReBot episodes)\n\n| verb | segments | frames | hours |\n|---|---|---|---|")
+    out += [f"| {k} | {n} | {f:,} | {hours(f)} |" for k, (n, f) in sorted(verbs.items(), key=lambda kv: -kv[1][0])]
+    general = defaultdict(lambda: [0, set(), 0, 0, 0, 0])  # (object, "verb the object") -> segments, episodes, frames, int, ext, strings
+    for k, (n, eps, f, i, x) in seg.items():
+        o = subtask_object(k)
+        if o is None:
+            continue
+        verb = " ".join(k.split()[:2]) if re.match(r"(?:line up|shake out) ", k) else k.split()[0]
+        g = general[(o[0], f"{verb} the {o[0]}")]
+        g[0] += n
+        g[1] |= eps
+        g[2] += f
+        g[3] += i
+        g[4] += x
+        g[5] += 1
+    totals = defaultdict(lambda: [0, set(), 0, 0, 0])
+    for (o, _), (n, eps, f, i, x, _) in general.items():
+        t = totals[o]
+        t[0] += n
+        t[1] |= eps
+        t[2] += f
+        t[3] += i
+        t[4] += x
+    sub = [f"# Subtasks\n\nGenerated {datetime.now():%Y-%m-%d %H:%M} by `data_count.py` from `{args.config}`, sampled ReBot episodes. "
+           "Object and the per-object grasp cycles: DATA.md. Segments split into internal / external ReBot; return to home not listed.\n",
+           "## By object\n\nGeneral subtask = verb + object, all wordings merged (\"grasp the bit nearest the box\" and \"grasp the leftmost bit\" "
+           "-> grasp the bit; every destination of \"move the bit to ...\" -> move the bit). Strings = distinct wordings merged.\n",
+           "| object | general subtask | segments | internal | external | episodes | frames | hours | strings |\n|---|---|---|---|---|---|---|---|---|"]
+    for o, (n, eps, f, i, x) in sorted(totals.items(), key=lambda kv: (-kv[1][0], kv[0])):
+        sub.append(f"| **{o}** | **all** | **{n}** | **{i}** | **{x}** | **{len(eps)}** | **{f:,}** | **{hours(f)}** | |")
+        rows = sorted(((k, v) for k, v in general.items() if k[0] == o), key=lambda kv: -kv[1][0])
+        sub += [f"| | {g} | {n} | {i} | {x} | {len(eps)} | {f:,} | {hours(f)} | {m} |" for (_, g), (n, eps, f, i, x, m) in rows]
+    sub.append("\n## Every subtask string\n\n| object | subtask | segments | internal | external | episodes | frames |\n|---|---|---|---|---|---|---|")
+    keyed = sorted(seg.items(), key=lambda kv: ((subtask_object(kv[0]) or ("~",))[0], -kv[1][0], kv[0]))
+    sub += [f"| {(subtask_object(k) or ('',))[0]} | {k} | {n} | {i} | {x} | {len(eps)} | {f:,} |" for k, (n, eps, f, i, x) in keyed]
+    (HERE / "SUBTASKS.md").write_text("\n".join(sub) + "\n")
     (HERE / "DATA.md").write_text("\n".join(out) + "\n")
     print((HERE / "DATA.md").read_text())
 

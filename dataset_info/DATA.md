@@ -1,6 +1,6 @@
 # Data record
 
-Generated 2026-10-29 22:18 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
+Generated 2026-11-10 13:13 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
 
 ## Training mix by sampling group
 
@@ -63,3 +63,95 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 From `lerobot/dataset_info/pending.yaml`.
 
 None.
+
+## Objects (sampled ReBot episodes)
+
+From each root's `meta/episode_metadata.parquet`, groups with share > 0. Cycle = consecutive segments of one episode on the same object, split at each fresh grasp (grasp, move, release = 1; back-to-back regrasps = 1; each bit kit flap = 1; a retry after a failed close or insert = 1 more). Object = family matched in the subtask string (`FAMILIES` in data_count.py), else the noun phrase. Frames = segment frames, return to home not counted. Variants = the noun phrase of each cycle's first segment. Full subtask list: `SUBTASKS.md`.
+
+| object | grasp cycles | internal | external | episodes | frames | hours | variants (cycles) |
+|---|---|---|---|---|---|---|---|
+| sock | 203 | 203 | 0 | 64 | 158,592 | 1.47 | sock 85, white sock 55, black sock 39, plain black sock 8, striped sock 7, plain white sock 5, plain sock 2, striped black sock 1, long black sock 1 |
+| shirt | 159 | 159 | 0 | 48 | 104,315 | 0.97 | shirt 88, grey shirt 17, white shirt 15, red shirt 15, navy shirt 10, brown shirt 5, green shirt 3, black shirt 3, beige shirt 3 |
+| bit | 92 | 92 | 0 | 32 | 103,825 | 0.96 | bit 79, leftmost bit 5, two bits 2, blue bit 2, two touching bits 1, slanted bit 1, three bits 1, yellow bit 1 |
+| nail clipper | 77 | 77 | 0 | 35 | 76,067 | 0.70 | nail clipper 38, large nail clipper 24, small nail clipper 15 |
+| pill bottle | 73 | 73 | 0 | 57 | 69,403 | 0.64 | pill bottle 52, yellow pill bottle 11, orange pill bottle 10 |
+| towel | 65 | 0 | 65 | 10 | 20,058 | 0.19 | corner 34, towel 31 |
+| bit kit | 64 | 64 | 0 | 34 | 47,073 | 0.44 | flap with the white card 32, flap with the bits 31, flap with the shipping label 1 |
+| headphone case | 62 | 62 | 0 | 38 | 46,114 | 0.43 | headphone case 60, case with the headphones 2 |
+| tape roll | 35 | 25 | 10 | 34 | 25,197 | 0.23 | tape roll 25, green tape roll 10 |
+| cup | 34 | 34 | 0 | 34 | 31,317 | 0.29 |  |
+| bowl | 28 | 0 | 28 | 10 | 5,814 | 0.05 |  |
+| water bottle | 26 | 26 | 0 | 19 | 25,223 | 0.23 |  |
+| T block | 20 | 0 | 20 | 20 | 9,699 | 0.09 |  |
+| apple | 20 | 0 | 20 | 10 | 5,344 | 0.05 |  |
+| charger | 20 | 0 | 20 | 20 | 7,470 | 0.07 |  |
+| drawer | 20 | 0 | 20 | 10 | 5,734 | 0.05 | upper drawer 10, lower drawer 10 |
+| fig bar | 20 | 0 | 20 | 10 | 6,906 | 0.06 |  |
+| mallet | 20 | 0 | 20 | 10 | 2,741 | 0.03 |  |
+| eraser | 19 | 9 | 10 | 19 | 9,364 | 0.09 | green eraser 15, yellow eraser 4 |
+| spray bottle | 19 | 19 | 0 | 17 | 16,292 | 0.15 |  |
+| disk | 18 | 0 | 18 | 18 | 9,553 | 0.09 | disk 10, black disk 4, wooden disk 4 |
+| box | 12 | 1 | 11 | 11 | 4,396 | 0.04 |  |
+| cap | 12 | 12 | 0 | 12 | 8,327 | 0.08 |  |
+| lid | 11 | 11 | 0 | 8 | 7,162 | 0.07 |  |
+| yellow piece | 11 | 0 | 11 | 9 | 3,609 | 0.03 |  |
+| bolt | 10 | 0 | 10 | 10 | 2,040 | 0.02 |  |
+| crayfish | 10 | 0 | 10 | 10 | 5,370 | 0.05 |  |
+| microcontroller | 10 | 0 | 10 | 10 | 4,873 | 0.05 |  |
+| motor | 10 | 0 | 10 | 10 | 4,555 | 0.04 |  |
+| orange piece | 10 | 0 | 10 | 9 | 2,825 | 0.03 |  |
+| paper ball | 10 | 0 | 10 | 10 | 2,928 | 0.03 |  |
+| puck | 10 | 0 | 10 | 10 | 8,375 | 0.08 |  |
+| red die | 10 | 0 | 10 | 10 | 5,327 | 0.05 |  |
+| tea bag | 10 | 0 | 10 | 10 | 1,292 | 0.01 |  |
+| wall plug | 10 | 10 | 0 | 6 | 8,306 | 0.08 | wall plug 5, red wall plug 3, yellow wall plug 2 |
+| blue piece | 9 | 0 | 9 | 9 | 3,075 | 0.03 |  |
+| packet | 8 | 0 | 8 | 7 | 4,311 | 0.04 |  |
+| shaker bottle | 8 | 8 | 0 | 6 | 8,632 | 0.08 |  |
+| cork | 7 | 0 | 7 | 7 | 2,019 | 0.02 |  |
+| paper | 7 | 0 | 7 | 7 | 3,322 | 0.03 |  |
+| sugar cube | 7 | 7 | 0 | 7 | 2,276 | 0.02 |  |
+| can | 6 | 0 | 6 | 6 | 2,955 | 0.03 | can 3, red can 3 |
+| noodles | 6 | 0 | 6 | 6 | 538 | 0.00 |  |
+| tissue | 6 | 0 | 6 | 6 | 2,265 | 0.02 |  |
+| cube | 5 | 0 | 5 | 5 | 1,635 | 0.02 |  |
+| box lid | 4 | 4 | 0 | 4 | 3,039 | 0.03 |  |
+| egg | 4 | 0 | 4 | 4 | 552 | 0.01 |  |
+| book | 3 | 3 | 0 | 3 | 2,403 | 0.02 | top book 2, books 1 |
+| floss | 3 | 3 | 0 | 3 | 2,473 | 0.02 | floss 2, dental floss 1 |
+| orange bottle | 3 | 3 | 0 | 2 | 4,320 | 0.04 |  |
+| block | 2 | 0 | 2 | 2 | 555 | 0.01 |  |
+| blue cube | 2 | 0 | 2 | 2 | 238 | 0.00 |  |
+| ham | 2 | 0 | 2 | 2 | 135 | 0.00 |  |
+| oil | 2 | 0 | 2 | 2 | 240 | 0.00 |  |
+| purple box | 2 | 0 | 2 | 2 | 657 | 0.01 |  |
+| deck of cards | 1 | 1 | 0 | 1 | 2,058 | 0.02 |  |
+
+## Subtasks by verb (sampled ReBot episodes)
+
+| verb | segments | frames | hours |
+|---|---|---|---|
+| grasp | 1255 | 556,342 | 5.15 |
+| move | 966 | 168,917 | 1.56 |
+| release | 922 | 82,306 | 0.76 |
+| return to home | 355 | 74,519 | 0.69 |
+| fold | 94 | 15,913 | 0.15 |
+| close | 73 | 18,077 | 0.17 |
+| stand | 40 | 15,161 | 0.14 |
+| push | 38 | 17,495 | 0.16 |
+| pour | 26 | 7,495 | 0.07 |
+| spread | 19 | 1,243 | 0.01 |
+| take | 11 | 2,030 | 0.02 |
+| open | 10 | 705 | 0.01 |
+| hit | 10 | 8,375 | 0.08 |
+| plug | 10 | 2,017 | 0.02 |
+| set | 9 | 1,829 | 0.02 |
+| press | 5 | 555 | 0.01 |
+| lift | 5 | 2,091 | 0.02 |
+| shake | 4 | 645 | 0.01 |
+| pull | 4 | 346 | 0.00 |
+| straighten | 3 | 423 | 0.00 |
+| slide | 3 | 259 | 0.00 |
+| turn | 3 | 558 | 0.01 |
+| lay | 2 | 360 | 0.00 |
+| line | 1 | 42 | 0.00 |

@@ -1,7 +1,8 @@
 """Expand every ``waypoints.json`` of a correction pass into its corrected chunk.
 
-  uv run python -m lerobot.annotation.corrections.build <work>
+  uv run python -m lerobot.annotation.corrections.build <work> [--source NAME ...]
 
+``--source`` expands only those sources and keeps the other sources' rows of ``corrections.parquet`` as they are.
 For each frame of ``<work>/frames.parquet`` whose folder holds a ``waypoints.json`` writes, in that folder,
   correction.npy   30 x 7 joint targets (deg): the first 1 s of the manoeuvre, held at its end when it is shorter
   manoeuvre.npy    N x 7: the whole manoeuvre
@@ -17,11 +18,12 @@ and for the pass
 Pace: every manoeuvre cruises at the arm's speed limit (``MAX_SPEED_DEG_S``), so a correction covers more ground
 than the recorded chunk whenever its goal is that far. ``inconsistent`` is a review flag: within one episode and
 subtask some other correction with the same contact has its contact-pose tip more than 3 cm away. A frame that fails
-the check or cannot be expanded stays in the table with ok = False.
+the check or cannot be expanded stays in the table with ok = False; so does a frame the labeller skipped
+(``{"skip": reason}``, cut footage only), with error = "skip: <reason>".
 """
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -101,8 +103,14 @@ def smooth(arm: Arm, episode: Episode, t: int, spec: dict, cruise_deg_s: float) 
 
 
 def main() -> None:
-    work = Path(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("work", type=Path)
+    parser.add_argument("--source", nargs="+")
+    args = parser.parse_args()
+    work = args.work
     frames = pd.read_parquet(work / "frames.parquet")
+    if args.source is not None:
+        frames = frames[frames.source.isin(args.source)]
     folders = [work / r.source / f"ep{r.episode:03d}" / f"f{r.frame:06d}" for r in frames.itertuples()]
     frames = frames.assign(folder=folders)[[(f / "waypoints.json").exists() for f in folders]]
     arm = Arm()
@@ -119,6 +127,9 @@ def main() -> None:
             rows.append(row)
             try:  # the labeller's file is the one input nobody checked
                 spec = json.loads((r.folder / "waypoints.json").read_text())
+                if "skip" in spec:
+                    row["error"] = f"skip: {spec['skip']}"
+                    continue
                 row["contact"] = str(spec["contact"])
                 code_for(row["contact"])  # a name outside the vocabulary is an error
                 full, poses = smooth(arm, e, t, spec, row["cruise_deg_s"])
@@ -150,6 +161,9 @@ def main() -> None:
             _write_records_npz(records, str(work / name), fps=float(FPS), table_z=0.0, dataset_repo_id=name, dataset_root=str(source.root))
 
     table = pd.DataFrame(rows)
+    if args.source is not None:
+        kept = pd.read_parquet(work / "corrections.parquet")
+        table = pd.concat([kept[~kept.source.isin(args.source)], table], ignore_index=True)
     table["tip_spread_m"] = 0.0
     built = table[table.error == ""]
     for index in built.groupby(["source", "episode", "subtask", "contact"]).groups.values():
