@@ -36,6 +36,9 @@ class OfflineDatasetSourceConfig:
     # Overrides the root's meta/info.json robot_type for the prompt's embodiment clause.
     # Leave unset unless that field is missing or wrong; see lerobot/datasets/embodiment.py.
     embodiment: str | None = None
+    # Image stride of this root's replay cache when it differs from policy.image_stride. A corrections root
+    # (30-frame episodes that repeat one image) is cached at 30: one image row per episode.
+    image_stride: int | None = None
 
     def __post_init__(self) -> None:
         if not self.root:

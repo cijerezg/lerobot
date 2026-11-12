@@ -33,6 +33,8 @@ class OfflineDatasetSource:
     # Optional override for the prompt's embodiment clause. Only needed when a root's
     # meta/info.json robot_type is missing or wrong; otherwise it is read from there.
     embodiment: str | None = None
+    # Image stride of this root's replay cache; None = policy.image_stride.
+    image_stride: int | None = None
 
 
 def _source_field(source, name: str, default=None):
@@ -78,6 +80,7 @@ def get_offline_dataset_sources(cfg) -> list[OfflineDatasetSource]:
                     episodes=_source_field(source, "episodes", None),
                     episode_groups=_source_field(source, "episode_groups", None) or {},
                     embodiment=_source_field(source, "embodiment", None),
+                    image_stride=_source_field(source, "image_stride", None),
                 )
             )
         return resolved
@@ -779,7 +782,7 @@ def load_additional_offline_buffers(
     cache_policy = getattr(cfg, "cache_policy", "fallback")
     image_storage_dtype = getattr(cfg.policy, "image_storage_dtype", "bfloat16")
     image_storage_size = getattr(cfg.policy, "image_storage_size", None)
-    image_stride = getattr(cfg.policy, "image_stride", 1)
+    policy_image_stride = getattr(cfg.policy, "image_stride", 1)
     reward_normalization_constant = float(getattr(cfg.policy, "reward_normalization_constant", 1.0))
     terminal_failure_reward = float(getattr(cfg.policy, "terminal_failure_reward", -1.0))
     buffers: list[ReplayBuffer] = []
@@ -793,6 +796,7 @@ def load_additional_offline_buffers(
             )
         dataset = load_offline_dataset(cfg, source)
         state_keys = buffer_state_keys(cfg, dataset)
+        image_stride = source.image_stride if source.image_stride is not None else policy_image_stride
         cached = None
         if cache_dir is not None:
             cached = ReplayBuffer.find_cache(

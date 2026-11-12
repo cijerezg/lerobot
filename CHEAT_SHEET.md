@@ -43,6 +43,10 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.variant=102HD \
     --display_data=true
 
+Keys: `h` park and end the episode, `f` freeze/unfreeze, right = end, left = re-record, Esc = stop. `p` toggles precision
+mode: the follower moves `--teleop.precision_scale` (0.25) times the leader's motion from the pose at the key press,
+gripper 1:1; `p` again holds the follower while the leader is driven onto it (0.5 s or more, not recorded), then 1:1 resumes.
+
 A crash or Ctrl-C mid-episode leaves `<root>/recovery/episode-XXXXXX.pkl` (state, action, task per frame) next to the
 images. Rebuild those episodes into a new root (needs images on disk, so not with `--dataset.streaming_encoding=true`):
 

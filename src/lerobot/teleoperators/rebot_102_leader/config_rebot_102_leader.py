@@ -43,6 +43,10 @@ class RebotArm102LeaderConfig:
     # fields from YAML; __post_init__ retains strict value validation.
     variant: str = "102LD"
 
+    # Recording precision mode (P in lerobot_record, 102HD only): the follower moves this
+    # fraction of the leader's motion about the leader pose at entry; the gripper stays 1:1.
+    precision_scale: float = 0.25
+
     # Hardware-verified 102HD sync-control settings. Commands are refreshed by
     # the rollout loop; the 100 ms interval is the vendor's smooth-control path.
     feedback_interval_ms: int = 100

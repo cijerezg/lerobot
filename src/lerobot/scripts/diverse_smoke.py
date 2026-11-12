@@ -184,7 +184,7 @@ def _rebot_buffers(cfg, history_offsets):
             state_keys=buffer_state_keys(cfg, dataset),
             image_storage_dtype=cfg.policy.image_storage_dtype,
             image_storage_size=cfg.policy.image_storage_size,
-            image_stride=cfg.policy.image_stride,
+            image_stride=source.image_stride if source.image_stride is not None else cfg.policy.image_stride,
         )
         if cached is None:
             raise FileNotFoundError(f"no ReBot cache for {source.name!r} under {cfg.buffer_cache_dir!r}")

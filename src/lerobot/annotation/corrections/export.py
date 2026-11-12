@@ -117,7 +117,7 @@ def main():
 
     print(f"{n} episodes, {n * CHUNK} frames -> {out}")
     print("config_rl.yaml, under dataset.sources (and `corrections: <share>` under diverse.rebot_group_weights):")
-    print(f"  - name: corrections\n    root: {out}\n    weight: 1.0\n    sampling_group: corrections\n    normalization_source: false")
+    print(f"  - name: corrections\n    root: {out}\n    weight: 1.0\n    sampling_group: corrections\n    normalization_source: false\n    image_stride: {CHUNK}")
     print(f"    episode_groups:\n      corrections: {list(range(n))}")
 
 

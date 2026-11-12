@@ -154,3 +154,78 @@ def test_keyboard_home_is_opt_in_and_does_not_exit_early(monkeypatch):
     assert not enabled["exit_early"]
     callbacks[-1](keys.esc)
     assert enabled["stop_recording"] and enabled["exit_early"]
+
+
+def test_precision_scales_arm_not_gripper_then_resyncs_leader(setup_recording):
+    s = setup_recording
+    s.events.update(return_home=False, frozen=False, precision=False)
+    s.teleop.config.precision_scale = 0.25
+    s.robot.action_features = {"joint.pos": float, "gripper.pos": float}
+    reads = []
+
+    def get_action():
+        reads.append(None)
+        if len(reads) == 2:
+            s.events["precision"] = True  # P: this read is the anchor
+        if len(reads) == 3:
+            s.events["precision"] = False  # P mid-tick: this tick is still scaled
+        if len(reads) == 1 or len(reads) == 2:
+            return {"joint.pos": 20.0, "gripper.pos": 0.0}
+        # The leader moved 8 deg and closed the gripper; the resync then drives it onto the follower.
+        return {"joint.pos": 22.0 if "release" in s.calls else 28.0, "gripper.pos": -40.0}
+
+    s.teleop.get_action.side_effect = get_action
+    run_loop(s, control_time_s=4.5 / 30)
+    assert [frame["action"] for frame in s.dataset.frames] == [
+        {"joint.pos": 20.0, "gripper.pos": 0.0},
+        {"joint.pos": 20.0, "gripper.pos": 0.0},
+        {"joint.pos": 22.0, "gripper.pos": -40.0},
+        {"joint.pos": 22.0, "gripper.pos": -40.0},
+        {"joint.pos": 22.0, "gripper.pos": -40.0},
+    ]
+    assert max(call.args[0]["joint.pos"] for call in s.robot.send_action.call_args_list) == 22.0
+    feedback = [call[1] for call in s.calls if isinstance(call, tuple)]
+    assert s.calls[0] == "enable" and s.calls[-1] == "release"
+    assert len(feedback) == 15 and feedback[0]["joint.pos"] == pytest.approx(27.6)
+    assert feedback[-1] == {"joint.pos": 22.0, "gripper.pos": -40.0}
+    assert not s.events["precision"]
+
+
+@pytest.mark.parametrize("event", ["exit_early", "frozen", "timeout"])
+def test_precision_resyncs_before_the_leader_drives_the_follower_again(setup_recording, event):
+    s = setup_recording
+    s.events.update(return_home=False, frozen=False, precision=True)
+    s.teleop.config.precision_scale = 0.25
+    reads = []
+
+    def get_action():
+        reads.append(None)
+        if len(reads) == 2 and event != "timeout":
+            s.events[event] = True
+        if "release" in s.calls:
+            s.events["frozen"] = False  # ends the freeze hold
+            return {"joint.pos": 21.0}
+        return {"joint.pos": 20.0 if len(reads) == 1 else 24.0}
+
+    s.teleop.get_action.side_effect = get_action
+    run_loop(s, control_time_s=1.5 / 30 if event == "timeout" else 0.3)
+    assert max(call.args[0]["joint.pos"] for call in s.robot.send_action.call_args_list) == 21.0
+    feedback = [call[1] for call in s.calls if isinstance(call, tuple)]
+    assert feedback[14] == {"joint.pos": 21.0} and "release" in s.calls
+    assert not s.events["precision"]
+
+
+def test_precision_key_is_opt_in(monkeypatch):
+    callbacks = []
+    keys = SimpleNamespace(right=object(), left=object(), esc=object())
+    keyboard = SimpleNamespace(Key=keys, Listener=lambda on_press: callbacks.append(on_press) or MagicMock())
+    monkeypatch.setitem(sys.modules, "pynput", SimpleNamespace(keyboard=keyboard))
+    monkeypatch.setattr(control_utils, "is_headless", lambda: False)
+    _, disabled = control_utils.init_keyboard_listener()
+    callbacks[-1](SimpleNamespace(char="p"))
+    assert not disabled["precision"]
+    _, enabled = control_utils.init_keyboard_listener(enable_precision=True)
+    callbacks[-1](SimpleNamespace(char="P"))
+    assert enabled["precision"]
+    callbacks[-1](SimpleNamespace(char="p"))
+    assert not enabled["precision"]

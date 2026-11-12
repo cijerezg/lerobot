@@ -359,6 +359,38 @@ def _hold_frozen(
     logging.info("Unfrozen: leader released, recording resumes.")
 
 
+def _resync_leader(
+    robot: rebot_b601_follower.RebotB601Follower,
+    teleop: rebot_102_leader.RebotArm102Leader,
+    target: RobotAction,
+    fps: int,
+    teleop_action_processor: RobotProcessorPipeline,
+    robot_action_processor: RobotProcessorPipeline,
+) -> None:
+    """Leave precision mode: hold the follower at its target and drive the leader onto it.
+
+    Nothing is recorded; 1:1 teleoperation then resumes without a jump.
+    """
+    current = teleop.get_action()
+    gap = max(abs(target[key] - current[key]) for key in target)
+    steps = max(math.ceil(fps / 2), math.ceil(fps * gap / robot.config.park_deg_per_s))
+    logging.info("Precision mode off: leader moves onto the follower, nothing is recorded.")
+    try:
+        teleop.enable_torque()
+        for step in range(1, steps + 1):
+            tick_start = time.perf_counter()
+            t = step / steps
+            teleop.send_feedback({key: current[key] + (target[key] - current[key]) * t for key in target})
+            obs = robot.get_observation()
+            robot.send_action(robot_action_processor((teleop_action_processor((target, obs)), obs)))
+            precise_sleep(max(0.0, 1 / fps - (time.perf_counter() - tick_start)))
+    except TeleopFeedbackError:
+        logging.exception("Leader feedback fault; the follower returns to the leader at its own rate.")
+    finally:
+        teleop.disable_torque()
+    logging.info("Normal mode: leader released, recording resumes.")
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -415,8 +447,35 @@ def record_loop(
     no_action_count = 0
     timestamp = 0
     start_episode_t = time.perf_counter()
+    precision_anchor = None  # leader pose at precision-mode entry
+    precision_target = None  # last scaled action sent in precision mode
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
+
+        if events.get("precision") and hold_position is not None:
+            # The follower is parked: nothing to scale.
+            events["precision"] = False
+
+        # P again, or any hotkey that hands the follower back to the raw leader pose, leaves precision mode.
+        if precision_anchor is not None and (
+            not events["precision"]
+            or events.get("frozen")
+            or events["exit_early"]
+            or events.get("return_home")
+        ):
+            events["precision"] = False
+            precision_anchor = None
+            _resync_leader(
+                robot=robot,
+                teleop=teleop,
+                target=precision_target,
+                fps=fps,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+            )
+            # Resync time does not count toward the episode.
+            start_episode_t += time.perf_counter() - start_loop_t
+            continue
 
         if events["exit_early"]:
             events["exit_early"] = False
@@ -477,6 +536,21 @@ def record_loop(
             if robot.name == "unitree_g1":
                 teleop.send_feedback(obs)
 
+            if precision_anchor is None and events.get("precision"):
+                precision_anchor = act
+                logging.info("Precision mode on. Press P to leave.")
+            # The anchor is the mode: a P pressed mid-tick takes effect at the top of the next
+            # tick, through the resync.
+            if precision_anchor is not None:
+                scale = teleop.config.precision_scale
+                act = {
+                    key: value
+                    if key == "gripper.pos"
+                    else precision_anchor[key] + scale * (value - precision_anchor[key])
+                    for key, value in act.items()
+                }
+                precision_target = act
+
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
             action_values = act_processed_teleop
@@ -530,6 +604,18 @@ def record_loop(
         precise_sleep(max(sleep_time_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
+
+    if precision_anchor is not None:
+        # The episode timed out in precision mode: the next loop starts 1:1.
+        events["precision"] = False
+        _resync_leader(
+            robot=robot,
+            teleop=teleop,
+            target=precision_target,
+            fps=fps,
+            teleop_action_processor=teleop_action_processor,
+            robot_action_processor=robot_action_processor,
+        )
 
 
 @parser.wrap()
@@ -633,7 +719,10 @@ def record(
             isinstance(teleop, rebot_102_leader.RebotArm102Leader) and teleop.config.variant == "102HD"
         )
         listener, events = init_keyboard_listener(
-            enable_return_home=enable_return_home, enable_freeze=enable_freeze
+            enable_return_home=enable_return_home,
+            enable_freeze=enable_freeze,
+            # Precision needs the same leader: it is driven back onto the follower on exit.
+            enable_precision=enable_freeze and enable_return_home,
         )
         if enable_return_home:
             logging.info(
@@ -641,6 +730,11 @@ def record(
             )
         if enable_freeze:
             logging.info("F = freeze/unfreeze (follower and leader hold, nothing is recorded).")
+        if enable_freeze and enable_return_home:
+            logging.info(
+                f"P = precision mode on/off (follower moves {teleop.config.precision_scale}x the leader,"
+                " gripper 1:1)."
+            )
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
