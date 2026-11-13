@@ -14,7 +14,11 @@
 # inference worker at a fixed RTC delay, so layouts can share the GPU without changing the policy's regime.
 # Env: LAYOUTS (default: the registry's eval set, `tasks.py layouts`), SIM_EVAL_ARGS (extra inference_async flags, e.g.
 # "--env.robot.episodes=1 --env.processor.reset.control_time_s=20"), PARALLEL (default 1; N runs up to N layouts at
-# once, each layout's console output then goes to <sim>/<layout>.console.log beside its folder).
+# once, each layout's console output then goes to <sim>/<layout>.console.log beside its folder), SIM_SERVER (default 1:
+# one policy server process for all layouts, rl/inference_remote.py, which runs the layouts' waiting calls as one
+# batch, so on a fast GPU a high PARALLEL pays: 16 on the local GPU = 55 min for the full set, 2026-11-12;
+# 0 = every layout loads the checkpoint itself),
+# SIM_VIDEOS (default p1: videos only for placement 1 of each configuration; all = every layout, none).
 # The eval set is the twin desk (2026-11-05; the photo-composite scenes behind TWIN=1 until then): tasks.py LAYOUTS = twin_l1 ..
 # twin_l4, 16 configurations x 4 placements twin_<config>_p<k> (migration/digital_twin_2026-10-29/envs/ENVS_REPORT.md), episodes per
 # placement from config_rl_sim.yaml. The twin scenes render the room, so the config's top camera carries no real-background composite.
@@ -57,10 +61,12 @@ registry='from lerobot.robots.rebot_b601_sim.tasks import main; main()'
 run_layout() {
   local layout="$1"
   mapfile -t task_overrides < <(.venv/bin/python -c "$registry" overrides "$layout")
+  # Without videos the sim renders only the frames the policy reads (1 in ~8), which frees about a quarter of the GPU.
+  [[ "$layout" == $video_layouts ]] || task_overrides+=(--record_inference_videos=false)
   # The sim robot raises SIGINT after its last episode; the runtime treats it as the operator's Ctrl-C and exits 0.
   # 1 h caps a stalled run (8 episodes x 60 s of sim time + resets per layout; the sim clock runs faster than real time).
   # shellcheck disable=SC2086
-  timeout 3600 .venv/bin/python -m lerobot.rl.inference_async \
+  timeout 3600 .venv/bin/python -m "$sim_module" "${server_args[@]}" \
     --config_path="$sim_config" \
     --inference_checkpoint_path="$sim_checkpoint" \
     --env.robot.scene="$layout" \
@@ -71,6 +77,37 @@ run_layout() {
     "${task_overrides[@]}" \
     ${SIM_EVAL_ARGS:-}
 }
+
+case "${SIM_VIDEOS:-p1}" in
+  all) video_layouts='*' ;;
+  p1) video_layouts='*_p1' ;;
+  none) video_layouts='' ;;
+  *) echo "SIM_VIDEOS must be all, p1 or none" >&2; exit 1 ;;
+esac
+sim_module=lerobot.rl.inference_async
+server_args=()
+if [[ "${SIM_SERVER:-1}" == "1" ]]; then
+  # One process holds the checkpoint and the layouts call it (rl/inference_remote.py, 2026-11-12), instead of a model
+  # load and a model copy per layout. The socket is in /tmp: a unix socket path is capped at 107 characters.
+  sim_socket="/tmp/sim_policy_$$.sock"
+  sim_module=lerobot.rl.inference_remote
+  server_args=(--policy_socket="$sim_socket")
+  mkdir -p "$sim_out"
+  rm -rf "$sim_out/policy_server"  # RESUME=1: the previous attempt's server folder
+  .venv/bin/python -m lerobot.rl.inference_remote --serve=true --policy_socket="$sim_socket" \
+    --config_path="$sim_config" --inference_checkpoint_path="$sim_checkpoint" \
+    --output_dir="$sim_out/policy_server" --aim.enable=false > "$sim_out/policy_server.console.log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" 2>/dev/null; rm -f "$sim_socket"' EXIT
+  echo "Policy server pid $server_pid loading $sim_checkpoint (log: $sim_out/policy_server.console.log)"
+  until [[ -S "$sim_socket" ]]; do
+    kill -0 "$server_pid" 2>/dev/null || { tail -n 30 "$sim_out/policy_server.console.log" >&2; echo "Policy server died" >&2; exit 1; }
+    sleep 2
+  done
+  # The layouts' CPU work (preprocessing, env processors) is small tensors: one thread each. With the default (a thread
+  # per core in every process) 8 layouts on 32 cores slowed each other 100x from the second episode on (2026-11-12).
+  export OMP_NUM_THREADS=1
+fi
 
 failed=0
 finish_layout() {  # layout, rc

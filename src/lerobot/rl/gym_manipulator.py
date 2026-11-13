@@ -194,7 +194,13 @@ class RobotEnv(gym.Env):
             if isinstance(key, str) and key.endswith(".depth")
         }
 
-        return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position, **depth}
+        # Motor velocities and torques ({joint}.vel, {joint}.torque, when the robot reports them) ride
+        # along the same way, for the online recorder's label sidecar; nothing downstream reads them.
+        motor = {
+            key: val for key, val in obs_dict.items() if isinstance(key, str) and key.endswith((".vel", ".torque"))
+        }
+
+        return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position, **depth, **motor}
 
     def _setup_spaces(self) -> None:
         """Configure observation and action spaces based on robot capabilities."""

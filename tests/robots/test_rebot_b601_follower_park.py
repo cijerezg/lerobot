@@ -20,7 +20,7 @@ class _FakeMotor:
     status = 1  # Damiao ERR nibble: enabled
 
     def get_state(self):
-        return SimpleNamespace(pos=math.radians(self.pos_deg), status_code=self.status)
+        return SimpleNamespace(pos=math.radians(self.pos_deg), vel=math.radians(3.0), torq=0.25, status_code=self.status)
 
     def ensure_mode(self, mode) -> None:
         self.calls.append("ensure_mode")
@@ -159,6 +159,16 @@ def test_get_observation_pings_one_motor_per_call_round_robin(monkeypatch):
     for _ in range(2 * len(robot.motor_names)):
         robot.get_observation()
     assert [m.pings for m in robot.motors.values()] == [2] * len(robot.motor_names)
+
+
+def test_get_observation_reports_vel_and_torque_outside_the_observation_features(monkeypatch):
+    robot = _robot(monkeypatch, moves=True)
+    _PingMotor.dead = set()
+    robot.motors = {name: _PingMotor(name) for name in robot.motor_names}
+    obs = robot.get_observation()
+    assert {name: obs[f"{name}.torque"] for name in robot.motor_names} == dict.fromkeys(robot.motor_names, 0.25)
+    assert all(abs(obs[f"{name}.vel"] - 3.0) < 1e-9 for name in robot.motor_names)
+    assert set(robot.observation_features) == {f"{name}.pos" for name in robot.motor_names}
 
 
 def test_get_observation_names_the_motor_that_stops_answering(monkeypatch):

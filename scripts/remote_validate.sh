@@ -214,7 +214,11 @@ export PYTHONPATH='$WS/lerobot/src'
 # profile that puts uv on PATH.
 export PATH="\$HOME/.local/bin:\$PATH"
 # run_sim_eval.sh: layouts run at once on the DGX (SIM_PARALLEL on the local side, 2026-10-28; use 3: 2026-11-11 a process took ~30 GB and 5 lost layouts to out-of-memory).
-export PARALLEL='${SIM_PARALLEL:-1}'
+# 2026-11-12: the layouts share one policy server (SIM_SERVER=1), about 2.4 GB per layout; 3 already keeps the server
+# busy, more gives nothing. SIM_VIDEOS / SIM_SERVER: see run_sim_eval.sh.
+export PARALLEL='${SIM_PARALLEL:-3}'
+export SIM_VIDEOS='${SIM_VIDEOS:-p1}'
+export SIM_SERVER='${SIM_SERVER:-1}'
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
 bash lerobot/scripts/$LAUNCHER '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'

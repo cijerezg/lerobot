@@ -11,3 +11,6 @@ training or probe path; the probe suite does not import it.
 | `intervention_episode_reps/` | along one robot episode, how do representations and the model's intended chunk change across an off phase, an operator intervention and the recovery? representations + action-trace probes on the episode with the deployed prompt | 2026-10-20 |
 | `object_coverage/` | where on the table, and at what angle, have the clippers, headphone case, bit kit and bits been seen in the internal data? grid readout of one top frame per grasp segment by vision agents, coverage plots + empty cells | 2026-10-26 |
 | `camera_preview/` | what do the wrist and top cameras see right now, without connecting the follower or the leader? live Rerun stream from the same camera classes | 2026-10-28 |
+| `torque_viewer/` | does the motor torque show contact events the joint positions and cameras do not? torque vs state, action and videos for one inference episode | 2026-11-12 |
+| `loss_share/` | does one data group take more than its share of the flow loss and of the action expert's gradient? same frames across the checkpoints of a run | 2026-11-12 |
+| `grad_drift/` | how fast does the gradient of a fixed set of frames change while the model trains? per data group: cosine to the start gradient, norm, and first-order loss prediction after 1, 2, 4, ... training steps | 2026-11-12 |

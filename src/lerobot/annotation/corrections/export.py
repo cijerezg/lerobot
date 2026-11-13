@@ -1,6 +1,6 @@
 """Export the corrections of a pass as a new LeRobot v3.0 root the offline trainer reads as one more source.
 
-  uv run python -m lerobot.annotation.corrections.export <work> <out_root> [--drop-inconsistent]
+  uv run python -m lerobot.annotation.corrections.export <work> <out_root> [--drop-inconsistent] [--tier T ...]
 
 Every row of ``<work>/corrections.parquet`` with ok = True and no error becomes one episode of 30 frames:
   action               the 30 corrected actions (``correction.npy``)
@@ -20,7 +20,8 @@ Tables in ``meta/`` (one row per episode; what ``load_metadata_rows`` and the su
                                                                      precision (no row when it is unknown)
   corrections.parquet                                                the exported rows with their episode_index
 Quality and speed are the constants the deployed prompt uses (``rtc_actor_runtime``). ``--drop-inconsistent``
-leaves out the rows ``build`` flagged inconsistent. Refuses an existing ``<out_root>``. Prints the config lines.
+leaves out the rows ``build`` flagged inconsistent, ``--tier`` keeps only the rows of those tiers (``build``).
+Refuses an existing ``<out_root>``. Prints the config lines.
 """
 
 import argparse
@@ -50,12 +51,15 @@ def main():
     ap.add_argument("work")
     ap.add_argument("out")
     ap.add_argument("--drop-inconsistent", action="store_true")
+    ap.add_argument("--tier", nargs="+")
     args = ap.parse_args()
     work, out = Path(args.work), Path(args.out)
     rows = pd.read_parquet(work / "corrections.parquet")
     rows = rows[rows.ok & (rows.error == "")]
     if args.drop_inconsistent:
         rows = rows[~rows.inconsistent]
+    if args.tier is not None:
+        rows = rows[rows.tier.isin(args.tier)]
     rows = rows.sort_values(["source", "episode", "frame"]).reset_index(drop=True)
     found = sources(json.loads((work / "pass.json").read_text()), list(rows.source.unique()))
     info = json.loads((next(iter(found.values())).root / "meta/info.json").read_text())

@@ -15,6 +15,7 @@ FPS = 30
 H, W = 480, 640
 TWIN = "twin_l3_close_lid_p2"  # any twin scene: only its arm and top camera are used
 MAX_SPEED_DEG_S = 45.0
+WRIST_SHIFT_M = np.array([-0.011, 0.0, 0.0])
 
 
 class Gripper:
@@ -29,6 +30,7 @@ class Gripper:
         self.left, self.right = model.body("gripper_left").id, model.body("gripper_right").id
         self.q0 = int(model.jnt_qposadr[model.joint("joint1").id])
         self.dofs = [int(model.jnt_dofadr[model.joint(f"joint{i}").id]) for i in range(1, 7)]
+        self.wrist_id = model.camera("wrist").id
         d = self.d
         mujoco.mj_resetData(model, d)
         d.qpos[self.q0 + 6 : self.q0 + 8] = 0.05
@@ -58,6 +60,17 @@ class Gripper:
         mujoco.mj_forward(self.m, self.d)
         tip, approach, jaw = self.pose(self.d)
         return tip.copy(), approach.copy(), jaw.copy()
+
+    def wrist(self, q_deg: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """The wrist camera at these joints: (position, rotation whose columns are the camera's x right, y down,
+        z forward axes) in the world frame. The twin's camera, moved by ``WRIST_SHIFT_M`` along its own axes so that
+        the tip lands where the real images show the point between the finger tips (pixel 343, 423; the twin's
+        camera puts it at 279, 422). Checked against the real depth 2026-11-12: the table comes out flat and at
+        one height to about 1 cm from 14 to 42 cm above it."""
+        self.d.qpos[self.q0 : self.q0 + 6] = np.deg2rad(q_deg[:6])
+        mujoco.mj_forward(self.m, self.d)
+        mat = self.d.cam_xmat[self.wrist_id].reshape(3, 3) @ np.diag([1.0, -1.0, -1.0])
+        return self.d.cam_xpos[self.wrist_id] + mat @ WRIST_SHIFT_M, mat
 
     def ik(self, q_deg: np.ndarray, tip: np.ndarray, approach: np.ndarray, jaw: np.ndarray, iters: int = 100) -> np.ndarray:
         """Arm joints (deg) putting the tool frame at (tip, approach, jaw), seeded from q_deg: damped least squares,

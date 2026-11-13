@@ -1140,6 +1140,10 @@ def rtc_env_worker(
                 if not shared_state.sim_take_step():
                     break
                 grant_wait = time.perf_counter() - wait_start
+                if recorder is None and videos is None and not getattr(cfg, "use_rerun", False):
+                    # The policy reads the observation only after a grant's last step; with nothing recording,
+                    # the images of the steps before it are not rendered (the sim robot repeats its last ones).
+                    online_env.robot.skip_render = shared_state.sim_grant > 0
             start_time = time.perf_counter()
 
             if was_intervening != shared_state.is_intervening:
@@ -1392,6 +1396,9 @@ def rtc_env_worker(
                 if hasattr(online_env, "get_raw_joint_positions"):
                     raw = online_env.get_raw_joint_positions()
                     obs_log.update({j_name: float(j_val) for j_name, j_val in raw.items()})
+                if hasattr(online_env, "get_raw_observation"):
+                    raw = online_env.get_raw_observation()
+                    obs_log.update({key: float(val) for key, val in raw.items() if key.endswith(".torque")})
                 act_np = executed_action.detach().float().cpu().numpy().reshape(-1)[:action_dim]
                 act_log = {name: float(v) for name, v in zip(_JOINT_ORDER, act_np, strict=False)}
                 with contextlib.suppress(queue.Full):

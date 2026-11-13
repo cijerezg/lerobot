@@ -88,6 +88,10 @@ class RebotB601Sim(Robot):
         # GL contexts are thread-bound: RobotEnv renders once at setup on the main thread, then
         # every frame from the env worker, so each thread owns its renderers.
         self._local = threading.local()
+        # Set by the runtime before a step whose images nobody reads (sim clock, no recording): the next
+        # get_observation returns the last rendered images instead of rendering. Rendering shares the GPU with the model.
+        self.skip_render = False
+        self._frames: dict[str, np.ndarray] = {}
         self.episodes_done = 0
         self.subtask_scorer: TaskScorer | None = None
         self._backgrounds: dict[str, np.ndarray] = {}
@@ -178,6 +182,9 @@ class RebotB601Sim(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         obs_dict = {f"{motor}.pos": float(pos) for motor, pos in zip(self.motor_names, self._present_deg(), strict=True)}
+        if self.skip_render:
+            self.skip_render = False
+            return obs_dict | self._frames
         for cam, config in self.config.cameras.items():
             renderer = self._renderer(cam)
             renderer.update_scene(self.data, config.camera)
@@ -191,6 +198,7 @@ class RebotB601Sim(Robot):
                 renderer.update_scene(self.data, config.camera)
                 obs_dict[f"{cam}.depth"] = depth_sidecar(renderer.render())
                 renderer.disable_depth_rendering()
+        self._frames = {key: value for key, value in obs_dict.items() if not key.endswith(".pos")}
         return obs_dict
 
     def _composite(self, cam: str, renderer: mujoco.Renderer, config, rgb: np.ndarray, background: np.ndarray) -> np.ndarray:

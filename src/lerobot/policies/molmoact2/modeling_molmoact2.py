@@ -3503,7 +3503,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         model_inputs: dict[str, Tensor],
         action_dim_is_pad: Tensor | None,
         num_steps: int | None,
-        generator: torch.Generator | None,
+        generator: torch.Generator | list[torch.Generator] | None,
         inference_delay: int | None,
         prev_chunk_left_over: Tensor | None,
         execution_horizon: int | None,
@@ -3555,6 +3555,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     f"noise must have shape {trajectory_shape}, got {tuple(noise.shape)}."
                 )
             trajectory = noise.to(device=device, dtype=trajectory_dtype)
+        elif isinstance(generator, list):
+            # One generator per row (rl/inference_remote.py runs the calls of several rollouts as one
+            # batch, 2026-11-12): each row gets the draw its own batch-of-1 call would make.
+            trajectory = torch.cat(
+                [
+                    torch.randn(1, *trajectory_shape[1:], device=device, dtype=trajectory_dtype, generator=row_generator)
+                    for row_generator in generator
+                ]
+            )
         else:
             trajectory = torch.randn(
                 *trajectory_shape,

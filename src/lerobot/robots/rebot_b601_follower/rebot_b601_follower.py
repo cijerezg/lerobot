@@ -82,6 +82,9 @@ class RebotB601Follower(Robot):
         self.motors: dict = {}
         self._torque_enabled = False
         self._check_index = 0  # get_observation() pings one motor per call, round-robin
+        # Motor velocity (deg/s) and torque (N*m) from the feedback frame _present_pos last read.
+        self._present_vel: dict[str, float] = {}
+        self._present_torque: dict[str, float] = {}
         self.motor_names = list(config.motor_can_ids.keys())
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -251,6 +254,8 @@ class RebotB601Follower(Robot):
         for motor_name, motor in self.motors.items():
             state = motor.get_state()
             present_pos[motor_name] = math.degrees(state.pos) if state is not None else 0.0
+            self._present_vel[motor_name] = math.degrees(state.vel) if state is not None else 0.0
+            self._present_torque[motor_name] = state.torq if state is not None else 0.0
         return present_pos
 
     @check_if_not_connected
@@ -259,6 +264,10 @@ class RebotB601Follower(Robot):
         self._check_motor(self.motor_names[self._check_index])
         self._check_index = (self._check_index + 1) % len(self.motor_names)
         obs_dict = {f"{motor}.pos": pos for motor, pos in self._present_pos().items()}
+        # The motor's own velocity and torque estimate (phase current, before the gearbox). Emitted
+        # at runtime but not observation features, so observation.state stays joint positions only.
+        obs_dict.update({f"{motor}.vel": vel for motor, vel in self._present_vel.items()})
+        obs_dict.update({f"{motor}.torque": torque for motor, torque in self._present_torque.items()})
         self._check_status()
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
