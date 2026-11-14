@@ -10,7 +10,7 @@ tool offset), is rendered as the global camera frame next to the FK skeleton wit
 (no global-camera extrinsics exist for any source, so the fingertip cannot be projected into the image).
 
 From the workspace root:
-  uv run python lerobot/scripts/kinematics_roundtrip.py --out migration/kinematics_roundtrip_2026-10-09
+  uv run python lerobot/scripts/kinematics_roundtrip.py --out outputs/kinematics_roundtrip
 """
 
 from __future__ import annotations
@@ -352,7 +352,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--out", default="migration/kinematics_roundtrip_2026-10-09")
+    parser.add_argument("--out", default="outputs/kinematics_roundtrip")
     parser.add_argument("--sources", nargs="+", default=["rebot", "fmb", "droid", "droid_success"])
     parser.add_argument("--no-render", action="store_true")
     args = parser.parse_args()

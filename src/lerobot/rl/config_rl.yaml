@@ -398,7 +398,7 @@ probe_parameters:
   - release the black sock in the basket
   - release the red shirt in the bin
   - return to home
-  subtask_scene_sweep_frames: migration/training_mix_2026-09-21/scene_sweep_frames_ready.json
+  subtask_scene_sweep_frames: lerobot/dataset_info/manifests/scene_sweep_frames_ready_2026-09-21.json
   action_sensitivity_frames_per_subtask: 4
   action_sensitivity_projections: 1
   ref_max_episodes: 40

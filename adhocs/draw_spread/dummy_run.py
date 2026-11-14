@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from metrics import anchor_metrics, bucket_reference, noise_metrics  # noqa: E402
 from report import write_report  # noqa: E402
 
-OUT = "migration/draw_spread_dummy_2026-11-07"
+OUT = "outputs/draw_spread/dummy"
 T, D, K = 30, 7, 64
 SUBTASKS = [("reach", 0.6, 0.15), ("grasp", 0.12, 0.03), ("move", 0.5, 0.12), ("release", 0.1, 0.03), ("home", 0.35, 0.08)]
 N_BINS = 4

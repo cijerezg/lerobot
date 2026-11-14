@@ -1,0 +1,65 @@
+{
+ "name": "pill_bottle_real",
+ "source": "Sketchfab via Objaverse, uid 104965efa64847dab5014c78eeee9d7b",
+ "url": "https://sketchfab.com/3d-models/104965efa64847dab5014c78eeee9d7b",
+ "licence": "CC-BY 4.0",
+ "author": "darthobsidian",
+ "source_file": "01_pill_bottle/objaverse/104965efa64847dab5014c78eeee9d7b/104965efa64847dab5014c78eeee9d7b.glb",
+ "kept_nodes": [
+  "Bottle_lambert1_0",
+  "Cap_lambert1_0"
+ ],
+ "edits": "7 loose pill meshes (Pill*) deleted; xy scaled 53.9 -> 50 mm (real diameter); z kept 100 mm; scan body top 72 mm = mesh body top 73 mm so h = z",
+ "source_extents_units": [
+  14.29701280593872,
+  26.546827375888824,
+  14.29701566696167
+ ],
+ "scale_factor_xyz_source_axes": [
+  0.0037669284763882965,
+  0.0037669284763882965,
+  0.0037669284763882965
+ ],
+ "uniform_scale": false,
+ "rotation": "glTF Y-up -> Z-up (+90 deg about x)",
+ "size_m": [
+  0.04999628666914222,
+  0.04999628666914222,
+  0.1
+ ],
+ "triangles_source": 880,
+ "triangles_visual": 880,
+ "decimated": false,
+ "textured": true,
+ "mass_kg": 0.12,
+ "hulls": 16,
+ "hull_volume_m3": 7.02356309421464e-05,
+ "coacd": {
+  "threshold": 0.04,
+  "max_convex_hull": 16,
+  "seed": 0
+ },
+ "origin": "footprint centre, resting on z = 0",
+ "base_asset": "assets_dl/pill_bottle",
+ "texture_source": "textures/pill_bottle/unwrap.png (tex_unwrap.py, D405 scan)",
+ "extra_scale_xyz": [
+  0.9283327144448571,
+  0.9283327144448571,
+  1.0
+ ],
+ "uv": {
+  "side": "u = atan2(y,x) CCW from +z, label centre facing +x; v: unwrap row = TH*(1 - h/H_tex), h = h_per_z * z; side faces above flat_above_z use the flat tile",
+  "flat_above_z": 0.078,
+  "h_per_z": 1.0,
+  "H_tex_m": 0.115,
+  "seam_col_px": 530,
+  "label_col_px": 330,
+  "top_bottom": "flat colour tile (bgr [186, 199, 210])",
+  "exposure_gain": 2.217,
+  "faces": {
+   "side": 320,
+   "top": 500,
+   "bottom": 60
+  }
+ }
+}

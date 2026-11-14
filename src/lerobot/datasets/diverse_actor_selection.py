@@ -82,9 +82,11 @@ from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 # different dataset.
 # Bounded probes: 18 held-out episodes, including the existing YAM exclusion.
 # Training: 891 episodes / 87,306 anchors.
-# Split provenance: migration/probe_bounded_2026-09-19/holdout_planned.json.
+# Split provenance: dataset_info/manifests/diverse_holdout_planned_2026-09-19.json. Twelve of the 18
+# were added on 2026-09-19: they are unseen only for runs trained with this ledger.
 HOLDOUT_FILE = "holdout_episodes.json"
 EXCLUDED_FILE = "excluded_episodes.json"
+# Re-measure the EXPECTED_* values after an ingest with lerobot/scripts/expected_from_selection.py.
 EXPECTED_EPISODES = 891
 EXPECTED_ANCHORS = 87_306
 EXPECTED_EPISODES_BY_SOURCE = {

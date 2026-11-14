@@ -1,0 +1,131 @@
+counts (chunks, states) per row:
+  droid_franka_joint8_commanded            old [5749, 5749]  new [5749, 5749]
+  droid_success_franka_joint8_commanded    old [7766, 7766]  new [7766, 7766]
+  fmb_franka_joint8_measured               old [11049, 11049]  new [11049, 11049]
+  robochallenge_arx5_joint7_measured       old [20957, 20957]  new [20957, 20957]
+  robochallenge_ur5_joint7_measured        old [15248, 15248]  new [15248, 15248]
+  ur7e_joint7_commanded                    old [331, 331]  new [331, 331]
+  rebot_b601_joint7_commanded              old [708364, 720399]  new [876261, 890906]   <- changed
+  molmoact_franka_ee7_measured             old [21034, 21034]  new [21034, 21034]
+  yam_joint7_commanded                     old [552, 552]  new [552, 552]
+
+ACTION (anchor delta) ReBot row, chunk step 0, joints 0-6:
+  dim        old q01   new q01   old q99   new q99  span old  span new  span %
+  pan       -13.6364  -12.7020   12.9347   12.3201   26.5712   25.0221   -5.8%
+  lift      -18.3024  -16.6571   20.9273   19.4212   39.2297   36.0783   -8.0%
+  elbow     -18.8092  -17.5777   22.3050   21.0293   41.1142   38.6070   -6.1%
+  wflex     -13.1557  -12.3681    6.8394    6.2566   19.9951   18.6247   -6.9%
+  wyaw       -4.1876   -3.7389    4.6997    4.1691    8.8874    7.9081  -11.0%
+  wroll      -5.0375   -4.5585    5.3499    4.8681   10.3874    9.4266   -9.2%
+  grip      -69.6281  -60.7744   92.8975   85.0574  162.5256  145.8319  -10.3%
+
+ACTION (anchor delta) ReBot row, chunk step 9, joints 0-6:
+  dim        old q01   new q01   old q99   new q99  span old  span new  span %
+  pan       -19.6467  -18.2675   18.7787   17.8511   38.4254   36.1186   -6.0%
+  lift      -28.9725  -26.6582   31.7021   29.3319   60.6746   55.9900   -7.7%
+  elbow     -28.7162  -26.5428   31.8178   30.0366   60.5341   56.5794   -6.5%
+  wflex     -18.8520  -17.2534   15.1831   13.9042   34.0352   31.1576   -8.5%
+  wyaw       -8.9541   -7.9193    8.6776    7.7821   17.6317   15.7014  -10.9%
+  wroll     -11.4501  -10.2196   11.6824   10.7324   23.1325   20.9520   -9.4%
+  grip     -112.8365 -103.2862  125.1313  116.1270  237.9678  219.4132   -7.8%
+
+ACTION (anchor delta) ReBot row, chunk step 19, joints 0-6:
+  dim        old q01   new q01   old q99   new q99  span old  span new  span %
+  pan       -26.2420  -24.6488   25.2532   23.9542   51.4952   48.6030   -5.6%
+  lift      -41.6069  -37.8913   44.0390   40.5893   85.6458   78.4807   -8.4%
+  elbow     -39.0894  -36.4493   42.6871   40.3131   81.7766   76.7624   -6.1%
+  wflex     -26.6865  -23.9027   23.2729   21.2727   49.9595   45.1754   -9.6%
+  wyaw      -13.1028  -11.6326   12.3609   11.1232   25.4637   22.7558  -10.6%
+  wroll     -17.6495  -15.7679   17.7513   16.6420   35.4008   32.4099   -8.4%
+  grip     -149.0687 -138.0211  156.7193  146.4113  305.7881  284.4324   -7.0%
+
+ACTION (anchor delta) ReBot row, chunk step 29, joints 0-6:
+  dim        old q01   new q01   old q99   new q99  span old  span new  span %
+  pan       -32.4307  -30.4674   31.2093   29.6629   63.6400   60.1303   -5.5%
+  lift      -52.4791  -48.0270   55.3336   50.7639  107.8127   98.7909   -8.4%
+  elbow     -48.5317  -45.0371   53.0923   49.7838  101.6240   94.8209   -6.7%
+  wflex     -33.7228  -30.3338   30.0405   27.8554   63.7633   58.1891   -8.7%
+  wyaw      -16.4367  -14.7235   15.5313   14.0291   31.9680   28.7525  -10.1%
+  wroll     -23.4720  -20.9747   23.2343   22.0120   46.7064   42.9867   -8.0%
+  grip     -173.1436 -162.9930  183.7185  173.2737  356.8620  336.2668   -5.8%
+
+ACTION ReBot row, step 29, hand block slots 8-14 (xyz, rotvec, gripper):
+  dim        old q01   new q01   old q99   new q99  span old  span new  span %
+  hx         -0.1611   -0.1537    0.1605    0.1527    0.3216    0.3064   -4.7%
+  hy         -0.1610   -0.1529    0.1606    0.1535    0.3216    0.3064   -4.7%
+  hz         -0.1544   -0.1479    0.1672    0.1586    0.3216    0.3064   -4.7%
+  hrx        -0.3961   -0.3746    0.4039    0.3808    0.8001    0.7554   -5.6%
+  hry        -0.4193   -0.3937    0.3808    0.3617    0.8001    0.7554   -5.6%
+  hrz        -0.3985   -0.3756    0.4016    0.3799    0.8001    0.7554   -5.6%
+  hg         -0.0242   -0.0221    0.0236    0.0215    0.0478    0.0436   -8.9%
+
+STATE ReBot row, joints 0-6:
+  dim        old q01   new q01   old q99   new q99  span old  span new  span %
+  pan       -67.7893  -70.9586   66.2374   73.8655  134.0267  144.8241    8.1%
+  lift     -168.0252 -166.5171   -0.0109   -0.0765  168.0143  166.4406   -0.9%
+  elbow    -199.4555 -198.6905   -0.1202   -0.2951  199.3353  198.3954   -0.5%
+  wflex     -49.6699  -50.0852   89.4714   89.7555  139.1413  139.8407    0.5%
+  wyaw      -40.5118  -41.6266   42.5883   39.7687   83.1001   81.3953   -2.1%
+  wroll     -85.4279  -84.1164   46.4569   49.9759  131.8848  134.0923    1.7%
+  grip     -270.0097 -270.0097   -0.0109   -0.0109  269.9988  269.9988    0.0%
+
+STATE ReBot row, hand block slots 8-17:
+  dim        old q01   new q01   old q99   new q99  span old  span new  span %
+  hx         -0.0030   -0.0121    0.7720    0.7783    0.7750    0.7904    2.0%
+  hy         -0.3944   -0.3876    0.3806    0.4028    0.7750    0.7904    2.0%
+  hz         -0.2088   -0.2199    0.5661    0.5706    0.7750    0.7904    2.0%
+  hq0        -1.3781   -1.3869    0.4543    0.4594    1.8324    1.8463    0.8%
+  hq1        -0.9861   -1.0365    0.8463    0.8098    1.8324    1.8463    0.8%
+  hq2        -1.4597   -1.4538    0.3727    0.3924    1.8324    1.8463    0.8%
+  hq3        -0.9811   -1.0346    0.8513    0.8117    1.8324    1.8463    0.8%
+  hq4        -0.1761   -0.1959    1.6563    1.6504    1.8324    1.8463    0.8%
+  hq5        -0.9752   -0.9871    0.8572    0.8592    1.8324    1.8463    0.8%
+  hg         -0.0198   -0.0188    0.0503    0.0493    0.0700    0.0682   -2.7%
+
+STATE ReBot mean/std joints:
+  pan      mean    -0.806 ->     0.533   std   32.204 ->   33.885
+  lift     mean  -100.177 ->  -102.186   std   39.529 ->   37.238
+  elbow    mean   -88.708 ->   -90.085   std   47.428 ->   44.295
+  wflex    mean    35.699 ->    36.938   std   35.373 ->   34.387
+  wyaw     mean    -1.199 ->    -1.782   std   14.998 ->   14.891
+  wroll    mean    -9.473 ->   -11.490   std   25.883 ->   26.897
+  grip     mean   -86.638 ->   -87.338   std   78.398 ->   77.886
+
+ACTION ReBot q01/q99 max abs change over all 30 steps x 7 joints:
+  pan      |dq01| max   1.9633   |dq99| max   1.5464
+  lift     |dq01| max   4.4521   |dq99| max   4.5697
+  elbow    |dq01| max   3.4946   |dq99| max   3.3085
+  wflex    |dq01| max   3.3890   |dq99| max   2.3146
+  wyaw     |dq01| max   1.7531   |dq99| max   1.5052
+  wroll    |dq01| max   2.4974   |dq99| max   1.3055
+  grip     |dq01| max  11.1144   |dq99| max  11.2768
+
+hand_block delta_block_scale (step 29): [0.0691, 0.0691, 0.0691, 0.172, 0.172, 0.172, 0.0103] -> [0.0659, 0.0659, 0.0659, 0.1624, 0.1624, 0.1624, 0.0094]
+hand_block state_block_scale: [0.1666, 0.1666, 0.1666, 0.3939, 0.3939, 0.3939, 0.3939, 0.3939, 0.3939, 0.0151] -> [0.1699, 0.1699, 0.1699, 0.3969, 0.3969, 0.3969, 0.3969, 0.3969, 0.3969, 0.0147]
+
+Diverse rows unchanged?
+  droid_franka_joint8_commanded            DIFFERS
+  droid_success_franka_joint8_commanded    DIFFERS
+  fmb_franka_joint8_measured               DIFFERS
+  robochallenge_arx5_joint7_measured       DIFFERS
+  robochallenge_ur5_joint7_measured        DIFFERS
+  ur7e_joint7_commanded                    DIFFERS
+  molmoact_franka_ee7_measured             DIFFERS
+  yam_joint7_commanded                     DIFFERS
+
+new roots:
+   outputs/rebot_all-annotated-v14-tasks2
+   outputs/rebot_main_additions-annotated-v3
+   outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1
+   outputs/rebot_additions_2026-10-04-annotated-v12-tasks1
+   outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1
+   outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1
+   outputs/rebot_oldval_train-2026-10-14-v1
+   outputs/rebot_2026-10-14-annotated-v4
+   outputs/rebot_2026-10-16-annotated-v1
+   outputs/rebot_2026-10-17-merged-v1
+   outputs/rebot_2026-10-21-annotated-v1
+   outputs/rebot_2026-10-26-merged-v2
+   outputs/external_rebot_train-annotated-v9-tasks1
+   outputs/rebot_rollouts_2026-10-27-cut-v2
+   outputs/rebot_teleop_2026-10-27-cut-v1

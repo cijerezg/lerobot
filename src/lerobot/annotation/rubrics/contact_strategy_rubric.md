@@ -3,8 +3,8 @@
 > **Status:** decided 2026-09-24. Labels entered the pipeline 2026-09-25 as the fifth metadata channel. Vocabulary of record for `annotation/vocab.py`, checked by `tests/annotation/test_vocab.py`; the "nothing annotated yet" in the title is from the decision date.
 
 Companion to `precision_rubric.md` (fourth channel) and `quality_mistake_rubric_v2.md`
-(quality + mistakes). Fifth metadata channel. Vocabulary evidence: `migration/contact_strategy_2026-09-24/`
-(`vocab.md`, candidate sheets, per-element example sheets, text-rule dry run).
+(quality + mistakes). Fifth metadata channel. The vocabulary evidence (candidate sheets, per-element example
+sheets, text-rule dry run) was not kept; this page is the record.
 
 ## Name
 
@@ -72,8 +72,8 @@ Approach angles are the ReBot FK angle between the gripper axis and straight dow
 | 14 | na | not applicable | no contact made, broken or worked | move, return to home, FMB lift and in-hand rotate, tongs |
 | -1 | (unlabelled) | (clause omitted) | no row covers the frame: a root annotated before this channel | never written by the annotator |
 
-Full definitions, corpus examples per element and the evidence behind the choices:
-`migration/contact_strategy_2026-09-24/vocab.md` and `sheets/examples/<element>.jpg`.
+The longer definitions file and the per-element example sheets of the 2026-09-24 study
+were not kept; the table above is the definition of record.
 
 ### What the label does not record
 
@@ -124,7 +124,7 @@ native timestep, as speed does.
 ## Text rules: the prior for every class
 
 The verb and noun fix the element for most classes. The rules live in
-`annotation/precision_contact/contact_prior.py` (was `migration/contact_strategy_2026-09-24/class_map.py`) today and move next to the annotation
+`annotation/precision_contact/contact_prior.py` today and move next to the annotation
 scripts as `contact_prior(subtask, verb=None, object=None, container=None)`; the diverse
 atoms already carry parsed `verb`, `object`, `container`, `preposition`, `instrument`
 fields, so the diverse half uses those instead of regexes. The rules are an annotation
@@ -133,7 +133,7 @@ aid only; they play no part at inference.
 | verb | rule | image needed when |
 |---|---|---|
 | grasp | cloth noun -> cloth-pinch; handle / knob / can-with-handle noun -> handle-grasp; cup / mug / bowl / tape roll / lid / plate / disk -> rim-pinch; bottle / can / motor / book -> side-pinch; else top-pinch | rim nouns (body wrap or handle instead?), side nouns (top-of-cap instead? DROID and MolmoAct bottles are top-down), placeholder nouns ("the object", "the cooking ingredient", "the item") |
-| release | in slot / shredder / vase / socket / board / rack / peg / stack / fixture -> insert; on table / pad / mat / plate / outline / tray / shelf / beside -> set-down; in basket / bin / box / trash / cup / pan / drawer -> drop | container releases where the object might be lowered to rest; every rack / peg release (hung = insert) |
+| release | in slot / shredder / vase / socket / board / rack / peg / stack -> insert; on the FMB fixture -> set-down (open cradle, the object rests before the pads open); bit in a bits-box cell -> drop; on table / pad / mat / plate / outline / tray / shelf / beside -> set-down; in basket / bin / box / trash / cup / pan / drawer -> drop | container releases where the object might be lowered to rest; every rack / peg release (hung = insert) |
 | push, close, knock, hit | push (close = push the panel); knock / hit = strike; "push the X handle" -> handle-grasp | push via a handle: pads closed on it? (foosball yes, portafilter no) |
 | press, turn on / off | press; "press X into Y" -> insert; knob / tap / faucet -> handle-grasp | knobs (pinch-and-twist vs push the lever) |
 | rotate | knob / faucet -> handle-grasp; container on the table -> rim-pinch; body -> side-pinch; "the object" (FMB) -> na | the tabletop rotates (sanitizer bottle, mug, plate) |
@@ -145,6 +145,18 @@ aid only; they play no part at inference.
 | lift | box lid (own) -> pry; the object (FMB) -> na; towel -> cloth-pinch; a lid -> top-pinch | lids (pinch vs pry) |
 | hold, shake | handle-grasp; shake the hand -> side-pinch | never |
 | move, return | na | never |
+
+Rulings from the review passes (the frames still override):
+
+| case | contact |
+|---|---|
+| FMB `grasp the object` | by FK approach angle: < 45 top-pinch, >= 45 side-pinch |
+| headphone-case lid, grasp | handle-grasp when the pads are on the loop tab; rim-pinch only when the pads straddle the lid wall (teleop 2026-10-26) |
+| headphone-case lid, close | let go so it falls shut = drop; pushed shut = push (teleop 2026-10-26) |
+| cardboard flap | pads closing on the flap edge = cloth-pinch; fingertip wedged under a flush edge and lifted without closing = pry |
+| paper ball pinched and carried | cloth-pinch |
+| noodles tipped into the pan | tilt-pour |
+| grasp atom with `na` (diverse) | wrong: a grasp or release atom always carries an element (audit 2026-10-07) |
 
 Dry run over today's corpus (segments for ReBot, atoms for diverse; every one of the
 1,211 unique (source, subtask) classes mapped, 341 flagged for an image):

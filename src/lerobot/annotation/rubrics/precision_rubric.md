@@ -103,8 +103,8 @@ Three values are derived, not read:
 | grasp the cup / bottle / pill bottle / spray bottle / tape roll / apple / block / mug | 3 | straddle a rigid object, free yaw |
 | release the cup / bottle in the basket or bin | 1-2 | rim minus object > 10 cm, 2 if the container is already crowded |
 | grasp the bit (bits-box) | 5 | 6 mm wide bit lying flat: 4, +1 pads across its width |
-| move the bit to the box | 4 | one below the release |
-| release the bit in the slot | 5 | compartment barely wider than the bit: 4, +1 aligned with the slot |
+| move the bit to the box | 3 | one below the release |
+| release the bit in the box cell | 4 | open cell 3.5-4 cm holding loose bits, dropped, no orientation pin (review 2026-09-25). A true one-bit slot stays 5 |
 | return to home | 1 | joint-space target |
 | release the rag / watering can / any object on the table, desk or tray | 1 | open surface |
 | lean the pillow against the wall (release) | 2 | 3-10 cm band |
@@ -112,14 +112,33 @@ Three values are derived, not read:
 | press the button (corpus) | 3 | 2 cm face |
 | turn on the lamp / switch | 3-4 | switch size |
 | grasp the watering can; water the plant | 3; 2 | handle; spout over a 10 cm pot |
-| move the rag to the desk; wipe the desk | 1; 1 | area |
+| move the rag to the desk; wipe the desk | 1; 1 | area. A wipe aimed at one crumb spot (ARX5) is 2 |
 | move the paper to the shredder; release in the shredder | 4; 5 | 1 cm slot, edge-on |
-| grasp the flower; move to the vase; release in the vase | 3; 3; 4 | stem into a 3 cm mouth stem-first |
+| grasp the flower; move to the vase; release in the vase | 3; 3; 4 | stem into a 3 cm mouth stem-first. Stem lying flat on the table: grasp 4. Wide jar: release 3 |
 | move the cup to the rack; release on the rack | 2; 3 | rack slot a few cm wider |
 | grasp the object; lift; move to the board; insert (FMB) | 3; 4; 4; 5 | fitted fixture; mating fit |
-| place the object on the fixture (FMB) | 4 | fixture fit |
+| place the object on the fixture (FMB) | 4 | open cradle, object rests before the pads open (set-down); thin board_2 pegs 3 |
+| rotate the object (FMB) | 3 | regrasp of the part in the fixture |
 | fold / unfold the cloth | 1 | area |
 | grasp the drawer handle; pull the drawer | 3; 1 | handle; free motion |
+| ring or piece onto a peg | 4 | 3-10 mm clearance, yaw free (user 2026-09-25) |
+| paper ball: grasp; noodles into the pan (pour); small crate release | 2; 2; 2 | compressible 5 cm wad, any bite holds; pan opening; crate |
+| spray bottle stood upright in a partly occupied basket | 2 | must stand in the free room (empty basket, dropped: 1) |
+| shirt opened on the table beside the bin | 1 | open surface |
+| mug: grasp; set down; on the mug tree | 3; 1 (2 with a mug, glass or pot within a few cm); 3 | neighbour split is a scene rule; a counter edge does not count |
+| lid: grasp by the handle; set on the container | 3; 4 (round lid 3) | |
+| marker, pen, safety glasses, smartphone: grasp | 4 | small against the pads. Phone in a clear case 3 |
+| chess piece: grasp | 4 on a crowded board, 3 alone | |
+| plush: grasp; banana: set down | 2; 2 | |
+| fruit set-down (UR5); items into the yellow box (UR5) | 1; 2 | lowered to the floor or pile |
+| green block in the basket (ARX5) | 2 | tub 3 block widths, "block into a bin" |
+| book on the shelf; knife set-down | 4; 1 | |
+| drawer close (push); fridge / oven open (handle) | 1; 1 | |
+| sanitizer: push; pump press; rotate | 2; 3; 3 | |
+| faucet rotate; take the cap off | 3; 3 | |
+| pour into a cup; into a box | 3; 2 | |
+| grasp that never closes (aborted) | class prior | precision is the step's, not the attempt's |
+| grasp atom showing only the approach or the release tail | inherit | takes the nearest atom of the same subtask |
 
 ## Not precision
 

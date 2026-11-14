@@ -7,7 +7,7 @@ under either sentence — the clause describes an event outside the horizon. The
 probe reports is therefore the right answer on most of its frames, not evidence about the
 channels. This probe is the ``subtask_scene_sweep`` treatment of the same question: the
 frames are hand-reviewed pre-commit frames (1.0 / 0.5 / 0.2 s before the gripper close of
-a grasp or the opening of a release; ``migration/precision_contact_sweep_frames.py``), and
+a grasp or the opening of a release; ``scripts/probes/precision_contact_sweep_frames.py``), and
 each frame is swept only with contact codes plausible for its object — top vs side pinch
 on a bottle, cloth vs top pinch on a shirt, set-down vs drop over a bin — plus two codes
 implausible everywhere (strike, pour) as a control population on the same frame. Every

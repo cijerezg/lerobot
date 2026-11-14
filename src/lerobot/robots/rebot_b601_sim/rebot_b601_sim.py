@@ -50,7 +50,7 @@ NQ_ROBOT = 8
 GRIPPER_DEG_OPEN = -238.8
 GRIPPER_SLIDE_OPEN = 0.05
 ARM_BODIES = ("link1", "link2", "link3", "link4", "link5", "link6", "gripper_end", "gripper_left", "gripper_right")
-# Depth sidecar units and the real sidecar's effective range (migration/real2sim_2026-10-17 scene_render.py).
+# Depth sidecar units and the real sidecar's effective range (scripts/sim_builders/real2sim scene_render.py).
 DEPTH_UNITS_M = 1e-4
 DEPTH_MIN_M = 0.07
 DEPTH_MAX_M = 2.5

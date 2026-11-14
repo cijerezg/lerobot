@@ -20,7 +20,7 @@
 # 0 = every layout loads the checkpoint itself),
 # SIM_VIDEOS (default p1: videos only for placement 1 of each configuration; all = every layout, none).
 # The eval set is the twin desk (2026-11-05; the photo-composite scenes behind TWIN=1 until then): tasks.py LAYOUTS = twin_l1 ..
-# twin_l4, 16 configurations x 4 placements twin_<config>_p<k> (migration/digital_twin_2026-10-29/envs/ENVS_REPORT.md), episodes per
+# twin_l4, 16 configurations x 4 placements twin_<config>_p<k> (scripts/sim_builders/digital_twin/envs/ENVS_REPORT.md), episodes per
 # placement from config_rl_sim.yaml. The twin scenes render the room, so the config's top camera carries no real-background composite.
 set -uo pipefail
 sim_workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

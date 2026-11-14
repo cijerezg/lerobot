@@ -1,0 +1,124 @@
+<mujoco>
+  <asset>
+    <mesh name="headphone_case_base_visual" file="headphone_case_base_visual.obj"/>
+    <mesh name="headphone_case_lid_visual" file="headphone_case_lid_visual.obj"/>
+    <mesh name="headphone_case_base_hull00" file="headphone_case_base_hull00.obj"/>
+    <mesh name="headphone_case_base_hull01" file="headphone_case_base_hull01.obj"/>
+    <mesh name="headphone_case_base_hull02" file="headphone_case_base_hull02.obj"/>
+    <mesh name="headphone_case_base_hull03" file="headphone_case_base_hull03.obj"/>
+    <mesh name="headphone_case_base_hull04" file="headphone_case_base_hull04.obj"/>
+    <mesh name="headphone_case_base_hull05" file="headphone_case_base_hull05.obj"/>
+    <mesh name="headphone_case_base_hull06" file="headphone_case_base_hull06.obj"/>
+    <mesh name="headphone_case_base_hull07" file="headphone_case_base_hull07.obj"/>
+    <mesh name="headphone_case_base_hull08" file="headphone_case_base_hull08.obj"/>
+    <mesh name="headphone_case_base_hull09" file="headphone_case_base_hull09.obj"/>
+    <mesh name="headphone_case_base_hull10" file="headphone_case_base_hull10.obj"/>
+    <mesh name="headphone_case_base_hull11" file="headphone_case_base_hull11.obj"/>
+    <mesh name="headphone_case_base_hull12" file="headphone_case_base_hull12.obj"/>
+    <mesh name="headphone_case_base_hull13" file="headphone_case_base_hull13.obj"/>
+    <mesh name="headphone_case_base_hull14" file="headphone_case_base_hull14.obj"/>
+    <mesh name="headphone_case_base_hull15" file="headphone_case_base_hull15.obj"/>
+    <mesh name="headphone_case_base_hull16" file="headphone_case_base_hull16.obj"/>
+    <mesh name="headphone_case_base_hull17" file="headphone_case_base_hull17.obj"/>
+    <mesh name="headphone_case_base_hull18" file="headphone_case_base_hull18.obj"/>
+    <mesh name="headphone_case_base_hull19" file="headphone_case_base_hull19.obj"/>
+    <mesh name="headphone_case_base_hull20" file="headphone_case_base_hull20.obj"/>
+    <mesh name="headphone_case_base_hull21" file="headphone_case_base_hull21.obj"/>
+    <mesh name="headphone_case_base_hull22" file="headphone_case_base_hull22.obj"/>
+    <mesh name="headphone_case_base_hull23" file="headphone_case_base_hull23.obj"/>
+    <mesh name="headphone_case_lid_hull00" file="headphone_case_lid_hull00.obj"/>
+    <mesh name="headphone_case_lid_hull01" file="headphone_case_lid_hull01.obj"/>
+    <mesh name="headphone_case_lid_hull02" file="headphone_case_lid_hull02.obj"/>
+    <mesh name="headphone_case_lid_hull03" file="headphone_case_lid_hull03.obj"/>
+    <mesh name="headphone_case_lid_hull04" file="headphone_case_lid_hull04.obj"/>
+    <mesh name="headphone_case_lid_hull05" file="headphone_case_lid_hull05.obj"/>
+    <mesh name="headphone_case_lid_hull06" file="headphone_case_lid_hull06.obj"/>
+    <mesh name="headphone_case_lid_hull07" file="headphone_case_lid_hull07.obj"/>
+    <mesh name="headphone_case_lid_hull08" file="headphone_case_lid_hull08.obj"/>
+    <mesh name="headphone_case_lid_hull09" file="headphone_case_lid_hull09.obj"/>
+    <mesh name="headphone_case_lid_hull10" file="headphone_case_lid_hull10.obj"/>
+    <mesh name="headphone_case_lid_hull11" file="headphone_case_lid_hull11.obj"/>
+    <mesh name="headphone_case_lid_hull12" file="headphone_case_lid_hull12.obj"/>
+    <mesh name="headphone_case_lid_hull13" file="headphone_case_lid_hull13.obj"/>
+    <mesh name="headphone_case_lid_hull14" file="headphone_case_lid_hull14.obj"/>
+    <mesh name="headphone_case_lid_hull15" file="headphone_case_lid_hull15.obj"/>
+    <mesh name="headphone_case_lid_hull16" file="headphone_case_lid_hull16.obj"/>
+    <mesh name="headphone_case_lid_hull17" file="headphone_case_lid_hull17.obj"/>
+    <mesh name="headphone_case_lid_hull18" file="headphone_case_lid_hull18.obj"/>
+    <mesh name="headphone_case_lid_hull19" file="headphone_case_lid_hull19.obj"/>
+    <mesh name="headphone_case_lid_hull20" file="headphone_case_lid_hull20.obj"/>
+    <mesh name="headphone_case_lid_hull21" file="headphone_case_lid_hull21.obj"/>
+    <mesh name="headphone_case_lid_hull22" file="headphone_case_lid_hull22.obj"/>
+    <mesh name="headphone_case_lid_hull23" file="headphone_case_lid_hull23.obj"/>
+  </asset>
+  <default>
+    <default class="headphone_case_col"><geom type="mesh" group="3" condim="4" friction="0.8 0.005 0.0001"/></default>
+    <default class="headphone_case_vis"><geom type="mesh" group="2" contype="0" conaffinity="0" mass="0" rgba="0.12 0.12 0.13 1"/></default>
+  </default>
+  <worldbody>
+    <body name="headphone_case" pos="0 0 0">
+      <freejoint/>
+      <geom class="headphone_case_vis" mesh="headphone_case_base_visual"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull00" mass="0.00673"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull01" mass="0.01219"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull02" mass="0.00502"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull03" mass="0.00650"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull04" mass="0.00942"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull05" mass="0.01123"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull06" mass="0.00446"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull07" mass="0.00366"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull08" mass="0.00480"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull09" mass="0.00522"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull10" mass="0.00547"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull11" mass="0.00995"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull12" mass="0.00918"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull13" mass="0.00243"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull14" mass="0.02363"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull15" mass="0.00186"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull16" mass="0.00397"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull17" mass="0.00932"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull18" mass="0.01514"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull19" mass="0.00386"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull20" mass="0.00302"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull21" mass="0.00604"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull22" mass="0.00185"/>
+      <geom class="headphone_case_col" mesh="headphone_case_base_hull23" mass="0.00351"/>
+      <body name="headphone_case_lid" pos="0.08462 0.01510 0.03816">
+        <joint name="headphone_case_hinge" type="hinge" axis="0.03625 -0.99934 -0.00000" range="0 3.1416" damping="0.02" armature="0.0005"/>
+        <geom class="headphone_case_vis" mesh="headphone_case_lid_visual" rgba="0.14 0.14 0.15 1"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull00" mass="0.00941"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull01" mass="0.00774"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull02" mass="0.00205"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull03" mass="0.00862"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull04" mass="0.01516"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull05" mass="0.00147"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull06" mass="0.01016"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull07" mass="0.00893"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull08" mass="0.00454"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull09" mass="0.00320"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull10" mass="0.00239"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull11" mass="0.00698"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull12" mass="0.00574"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull13" mass="0.00512"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull14" mass="0.00056"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull15" mass="0.01789"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull16" mass="0.00473"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull17" mass="0.00633"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull18" mass="0.00331"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull19" mass="0.00031"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull20" mass="0.00338"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull21" mass="0.00137"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull22" mass="0.00059"/>
+        <geom class="headphone_case_col" mesh="headphone_case_lid_hull23" mass="0.00158"/>
+        <geom name="headphone_case_tab_top_vis" class="headphone_case_vis" type="box" pos="0.18038 0.00465 0.02864" quat="0.99984 0 0 0.01813" size="0.00500 0.02728 0.00400" rgba="0.10 0.10 0.11 1"/>
+        <geom name="headphone_case_tab_top" class="headphone_case_col" type="box" pos="0.18038 0.00465 0.02864" quat="0.99984 0 0 0.01813" size="0.00500 0.02728 0.00400" mass="0.00174"/>
+        <geom name="headphone_case_tab_post_a_vis" class="headphone_case_vis" type="box" pos="0.18118 -0.01716 0.02164" quat="0.99984 0 0 0.01813" size="0.00500 0.00546 0.00300" rgba="0.10 0.10 0.11 1"/>
+        <geom name="headphone_case_tab_post_a" class="headphone_case_col" type="box" pos="0.18118 -0.01716 0.02164" quat="0.99984 0 0 0.01813" size="0.00500 0.00546 0.00300" mass="0.00026"/>
+        <geom name="headphone_case_tab_post_b_vis" class="headphone_case_vis" type="box" pos="0.17959 0.02645 0.02164" quat="0.99984 0 0 0.01813" size="0.00500 0.00546 0.00300" rgba="0.10 0.10 0.11 1"/>
+        <geom name="headphone_case_tab_post_b" class="headphone_case_col" type="box" pos="0.17959 0.02645 0.02164" quat="0.99984 0 0 0.01813" size="0.00500 0.00546 0.00300" mass="0.00026"/>
+        <geom name="headphone_case_tab_block_vis" class="headphone_case_vis" type="box" pos="0.18038 0.00465 0.00540" quat="0.99984 0 0 0.01813" size="0.00500 0.02728 0.01324" rgba="0.10 0.10 0.11 1"/>
+        <geom name="headphone_case_tab_block" class="headphone_case_col" type="box" pos="0.18038 0.00465 0.00540" quat="0.99984 0 0 0.01813" size="0.00500 0.02728 0.01324" mass="0.00574"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,129 @@
+{
+ "source": "outputs/rebot-mix40_20_40-resume1200-20261027/validation/step_00000600/sim/bottle_basket_v1",
+ "episode": 1,
+ "task": "bottle_basket",
+ "task_text": "Put the bottle in the brown basket",
+ "model": "lerobot/Robometer-4B",
+ "endpoint": "http://127.0.0.1:8099",
+ "period_s": 0.5,
+ "max_frames": 8,
+ "camera": "top",
+ "created": "2026-10-30 11:14:50",
+ "failures": 0,
+ "steps": [
+  {
+   "t": 0.0,
+   "progress": 1.0,
+   "progress_max": 1.0,
+   "success": 0.9,
+   "n_frames": 1,
+   "progress_per_frame": [
+    1.0
+   ],
+   "success_per_frame": [
+    0.9
+   ],
+   "latency_s": 0.152
+  },
+  {
+   "t": 0.5,
+   "progress": 1.0,
+   "progress_max": 1.0,
+   "success": 0.9,
+   "n_frames": 2,
+   "progress_per_frame": [
+    0.5,
+    1.0
+   ],
+   "success_per_frame": [
+    0.5,
+    0.9
+   ],
+   "latency_s": 0.001
+  },
+  {
+   "t": 1.0,
+   "progress": 1.0,
+   "progress_max": 1.0,
+   "success": 0.9,
+   "n_frames": 3,
+   "progress_per_frame": [
+    0.333,
+    0.667,
+    1.0
+   ],
+   "success_per_frame": [
+    0.367,
+    0.633,
+    0.9
+   ],
+   "latency_s": 0.001
+  },
+  {
+   "t": 1.5,
+   "progress": 1.0,
+   "progress_max": 1.0,
+   "success": 0.9,
+   "n_frames": 4,
+   "progress_per_frame": [
+    0.25,
+    0.5,
+    0.75,
+    1.0
+   ],
+   "success_per_frame": [
+    0.3,
+    0.5,
+    0.7,
+    0.9
+   ],
+   "latency_s": 0.001
+  },
+  {
+   "t": 2.0,
+   "progress": 1.0,
+   "progress_max": 1.0,
+   "success": 0.9,
+   "n_frames": 5,
+   "progress_per_frame": [
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0
+   ],
+   "success_per_frame": [
+    0.26,
+    0.42,
+    0.58,
+    0.74,
+    0.9
+   ],
+   "latency_s": 0.001
+  },
+  {
+   "t": 2.5,
+   "progress": 1.0,
+   "progress_max": 1.0,
+   "success": 0.9,
+   "n_frames": 6,
+   "progress_per_frame": [
+    0.167,
+    0.333,
+    0.5,
+    0.667,
+    0.833,
+    1.0
+   ],
+   "success_per_frame": [
+    0.233,
+    0.367,
+    0.5,
+    0.633,
+    0.767,
+    0.9
+   ],
+   "latency_s": 0.001
+  }
+ ]
+}

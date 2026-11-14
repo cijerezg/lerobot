@@ -22,6 +22,7 @@ was consolidated; the rest were archived in the 2026-10 docs restructure.
 | `fast_soft_decode_auxiliary.md`                                                                            | Archived 2026-08-09 as unconfirmed: its numbers were imprecise and overstated; do not cite them. The as-built FAST-logit auxiliary is [Training pipeline §2.2](../design/training.md) |
 | `mse_for_imitation_learning.md`, `mse_for_imitation_learning_related_work.md`, `trajectory_loss_design.md` | [notes/action_trajectory_losses.md](../notes/action_trajectory_losses.md), the compiled note (2026-09-02) that absorbs all three                                                      |
 | `replay_buffer_image_storage.md`                                                                           | Change note from the pi05/MolmoAct2 buffer split (uint8 storage, raw resolution). Current behavior: [guide/usage.md §Buffer Caching](../guide/usage.md#buffer-caching)                |
+| `start_weight_sampling.md`, `start_weight_sampling_density.py` | Abandoned 2026-10-18: per-start sampling weights inside a ReBot group (built 2026-10-16, removed two days later). Starts are iid inside a group; only `diverse.rebot_group_weights` survives ([Training](../design/training.md)). The script is kept as the reference for the review renderer's `--density` JSON and does not run |
 
 ## Cleanup record — 2026-09-24
 

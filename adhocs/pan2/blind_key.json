@@ -1,0 +1,18 @@
+{
+ "tape_blind.mp4": {
+  "left": "tape_pan2.mp4",
+  "right": "tape_real.mp4"
+ },
+ "catlid_blind.mp4": {
+  "top": "catlid_real.mp4",
+  "bottom": "catlid_pan2.mp4"
+ },
+ "cattape_blind.mp4": {
+  "top": "cattape_real.mp4",
+  "bottom": "cattape_pan2.mp4"
+ },
+ "wlid_blind.mp4": {
+  "left": "wlid_real.mp4",
+  "right": "wlid_pan2.mp4"
+ }
+}

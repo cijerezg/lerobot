@@ -9,7 +9,7 @@ each frame is swept only with labels that make sense there: ``grasp <class>`` fo
 class on the table with exactly ONE instance, plus ``return to home`` (always in, the user's
 rule). Classes not on the table are swept too, as a separate control population on the
 same frame. Frame list, scene inventory and label sets are hand-reviewed on a top-camera
-contact sheet (``migration/subtask_scene_sweep_frames.py``) and consumed here as
+contact sheet (``scripts/probes/subtask_scene_sweep_frames.py``) and consumed here as
 ``probe_parameters.subtask_scene_sweep_frames``; the probe never derives them.
 
 Per frame, one batched forward over all labels under one flow draw (seed 0) and one over

@@ -120,7 +120,7 @@ PYTHONPATH=lerobot/src .venv/bin/python -m lerobot.probes.critic_gradient_view \
 Rebuild the live numerical report from saved points, without model inference:
 
 ```bash
-node migration/summarize_critic_gradients.cjs \
+node lerobot/scripts/probes/summarize_critic_gradients.cjs \
   outputs/probe_runs/critic_swap_002000_train128_20260926/step_00002000/critic_sensitivity
 ```
 

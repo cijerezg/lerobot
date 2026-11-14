@@ -4,7 +4,7 @@ Generated 2026-11-10 13:13 by `uv run python lerobot/dataset_info/data_count.py`
 
 ## Training mix by sampling group
 
-Share = fraction of all training samples. Usable = frames minus the usefulness cuts (`migration/usefulness_review_ext_diverse_2026-10-18/cleanup/rebot_exclusions.json`). ReBot hours at 30 fps.
+Share = fraction of all training samples. Usable = frames minus the usefulness cuts (`lerobot/dataset_info/manifests/rebot_exclusions_2026-10-18.json`; rule: `lerobot/src/lerobot/annotation/rubrics/usefulness_review_rubric.md`). ReBot hours at 30 fps.
 
 | group | share | episodes | frames | usable frames | hours |
 |---|---|---|---|---|---|
@@ -42,7 +42,7 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 
 ## Diverse corpus
 
-`outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2`: corpus/ + fmb/ episodes, minus 30 holdout or excluded episodes (anchor-level retention not counted). Hours from each episode's duration; usable = minus `migration/usefulness_review_ext_diverse_2026-10-18/cleanup/diverse_exclusions.json`.
+`outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2`: corpus/ + fmb/ episodes, minus 30 holdout or excluded episodes (anchor-level retention not counted). Hours from each episode's duration; usable = minus `lerobot/dataset_info/manifests/diverse_exclusions_2026-10-18.json`.
 
 | source | episodes | frames | hours | usable hours |
 |---|---|---|---|---|

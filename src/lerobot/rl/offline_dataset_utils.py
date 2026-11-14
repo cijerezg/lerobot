@@ -14,7 +14,7 @@ from lerobot.datasets.embodiment import (
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.rl.buffer import ReplayBuffer, concatenate_variable_dim_batch_transitions
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_EFFORT, OBS_STATE, OBS_VELOCITY
 from lerobot.utils.depth_gripper_events import load_depth_gripper_event_targets
 
 
@@ -160,11 +160,16 @@ def buffer_state_keys(cfg, dataset=None) -> list[str]:
             # Reannotated roots can keep canonical camera names without a prepared
             # contract. Match their recorded columns; the adapter supplies absent views.
             return [key for key in features if key.startswith("observation.")]
+        # Motor velocity / torque columns are cached with the root whether or not the policy
+        # reads them, so the lookup names them too.
+        motor_keys = [key for key in (OBS_VELOCITY, OBS_EFFORT) if key in features and key not in keys]
+    else:
+        motor_keys = []
     if not on_canonical_roles(keys):
-        return keys
+        return keys + motor_keys
     from lerobot.rl.data_sources.rebot_role_adapter import rebot_state_keys
 
-    return rebot_state_keys(keys)
+    return rebot_state_keys(keys) + motor_keys
 
 
 def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:

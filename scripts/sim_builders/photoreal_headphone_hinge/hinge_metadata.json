@@ -1,0 +1,153 @@
+{
+  "nail_ep5": {
+    "body": "headphone_case_closed",
+    "pivot_local": [
+      0.0,
+      0.09090000000000001,
+      0.020300000000000002
+    ],
+    "axis_local": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "lid_geoms": [],
+    "hinge_geoms": [],
+    "visual_center_local": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "size": [
+      0.1457,
+      0.0874,
+      0.035
+    ],
+    "parts": 7,
+    "angle": 0.0,
+    "note": "Visual hinge; existing simplified collision geometry retained."
+  },
+  "nail_ep1": {
+    "body": "headphone_half_a",
+    "pivot_local": [
+      0.08774138384432692,
+      -0.0033154150694125655,
+      0.0116
+    ],
+    "axis_local": [
+      -0.037759271438801936,
+      -0.9992868644290341,
+      0.0
+    ],
+    "lid_geoms": [
+      "hinged_nail_ep1_22",
+      "hinged_nail_ep1_23",
+      "hinged_nail_ep1_24",
+      "hinged_nail_ep1_25",
+      "hinged_nail_ep1_26",
+      "hinged_nail_ep1_27",
+      "hinged_nail_ep1_28",
+      "hinged_nail_ep1_29",
+      "hinged_nail_ep1_30",
+      "hinged_nail_ep1_31"
+    ],
+    "hinge_geoms": [
+      "hinged_nail_ep1_32"
+    ],
+    "visual_center_local": [
+      0.08774138384432692,
+      -0.0033154150694125655,
+      0.0
+    ],
+    "size": [
+      0.11252000000000001,
+      0.084304,
+      0.02
+    ],
+    "parts": 33,
+    "angle": -1.608564576621406,
+    "note": "Visual hinge; existing simplified collision geometry retained."
+  },
+  "nail_ep2": {
+    "body": "headphone_half_a",
+    "pivot_local": [
+      0.036834850771108194,
+      -0.06979203983743555,
+      0.011599999999999997
+    ],
+    "axis_local": [
+      -0.8843838998103749,
+      -0.4667602358344086,
+      0.0
+    ],
+    "lid_geoms": [
+      "hinged_nail_ep2_22",
+      "hinged_nail_ep2_23",
+      "hinged_nail_ep2_24",
+      "hinged_nail_ep2_25",
+      "hinged_nail_ep2_26",
+      "hinged_nail_ep2_27",
+      "hinged_nail_ep2_28",
+      "hinged_nail_ep2_29",
+      "hinged_nail_ep2_30",
+      "hinged_nail_ep2_31"
+    ],
+    "hinge_geoms": [
+      "hinged_nail_ep2_32"
+    ],
+    "visual_center_local": [
+      0.036834850771108194,
+      -0.06979203983743555,
+      0.0
+    ],
+    "size": [
+      0.092926,
+      0.075416,
+      0.02
+    ],
+    "parts": 33,
+    "angle": -2.6559687327200376,
+    "note": "Visual hinge; existing simplified collision geometry retained."
+  },
+  "nail_ep3": {
+    "body": "headphone_half_b",
+    "pivot_local": [
+      0.0884053474714777,
+      0.02650109058977182,
+      0.0116
+    ],
+    "axis_local": [
+      0.28714396252949137,
+      -0.9578874384722152,
+      0.0
+    ],
+    "lid_geoms": [
+      "hinged_nail_ep3_00",
+      "hinged_nail_ep3_01",
+      "hinged_nail_ep3_02",
+      "hinged_nail_ep3_03",
+      "hinged_nail_ep3_04",
+      "hinged_nail_ep3_05",
+      "hinged_nail_ep3_06",
+      "hinged_nail_ep3_07",
+      "hinged_nail_ep3_08",
+      "hinged_nail_ep3_09"
+    ],
+    "hinge_geoms": [
+      "hinged_nail_ep3_32"
+    ],
+    "visual_center_local": [
+      0.0884053474714777,
+      0.02650109058977182,
+      0.0
+    ],
+    "size": [
+      0.097873,
+      0.08879200000000001,
+      0.02
+    ],
+    "parts": 33,
+    "angle": -1.2795524274208874,
+    "note": "Visual hinge; existing simplified collision geometry retained."
+  }
+}

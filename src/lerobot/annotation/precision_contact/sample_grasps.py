@@ -13,7 +13,7 @@ from lerobot.robots.rebot_b601_follower.kinematics import RebotKinematics  # noq
 
 from lerobot.annotation.paths import QUALITY_V2, WORKSPACE  # noqa: E402
 os.chdir(WORKSPACE)  # every path below is workspace-relative
-OUT = Path("migration/grasp_strategy_2026-09-24"); SHEETS = OUT / "sheets"; SHEETS.mkdir(parents=True, exist_ok=True)
+OUT = Path("lerobot/annotation_data/grasp_strategy"); SHEETS = OUT / "sheets"; SHEETS.mkdir(parents=True, exist_ok=True)
 PER_FAMILY = 12; TILE = (320, 240); COLS = 3; SEED = 0
 FK = RebotKinematics()
 

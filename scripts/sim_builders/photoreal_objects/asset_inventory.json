@@ -1,0 +1,198 @@
+{
+  "nail_ep5": [
+    {
+      "name": "bottle_yellow_cap_standing",
+      "visual_parts": 3,
+      "triangles": 2304,
+      "legacy_collision_size": [
+        0.0275,
+        0.045
+      ]
+    },
+    {
+      "name": "bottle_white_lying",
+      "visual_parts": 3,
+      "triangles": 2304,
+      "legacy_collision_size": [
+        0.025,
+        0.0599
+      ]
+    },
+    {
+      "name": "spray_bottle_lying",
+      "visual_parts": 6,
+      "triangles": 2508,
+      "legacy_collision_size": [
+        0.0275,
+        0.1239
+      ]
+    },
+    {
+      "name": "blue_pouch",
+      "visual_parts": 5,
+      "triangles": 7180,
+      "legacy_collision_size": [
+        0.1174,
+        0.0664,
+        0.015
+      ]
+    },
+    {
+      "name": "headphone_case_closed",
+      "visual_parts": 5,
+      "triangles": 10224,
+      "legacy_collision_size": [
+        0.1457,
+        0.0874,
+        0.035
+      ]
+    },
+    {
+      "name": "bits_box",
+      "visual_parts": 20,
+      "triangles": 39108,
+      "legacy_collision_size": [
+        0.0863,
+        0.0507,
+        0.0175
+      ]
+    },
+    {
+      "name": "mic_knob",
+      "visual_parts": 2,
+      "triangles": 3008,
+      "legacy_collision_size": [
+        0.0275,
+        0.025
+      ]
+    }
+  ],
+  "nail_ep1": [
+    {
+      "name": "paper_cup",
+      "visual_parts": 5,
+      "triangles": 4864,
+      "legacy_collision_size": [
+        0.04,
+        0.055
+      ]
+    },
+    {
+      "name": "bottle_orange_lying",
+      "visual_parts": 3,
+      "triangles": 2304,
+      "legacy_collision_size": [
+        0.0275,
+        0.0629
+      ]
+    },
+    {
+      "name": "bottle_yellow_lying",
+      "visual_parts": 3,
+      "triangles": 2304,
+      "legacy_collision_size": [
+        0.025,
+        0.0602
+      ]
+    },
+    {
+      "name": "headphone_half_a",
+      "visual_parts": 11,
+      "triangles": 17884,
+      "legacy_collision_size": [
+        0.116,
+        0.0958,
+        0.02
+      ]
+    },
+    {
+      "name": "bits_box",
+      "visual_parts": 20,
+      "triangles": 39108,
+      "legacy_collision_size": [
+        0.0812,
+        0.0507,
+        0.0175
+      ]
+    }
+  ],
+  "nail_ep2": [
+    {
+      "name": "headphone_half_a",
+      "visual_parts": 11,
+      "triangles": 17884,
+      "legacy_collision_size": [
+        0.0958,
+        0.0857,
+        0.02
+      ]
+    },
+    {
+      "name": "bottle_orange_lying",
+      "visual_parts": 3,
+      "triangles": 2304,
+      "legacy_collision_size": [
+        0.0275,
+        0.0625
+      ]
+    },
+    {
+      "name": "bits_box",
+      "visual_parts": 20,
+      "triangles": 39108,
+      "legacy_collision_size": [
+        0.0812,
+        0.0507,
+        0.0175
+      ]
+    }
+  ],
+  "nail_ep3": [
+    {
+      "name": "tape_roll",
+      "visual_parts": 11,
+      "triangles": 19776,
+      "legacy_collision_size": [
+        0.0375,
+        0.015
+      ]
+    },
+    {
+      "name": "paper_cup",
+      "visual_parts": 5,
+      "triangles": 4864,
+      "legacy_collision_size": [
+        0.04,
+        0.055
+      ]
+    },
+    {
+      "name": "headphone_half_b",
+      "visual_parts": 5,
+      "triangles": 6884,
+      "legacy_collision_size": [
+        0.1009,
+        0.1009,
+        0.02
+      ]
+    },
+    {
+      "name": "bottle_white_lying",
+      "visual_parts": 3,
+      "triangles": 2304,
+      "legacy_collision_size": [
+        0.025,
+        0.0525
+      ]
+    },
+    {
+      "name": "bottle_yellow_cap_standing",
+      "visual_parts": 3,
+      "triangles": 2304,
+      "legacy_collision_size": [
+        0.0275,
+        0.045
+      ]
+    }
+  ]
+}

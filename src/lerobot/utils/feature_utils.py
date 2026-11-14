@@ -27,7 +27,7 @@ import numpy as np
 
 from lerobot.configs import FeatureType, PolicyFeature
 
-from .constants import ACTION, DEFAULT_FEATURES, OBS_ENV_STATE, OBS_STR
+from .constants import ACTION, DEFAULT_FEATURES, OBS_EFFORT, OBS_ENV_STATE, OBS_STATE, OBS_STR, OBS_VELOCITY
 
 
 def _validate_feature_names(features: dict[str, dict]) -> None:
@@ -51,7 +51,8 @@ def hw_to_dataset_features(
 
     This function takes a dictionary describing hardware outputs (like joint states
     or camera image shapes) and formats it into the standard LeRobot feature
-    specification.
+    specification. Observation scalars named ``*.vel`` and ``*.torque`` go to
+    ``observation.velocity`` and ``observation.effort``, the rest to ``observation.state``.
 
     Args:
         hw_features (dict): Dictionary mapping feature names to their type (float for
@@ -79,11 +80,14 @@ def hw_to_dataset_features(
         }
 
     if joint_fts and prefix == OBS_STR:
-        features[f"{prefix}.state"] = {
-            "dtype": "float32",
-            "shape": (len(joint_fts),),
-            "names": list(joint_fts),
-        }
+        # Motor velocity (.vel) and torque (.torque) channels get their own column each;
+        # observation.state is every other scalar (the joint positions).
+        suffixes = {OBS_VELOCITY: ".vel", OBS_EFFORT: ".torque"}
+        groups = {key: [name for name in joint_fts if name.endswith(suffix)] for key, suffix in suffixes.items()}
+        groups[OBS_STATE] = [name for name in joint_fts if not name.endswith(tuple(suffixes.values()))]
+        for key in (OBS_STATE, OBS_VELOCITY, OBS_EFFORT):
+            if groups[key]:
+                features[key] = {"dtype": "float32", "shape": (len(groups[key]),), "names": groups[key]}
 
     for key, shape in cam_fts.items():
         features[f"{prefix}.images.{key}"] = {

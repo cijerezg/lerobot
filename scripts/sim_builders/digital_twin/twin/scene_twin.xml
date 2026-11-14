@@ -1,0 +1,646 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="scene_twin">
+  <compiler angle="radian" assetdir="../../../../src/lerobot/robots/rebot_b601_sim/scenes" autolimits="true" />
+  <include file="../../../../src/lerobot/robots/rebot_b601_sim/scenes/rebot_b601_dm_photo.xml" />
+  <include file="appearance/lights_visual.xml" />
+  <include file="appearance/materials.xml" />
+  <asset>
+    <texture name="table_top_tex" type="2d" file="../../../../../scripts/sim_builders/digital_twin/twin/appearance/table_top_fit.png" />
+    <material name="table_top" texture="table_top_tex" texrepeat="1 1" texuniform="false" specular="0.2" shininess="0.3" />
+    <texture type="skybox" builtin="flat" rgb1="0.5685 0.4643 0.3526" rgb2="0.5685 0.4643 0.3526" width="32" height="32" />
+    <texture name="clipper_case_photo_tex" type="2d" file="assets/photoreal/clippers/case_surface.png" />
+    <material name="clipper_case_photo_mat" texture="clipper_case_photo_tex" specular="0" shininess="0" />
+    <mesh name="clipper_case_photo" file="ep0/materials/clipper_case_photo.obj" />
+    <texture name="clipper_case_metal_photo_tex" type="2d" file="ep0/materials/clipper_case_metal_photo.png" />
+    <material name="clipper_case_metal_photo_mat" texture="clipper_case_metal_photo_tex" specular=".7" shininess=".55" />
+    <mesh name="clipper_case_metal_photo" file="ep0/materials/clipper_case_metal_photo.obj" />
+    <texture name="clipper_large_photo_tex" type="2d" file="ep0/materials/clipper_large_photo.png" />
+    <material name="clipper_large_photo_mat" texture="clipper_large_photo_tex" specular="0.3" shininess="0.4" />
+    <mesh name="clipper_large_photo" file="ep0/materials/clipper_large_photo.obj" />
+    <texture name="clipper_small_photo_tex" type="2d" file="ep0/materials/clipper_small_photo.png" />
+    <material name="clipper_small_photo_mat" texture="clipper_small_photo_tex" specular="0.3" shininess="0.4" />
+    <mesh name="clipper_small_photo" file="ep0/materials/clipper_small_photo.obj" />
+    <texture name="clipper_case_tex" type="2d" file="assets/clipper_case/clipper_case_visual_colors.png" />
+    <material name="clipper_case_mat" texture="clipper_case_tex" specular="0.2" shininess="0.2" />
+    <mesh name="clipper_case_textured" file="assets/clipper_case/clipper_case_visual_textured.obj" />
+    <mesh name="clipper_case_visual" file="assets/clipper_case/clipper_case_visual.obj" />
+    <mesh name="clipper_case_hull00" file="assets/clipper_case/clipper_case_hull00.obj" />
+    <mesh name="clipper_case_hull01" file="assets/clipper_case/clipper_case_hull01.obj" />
+    <mesh name="clipper_case_hull02" file="assets/clipper_case/clipper_case_hull02.obj" />
+    <mesh name="clipper_case_hull03" file="assets/clipper_case/clipper_case_hull03.obj" />
+    <mesh name="clipper_case_hull04" file="assets/clipper_case/clipper_case_hull04.obj" />
+    <mesh name="clipper_case_hull05" file="assets/clipper_case/clipper_case_hull05.obj" />
+    <mesh name="clipper_case_hull06" file="assets/clipper_case/clipper_case_hull06.obj" />
+    <mesh name="clipper_case_hull07" file="assets/clipper_case/clipper_case_hull07.obj" />
+    <mesh name="clipper_case_hull08" file="assets/clipper_case/clipper_case_hull08.obj" />
+    <mesh name="clipper_case_hull09" file="assets/clipper_case/clipper_case_hull09.obj" />
+    <mesh name="clipper_case_hull10" file="assets/clipper_case/clipper_case_hull10.obj" />
+    <mesh name="clipper_case_hull11" file="assets/clipper_case/clipper_case_hull11.obj" />
+    <mesh name="clipper_case_hull12" file="assets/clipper_case/clipper_case_hull12.obj" />
+    <mesh name="clipper_case_hull13" file="assets/clipper_case/clipper_case_hull13.obj" />
+    <mesh name="clipper_case_hull14" file="assets/clipper_case/clipper_case_hull14.obj" />
+    <mesh name="clipper_case_hull15" file="assets/clipper_case/clipper_case_hull15.obj" />
+    <mesh name="clipper_case_hull16" file="assets/clipper_case/clipper_case_hull16.obj" />
+    <mesh name="clipper_case_hull17" file="assets/clipper_case/clipper_case_hull17.obj" />
+    <mesh name="clipper_case_hull18" file="assets/clipper_case/clipper_case_hull18.obj" />
+    <mesh name="clipper_case_hull19" file="assets/clipper_case/clipper_case_hull19.obj" />
+    <mesh name="clipper_case_hull20" file="assets/clipper_case/clipper_case_hull20.obj" />
+    <mesh name="clipper_case_hull21" file="assets/clipper_case/clipper_case_hull21.obj" />
+    <mesh name="clipper_case_hull22" file="assets/clipper_case/clipper_case_hull22.obj" />
+    <mesh name="clipper_case_hull23" file="assets/clipper_case/clipper_case_hull23.obj" />
+    <mesh name="clipper_case_hull24" file="assets/clipper_case/clipper_case_hull24.obj" />
+    <mesh name="clipper_case_hull25" file="assets/clipper_case/clipper_case_hull25.obj" />
+    <mesh name="clipper_case_hull26" file="assets/clipper_case/clipper_case_hull26.obj" />
+    <mesh name="clipper_case_hull27" file="assets/clipper_case/clipper_case_hull27.obj" />
+    <mesh name="clipper_case_hull28" file="assets/clipper_case/clipper_case_hull28.obj" />
+    <mesh name="clipper_case_hull29" file="assets/clipper_case/clipper_case_hull29.obj" />
+    <mesh name="clipper_case_hull30" file="assets/clipper_case/clipper_case_hull30.obj" />
+    <mesh name="clipper_case_hull31" file="assets/clipper_case/clipper_case_hull31.obj" />
+    <texture name="clipper_large_detail" type="2d" file="assets/photoreal/clippers/clipper_large_lever.png" />
+    <material name="clipper_large_detail" texture="clipper_large_detail" specular=".85" shininess=".65" />
+    <material name="clipper_large_steel" rgba=".56 .58 .60 1" specular=".95" shininess=".75" />
+    <material name="clipper_large_edge" rgba=".30 .32 .34 1" specular=".9" shininess=".7" />
+    <mesh name="clipper_large_lower" file="assets/photoreal/clippers/clipper_large_lower.obj" />
+    <mesh name="clipper_large_spring" file="assets/photoreal/clippers/clipper_large_spring.obj" />
+    <mesh name="clipper_large_lever" file="assets/photoreal/clippers/clipper_large_lever.obj" />
+    <mesh name="clipper_large_fork_left" file="assets/photoreal/clippers/clipper_large_fork_left.obj" />
+    <mesh name="clipper_large_fork_right" file="assets/photoreal/clippers/clipper_large_fork_right.obj" />
+    <mesh name="clipper_large_jaw_lower" file="assets/photoreal/clippers/clipper_large_jaw_lower.obj" />
+    <mesh name="clipper_large_jaw_upper" file="assets/photoreal/clippers/clipper_large_jaw_upper.obj" />
+    <mesh name="clipper_large_pivot" file="assets/photoreal/clippers/clipper_large_pivot.obj" />
+    <mesh name="clipper_large_pin" file="assets/photoreal/clippers/clipper_large_pin.obj" />
+    <texture name="clipper_small_detail" type="2d" file="assets/photoreal/clippers/clipper_small_lever.png" />
+    <material name="clipper_small_detail" texture="clipper_small_detail" specular=".85" shininess=".65" />
+    <material name="clipper_small_steel" rgba=".56 .58 .60 1" specular=".95" shininess=".75" />
+    <material name="clipper_small_edge" rgba=".30 .32 .34 1" specular=".9" shininess=".7" />
+    <mesh name="clipper_small_lower" file="assets/photoreal/clippers/clipper_small_lower.obj" />
+    <mesh name="clipper_small_spring" file="assets/photoreal/clippers/clipper_small_spring.obj" />
+    <mesh name="clipper_small_lever" file="assets/photoreal/clippers/clipper_small_lever.obj" />
+    <mesh name="clipper_small_fork_left" file="assets/photoreal/clippers/clipper_small_fork_left.obj" />
+    <mesh name="clipper_small_fork_right" file="assets/photoreal/clippers/clipper_small_fork_right.obj" />
+    <mesh name="clipper_small_jaw_lower" file="assets/photoreal/clippers/clipper_small_jaw_lower.obj" />
+    <mesh name="clipper_small_jaw_upper" file="assets/photoreal/clippers/clipper_small_jaw_upper.obj" />
+    <mesh name="clipper_small_pivot" file="assets/photoreal/clippers/clipper_small_pivot.obj" />
+    <mesh name="clipper_small_pin" file="assets/photoreal/clippers/clipper_small_pin.obj" />
+    <material name="case_slot" rgba=".50 .49 .52 1" specular="0" shininess="0" />
+    <material name="case_foam" rgba=".76 .74 .78 1" specular="0" shininess="0" />
+    <material name="case_tin" rgba=".54 .56 .58 1" specular=".8" shininess=".65" />
+    <material name="case_dark" rgba=".13 .15 .17 1" specular=".35" shininess=".4" />
+    <mesh name="case_slot_floors" file="assets/photoreal/clippers/case_slot_floors.obj" inertia="shell" />
+    <mesh name="case_foam_top" file="assets/photoreal/clippers/case_foam_top.obj" inertia="shell" />
+    <mesh name="case_foam_sides" file="assets/photoreal/clippers/case_foam_sides.obj" inertia="shell" />
+    <mesh name="case_tin" file="assets/photoreal/clippers/case_tin.obj" inertia="shell" />
+    <mesh name="case_dark" file="assets/photoreal/clippers/case_dark.obj" inertia="shell" />
+    <mesh name="case_rolled_rim" file="assets/photoreal/clippers/case_rolled_rim.obj" inertia="shell" />
+    <texture name="detail_yellow_label" type="2d" file="assets/photoreal/objects/yellow_label.png" />
+    <material name="clutter_white" rgba=".80 .81 .79 1" specular=".23" shininess=".35" />
+    <material name="clutter_cap" rgba=".88 .89 .87 1" specular=".28" shininess=".45" />
+    <material name="clutter_yellow_label" texture="detail_yellow_label" specular=".15" shininess=".25" />
+    <mesh name="nail_ep5_bottle_yellow_cap_standing_00" file="assets/photoreal/objects/nail_ep5_bottle_yellow_cap_standing_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_bottle_yellow_cap_standing_01" file="assets/photoreal/objects/nail_ep5_bottle_yellow_cap_standing_01.obj" inertia="shell" />
+    <mesh name="nail_ep5_bottle_yellow_cap_standing_02" file="assets/photoreal/objects/nail_ep5_bottle_yellow_cap_standing_02.obj" inertia="shell" />
+    <texture name="basket_weave_tex" type="2d" file="assets/photoreal/basket/basket_weave.png" />
+    <texture name="basket_rim_tex" type="2d" file="assets/photoreal/basket/basket_rim.png" />
+    <material name="basket_weave" texture="basket_weave_tex" rgba="0.250 0.280 0.200 1" specular=".12" shininess=".2" />
+    <material name="basket_weave_inner" texture="basket_weave_tex" rgba="0.188 0.210 0.150 1" specular=".08" shininess=".15" />
+    <material name="basket_floor" texture="basket_weave_tex" rgba=".55 .53 .50 1" specular=".05" shininess=".1" />
+    <material name="basket_rim" texture="basket_rim_tex" rgba=".40 .42 .32 1" specular=".15" shininess=".25" />
+    <mesh name="basket_wall_outer" file="assets/photoreal/basket/basket_wall_outer.obj" inertia="shell" />
+    <mesh name="basket_wall_inner" file="assets/photoreal/basket/basket_wall_inner.obj" inertia="shell" />
+    <mesh name="basket_floor" file="assets/photoreal/basket/basket_floor.obj" inertia="shell" />
+    <mesh name="basket_rim" file="assets/photoreal/basket/basket_rim.obj" inertia="shell" />
+    <texture name="detail_fabric" type="2d" file="assets/photoreal/objects/fabric.png" />
+    <texture name="detail_lining" type="2d" file="assets/photoreal/objects/lining.png" />
+    <material name="clutter_black" rgba=".045 .050 .058 1" specular=".3" shininess=".4" />
+    <material name="clutter_rubber" rgba=".045 .048 .052 1" specular=".08" shininess=".12" />
+    <material name="clutter_gray" rgba=".15 .17 .19 1" specular=".35" shininess=".55" />
+    <material name="clutter_zipper" rgba=".18 .20 .23 1" specular=".4" shininess=".5" />
+    <material name="clutter_fabric" texture="detail_fabric" specular=".08" shininess=".25" />
+    <material name="clutter_lining" texture="detail_lining" specular=".08" shininess=".25" />
+    <mesh name="hinged_nail_ep2_00" file="assets/photoreal/headphones/hinged_nail_ep2_00.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_01" file="assets/photoreal/headphones/hinged_nail_ep2_01.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_02" file="assets/photoreal/headphones/hinged_nail_ep2_02.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_03" file="assets/photoreal/headphones/hinged_nail_ep2_03.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_04" file="assets/photoreal/headphones/hinged_nail_ep2_04.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_05" file="assets/photoreal/headphones/hinged_nail_ep2_05.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_06" file="assets/photoreal/headphones/hinged_nail_ep2_06.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_07" file="assets/photoreal/headphones/hinged_nail_ep2_07.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_08" file="assets/photoreal/headphones/hinged_nail_ep2_08.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_09" file="assets/photoreal/headphones/hinged_nail_ep2_09.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_10" file="assets/photoreal/headphones/hinged_nail_ep2_10.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_11" file="assets/photoreal/headphones/hinged_nail_ep2_11.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_12" file="assets/photoreal/headphones/hinged_nail_ep2_12.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_13" file="assets/photoreal/headphones/hinged_nail_ep2_13.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_14" file="assets/photoreal/headphones/hinged_nail_ep2_14.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_15" file="assets/photoreal/headphones/hinged_nail_ep2_15.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_16" file="assets/photoreal/headphones/hinged_nail_ep2_16.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_17" file="assets/photoreal/headphones/hinged_nail_ep2_17.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_18" file="assets/photoreal/headphones/hinged_nail_ep2_18.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_19" file="assets/photoreal/headphones/hinged_nail_ep2_19.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_20" file="assets/photoreal/headphones/hinged_nail_ep2_20.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_21" file="assets/photoreal/headphones/hinged_nail_ep2_21.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_22" file="assets/photoreal/headphones/hinged_nail_ep2_22.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_23" file="assets/photoreal/headphones/hinged_nail_ep2_23.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_24" file="assets/photoreal/headphones/hinged_nail_ep2_24.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_25" file="assets/photoreal/headphones/hinged_nail_ep2_25.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_26" file="assets/photoreal/headphones/hinged_nail_ep2_26.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_27" file="assets/photoreal/headphones/hinged_nail_ep2_27.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_28" file="assets/photoreal/headphones/hinged_nail_ep2_28.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_29" file="assets/photoreal/headphones/hinged_nail_ep2_29.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_30" file="assets/photoreal/headphones/hinged_nail_ep2_30.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_31" file="assets/photoreal/headphones/hinged_nail_ep2_31.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep2_32" file="assets/photoreal/headphones/hinged_nail_ep2_32.obj" inertia="shell" />
+    <texture name="detail_cup_print" type="2d" file="assets/photoreal/objects/cup_print.png" />
+    <material name="clutter_tape" rgba=".57 .53 .38 1" specular=".55" shininess=".6" />
+    <material name="clutter_core" rgba=".72 .73 .68 1" specular=".04" shininess=".1" />
+    <material name="clutter_inner" rgba=".83 .83 .80 1" specular=".06" shininess=".1" />
+    <material name="clutter_cup_print" texture="detail_cup_print" specular=".15" shininess=".25" />
+    <mesh name="nail_ep3_tape_roll_00" file="assets/photoreal/objects/nail_ep3_tape_roll_00.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_01" file="assets/photoreal/objects/nail_ep3_tape_roll_01.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_02" file="assets/photoreal/objects/nail_ep3_tape_roll_02.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_03" file="assets/photoreal/objects/nail_ep3_tape_roll_03.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_04" file="assets/photoreal/objects/nail_ep3_tape_roll_04.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_05" file="assets/photoreal/objects/nail_ep3_tape_roll_05.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_06" file="assets/photoreal/objects/nail_ep3_tape_roll_06.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_07" file="assets/photoreal/objects/nail_ep3_tape_roll_07.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_08" file="assets/photoreal/objects/nail_ep3_tape_roll_08.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_09" file="assets/photoreal/objects/nail_ep3_tape_roll_09.obj" inertia="shell" />
+    <mesh name="nail_ep3_tape_roll_10" file="assets/photoreal/objects/nail_ep3_tape_roll_10.obj" inertia="shell" />
+    <mesh name="nail_ep3_paper_cup_00" file="assets/photoreal/objects/nail_ep3_paper_cup_00.obj" inertia="shell" />
+    <mesh name="nail_ep3_paper_cup_01" file="assets/photoreal/objects/nail_ep3_paper_cup_01.obj" inertia="shell" />
+    <mesh name="nail_ep3_paper_cup_02" file="assets/photoreal/objects/nail_ep3_paper_cup_02.obj" inertia="shell" />
+    <mesh name="nail_ep3_paper_cup_03" file="assets/photoreal/objects/nail_ep3_paper_cup_03.obj" inertia="shell" />
+    <mesh name="nail_ep3_paper_cup_04" file="assets/photoreal/objects/nail_ep3_paper_cup_04.obj" inertia="shell" />
+    <texture name="bits_kit_fold_tex" type="2d" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/bits_kit_fold/bits_kit_fold_colors_gain.png" />
+    <material name="bits_kit_fold_mat" texture="bits_kit_fold_tex" specular="0.05" shininess="0.1" />
+    <material name="bits_kit_fold_cloth" rgba="0.06 0.07 0.12 1" specular="0.05" shininess="0.1" />
+    <material name="bits_kit_fold_rim" rgba="0.10 0.20 0.60 1" specular="0.05" shininess="0.1" />
+    <material name="bits_kit_fold_bit" rgba="0.62 0.63 0.66 1" specular="0.6" shininess="0.5" />
+    <material name="bits_kit_fold_holder" rgba="0.08 0.08 0.10 1" specular="0.05" shininess="0.1" />
+    <mesh name="bits_kit_left_visual" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/bits_kit_fold/bits_kit_left_visual.obj" />
+    <mesh name="bits_kit_left_strip_visual" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/bits_kit_fold/bits_kit_left_strip_visual.obj" />
+    <mesh name="bits_kit_centre_visual" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/bits_kit_fold/bits_kit_centre_visual.obj" />
+    <mesh name="bits_kit_right_strip_visual" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/bits_kit_fold/bits_kit_right_strip_visual.obj" />
+    <mesh name="bits_kit_right_visual" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/bits_kit_fold/bits_kit_right_visual.obj" />
+    <texture name="pill_bottle_real_tex" type="2d" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_tex.png" />
+    <material name="pill_bottle_real_mat" texture="pill_bottle_real_tex" specular="0.2" shininess="0.2" />
+    <mesh name="pill_bottle_real_visual" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_visual.obj" />
+    <mesh name="pill_bottle_real_hull00" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull00.obj" />
+    <mesh name="pill_bottle_real_hull01" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull01.obj" />
+    <mesh name="pill_bottle_real_hull02" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull02.obj" />
+    <mesh name="pill_bottle_real_hull03" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull03.obj" />
+    <mesh name="pill_bottle_real_hull04" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull04.obj" />
+    <mesh name="pill_bottle_real_hull05" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull05.obj" />
+    <mesh name="pill_bottle_real_hull06" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull06.obj" />
+    <mesh name="pill_bottle_real_hull07" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull07.obj" />
+    <mesh name="pill_bottle_real_hull08" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull08.obj" />
+    <mesh name="pill_bottle_real_hull09" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull09.obj" />
+    <mesh name="pill_bottle_real_hull10" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull10.obj" />
+    <mesh name="pill_bottle_real_hull11" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull11.obj" />
+    <mesh name="pill_bottle_real_hull12" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull12.obj" />
+    <mesh name="pill_bottle_real_hull13" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull13.obj" />
+    <mesh name="pill_bottle_real_hull14" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull14.obj" />
+    <mesh name="pill_bottle_real_hull15" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/pill_bottle_real/pill_bottle_real_hull15.obj" />
+    <texture name="roar_bottle_tex" type="2d" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/roar_bottle/roar_bottle_tex.png" />
+    <material name="roar_bottle_mat" texture="roar_bottle_tex" specular="0.3" shininess="0.4" />
+    <mesh name="roar_bottle_body" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/roar_bottle/roar_bottle_body.obj" />
+    <mesh name="navy_bottle_body" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/navy_bottle/navy_bottle_body.obj" />
+    <mesh name="bit_hex" file="../../../../../scripts/sim_builders/digital_twin/twin/assets/bits/bit_hex.obj" />
+  </asset>
+  <default>
+    <default class="clipper_case_col">
+      <geom type="mesh" group="3" condim="4" friction="0.8 0.005 0.0001" />
+    </default>
+    <default class="basket_col">
+      <geom type="box" group="3" condim="4" friction="0.9 0.005 0.0001" rgba="0.35 0.25 0.15 1" />
+    </default>
+    <default class="basket_vis">
+      <geom type="mesh" group="2" contype="0" conaffinity="0" mass="0" />
+    </default>
+    <default class="bits_kit_fold_col">
+      <geom type="box" group="3" condim="4" friction="0.8 0.005 0.0001" solref="0.02 1" />
+    </default>
+    <default class="bits_kit_fold_vis">
+      <geom group="2" contype="0" conaffinity="0" mass="0" />
+    </default>
+    <default class="pill_bottle_real_col">
+      <geom type="mesh" group="3" condim="4" friction="0.8 0.005 0.0001" />
+    </default>
+    <default class="pill_bottle_real_vis">
+      <geom type="mesh" group="2" contype="0" conaffinity="0" mass="0" />
+    </default>
+    <default class="roar_bottle_col">
+      <geom group="3" condim="4" friction="0.6 0.005 0.0001" />
+    </default>
+    <default class="roar_bottle_vis">
+      <geom group="2" contype="0" conaffinity="0" mass="0" />
+    </default>
+    <default class="navy_bottle_col">
+      <geom group="3" condim="4" friction="0.6 0.005 0.0001" />
+    </default>
+    <default class="navy_bottle_vis">
+      <geom group="2" contype="0" conaffinity="0" mass="0" />
+    </default>
+  </default>
+  <worldbody>
+    <include file="../room/room.xml" />
+    <geom name="table_contact" type="plane" size="0.3708 0.5053 0.001" pos="0.3467 0.0244 0" group="3" />
+    <camera name="ext" pos="0.60900 0.0 0.84855" quat="0.696789 0.120356 0.120356 0.696789" fovy="60.730" />
+    <body name="bits_kit" pos="0.3221 -0.0551 0.0030" quat="-0.541708 0 0 0.840567">
+      <freejoint />
+      <geom class="bits_kit_fold_vis" type="mesh" mesh="bits_kit_centre_visual" material="bits_kit_fold_mat" />
+      <geom class="bits_kit_fold_vis" type="box" pos="0.00000 -0.00000 0.00350" size="0.09150 0.12000 0.00315" material="bits_kit_fold_cloth" />
+      <geom name="bits_kit_centre_slab" class="bits_kit_fold_col" pos="0.00000 -0.00000 0.00350" size="0.09150 0.12000 0.00350" mass="0.09912" />
+      <geom name="bits_kit_centre_content0" class="bits_kit_fold_col" pos="-0.05400 -0.06000 0.01100" size="0.03250 0.04500 0.00400" mass="0.01509" />
+      <geom name="bits_kit_centre_content1" class="bits_kit_fold_col" pos="0.02600 0.06500 0.01200" size="0.01750 0.03500 0.00500" mass="0.00790" />
+      <geom name="bits_kit_centre_content2" class="bits_kit_fold_col" pos="0.06200 -0.02750 0.01000" size="0.00850 0.07250 0.00300" mass="0.00477" />
+      <geom name="bits_kit_centre_content3" class="bits_kit_fold_col" pos="-0.04650 0.06000 0.00900" size="0.04000 0.04000 0.00200" mass="0.00825" />
+      <geom class="bits_kit_fold_vis" type="box" pos="-0.05400 -0.09000 0.01680" size="0.03250 0.00400 0.00050" material="bits_kit_fold_holder" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.08375 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07525 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.06675 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.05825 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04975 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04125 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.03275 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.02425 -0.09000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="box" pos="-0.05400 -0.06000 0.01680" size="0.03250 0.00400 0.00050" material="bits_kit_fold_holder" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.08375 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07525 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.06675 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.05825 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04975 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04125 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.03275 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.02425 -0.06000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="box" pos="-0.05400 -0.03000 0.01680" size="0.03250 0.00400 0.00050" material="bits_kit_fold_holder" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.08375 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07525 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.06675 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.05825 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04975 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04125 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.03275 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.02425 -0.03000 0.01475" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+      <body name="bits_kit_left_strip" pos="-0.09150 0.00000 0.00700">
+        <joint name="bits_kit_hinge_left" type="hinge" axis="0 1 0" range="-0.1 3.4" damping="0.03" frictionloss="0.01" armature="1e-5" />
+        <geom class="bits_kit_fold_vis" type="mesh" mesh="bits_kit_left_strip_visual" material="bits_kit_fold_mat" />
+        <geom class="bits_kit_fold_vis" type="box" pos="-0.01500 -0.00000 -0.00125" size="0.01500 0.12000 0.00112" material="bits_kit_fold_rim" />
+        <geom name="bits_kit_left_strip_strip" class="bits_kit_fold_col" pos="-0.01500 -0.00000 -0.00125" size="0.01500 0.12000 0.00125" mass="0.00500" />
+        <body name="bits_kit_left" pos="-0.03000 0.00000 0.00000">
+          <joint name="bits_kit_hinge_left_flap" type="hinge" axis="0 1 0" range="-0.5 3.4" damping="0.03" frictionloss="0.01" armature="1e-5" />
+          <geom class="bits_kit_fold_vis" type="mesh" mesh="bits_kit_left_visual" material="bits_kit_fold_mat" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.05850 -0.00000 -0.00350" size="0.05650 0.12000 0.00315" material="bits_kit_fold_cloth" />
+          <geom name="bits_kit_left_slab" class="bits_kit_fold_col" pos="-0.05850 -0.00000 -0.00350" size="0.05650 0.12000 0.00350" mass="0.05793" />
+          <geom name="bits_kit_left_content0" class="bits_kit_fold_col" pos="-0.07900 -0.05000 0.00400" size="0.02900 0.05500 0.00400" mass="0.01557" />
+          <geom name="bits_kit_left_content1" class="bits_kit_fold_col" pos="-0.01500 -0.05000 0.00400" size="0.03000 0.05500 0.00400" mass="0.01611" />
+          <geom name="bits_kit_left_content2" class="bits_kit_fold_col" pos="-0.04500 0.06250 0.00200" size="0.06000 0.04250 0.00200" mass="0.01245" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.07900 -0.09125 0.00980" size="0.02900 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.10450 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.09600 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.08750 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07900 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07050 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.06200 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.05350 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.07900 -0.06375 0.00980" size="0.02900 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.10450 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.09600 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.08750 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07900 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07050 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.06200 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.05350 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.07900 -0.03625 0.00980" size="0.02900 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.10450 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.09600 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.08750 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07900 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07050 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.06200 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.05350 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.07900 -0.00875 0.00980" size="0.02900 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.10450 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.09600 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.08750 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07900 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.07050 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.06200 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.05350 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.01500 -0.09125 0.00980" size="0.03000 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04050 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.03200 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.02350 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.01500 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.00650 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.00200 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.01050 -0.09125 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.01500 -0.06375 0.00980" size="0.03000 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04050 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.03200 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.02350 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.01500 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.00650 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.00200 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.01050 -0.06375 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.01500 -0.03625 0.00980" size="0.03000 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04050 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.03200 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.02350 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.01500 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.00650 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.00200 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.01050 -0.03625 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="box" pos="-0.01500 -0.00875 0.00980" size="0.03000 0.00400 0.00050" material="bits_kit_fold_holder" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.04050 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.03200 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.02350 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.01500 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="-0.00650 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.00200 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+          <geom class="bits_kit_fold_vis" type="cylinder" pos="0.01050 -0.00875 0.00775" size="0.00225 0.01100" quat="0.707107 0.707107 0 0" material="bits_kit_fold_bit" />
+        </body>
+      </body>
+      <body name="bits_kit_right_strip" pos="0.09150 0.00000 0.00700">
+        <joint name="bits_kit_hinge_right" type="hinge" axis="0 -1 0" range="-0.1 3.4" damping="0.03" frictionloss="0.01" armature="1e-5" />
+        <geom class="bits_kit_fold_vis" type="mesh" mesh="bits_kit_right_strip_visual" material="bits_kit_fold_mat" />
+        <geom class="bits_kit_fold_vis" type="box" pos="0.01500 -0.00000 -0.00125" size="0.01500 0.12000 0.00112" material="bits_kit_fold_rim" />
+        <geom name="bits_kit_right_strip_strip" class="bits_kit_fold_col" pos="0.01500 -0.00000 -0.00125" size="0.01500 0.12000 0.00125" mass="0.00500" />
+        <body name="bits_kit_right" pos="0.03000 0.00000 0.00000">
+          <joint name="bits_kit_hinge_right_flap" type="hinge" axis="0 -1 0" range="-0.5 3.4" damping="0.03" frictionloss="0.01" armature="1e-5" />
+          <geom class="bits_kit_fold_vis" type="mesh" mesh="bits_kit_right_visual" material="bits_kit_fold_mat" />
+          <geom class="bits_kit_fold_vis" type="box" pos="0.05900 -0.00000 -0.00350" size="0.05700 0.12000 0.00315" material="bits_kit_fold_cloth" />
+          <geom name="bits_kit_right_slab" class="bits_kit_fold_col" pos="0.05900 -0.00000 -0.00350" size="0.05700 0.12000 0.00350" mass="0.07146" />
+          <geom name="bits_kit_right_content0" class="bits_kit_fold_col" pos="0.05450 -0.00000 0.00200" size="0.05250 0.10000 0.00200" mass="0.03134" />
+        </body>
+      </body>
+    </body>
+    <body name="pill_bottle" pos="0.3362 -0.5318 0.0020" quat="0.573576 0 0 0.819152">
+      <freejoint />
+      <geom class="pill_bottle_real_vis" mesh="pill_bottle_real_visual" material="pill_bottle_real_mat" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull00" mass="0.00735" rgba="0.85 0.35 0.30 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull01" mass="0.00599" rgba="0.30 0.65 0.85 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull02" mass="0.00720" rgba="0.40 0.75 0.40 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull03" mass="0.01397" rgba="0.90 0.70 0.25 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull04" mass="0.00536" rgba="0.70 0.45 0.80 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull05" mass="0.00254" rgba="0.35 0.75 0.75 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull06" mass="0.02103" rgba="0.85 0.55 0.55 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull07" mass="0.00331" rgba="0.55 0.55 0.85 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull08" mass="0.01200" rgba="0.85 0.35 0.30 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull09" mass="0.00954" rgba="0.30 0.65 0.85 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull10" mass="0.00639" rgba="0.40 0.75 0.40 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull11" mass="0.00616" rgba="0.90 0.70 0.25 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull12" mass="0.00224" rgba="0.70 0.45 0.80 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull13" mass="0.00248" rgba="0.35 0.75 0.75 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull14" mass="0.01019" rgba="0.85 0.55 0.55 1" />
+      <geom class="pill_bottle_real_col" mesh="pill_bottle_real_hull15" mass="0.00426" rgba="0.55 0.55 0.85 1" />
+    </body>
+    <body name="roar_bottle" pos="0.2484 -0.5233 0.0020" quat="-0.819152 0 0 0.573576">
+      <freejoint />
+      <geom class="roar_bottle_vis" type="mesh" mesh="roar_bottle_body" material="roar_bottle_mat" />
+      <geom class="roar_bottle_vis" type="cylinder" size="0.0175 0.0125" pos="0 0 0.1975" rgba="0.048 0.580 0.614 1" />
+      <geom class="roar_bottle_col" type="cylinder" size="0.0325 0.0725" pos="0 0 0.0725" mass="0.45" />
+      <geom class="roar_bottle_col" type="cylinder" size="0.022 0.020" pos="0 0 0.165" mass="0.03" />
+      <geom class="roar_bottle_col" type="cylinder" size="0.0175 0.0125" pos="0 0 0.1975" mass="0.02" />
+    </body>
+    <body name="navy_bottle" pos="0.0565 -0.5125 0.0020" quat="1.000000 0 0 0.000000">
+      <freejoint />
+      <geom class="navy_bottle_vis" type="mesh" mesh="navy_bottle_body" rgba="0.10 0.13 0.26 1" />
+      <geom class="navy_bottle_vis" type="cylinder" size="0.0245 0.014" pos="0 0 0.186" rgba="0.33 0.38 0.55 1" />
+      <geom class="navy_bottle_col" type="cylinder" size="0.035 0.075" pos="0 0 0.075" mass="0.42" />
+      <geom class="navy_bottle_col" type="cylinder" size="0.027 0.011" pos="0 0 0.161" mass="0.04" />
+      <geom class="navy_bottle_col" type="cylinder" size="0.0245 0.014" pos="0 0 0.186" mass="0.04" />
+    </body>
+    <body name="bit_1" pos="0.0643 0.3158 0.0040" quat="0.940288 0 0 0.340380">
+      <freejoint />
+      <geom type="mesh" mesh="bit_hex" mass="0.006" rgba="0.55 0.55 0.58 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="bit_2" pos="0.0573 0.3777 0.0040" quat="0.825113 0 0 0.564967">
+      <freejoint />
+      <geom type="mesh" mesh="bit_hex" mass="0.006" rgba="0.55 0.55 0.58 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="bit_3" pos="0.1035 0.3430 0.0040" quat="0.546833 0 0 0.837242">
+      <freejoint />
+      <geom type="mesh" mesh="bit_hex" mass="0.006" rgba="0.80 0.15 0.12 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="bit_4" pos="0.0921 0.4162 0.0040" quat="0.988626 0 0 0.150398">
+      <freejoint />
+      <geom type="mesh" mesh="bit_hex" mass="0.006" rgba="0.90 0.80 0.20 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="bit_5" pos="0.0880 0.2839 0.0040" quat="0.897258 0 0 0.441506">
+      <freejoint />
+      <geom type="mesh" mesh="bit_hex" mass="0.006" rgba="0.55 0.55 0.58 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="bit_6" pos="0.0331 0.4033 0.0040" quat="0.931056 0 0 0.364877">
+      <freejoint />
+      <geom type="mesh" mesh="bit_hex" mass="0.006" rgba="0.55 0.55 0.58 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="bits_box" pos="0.2042 0.4560 0.0145" quat="0.772179 0 0 0.635405">
+      <freejoint />
+      <geom type="box" size="0.06 0.04 0.0125" mass="0.08" rgba="0.9 0.9 0.95 0.35" group="3" condim="4" friction="0.6 0.005 0.0001" />
+      <geom type="box" size="0.055 0.035 0.004" pos="0 0 -0.006" rgba="0.5 0.5 0.52 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="box" size="0.012 0.008 0.003" pos="-0.035 0.018 0.001" rgba="0.8 0.15 0.12 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="box" size="0.012 0.008 0.003" pos="0.03 0.018 0.001" rgba="0.8 0.15 0.12 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="box" size="0.012 0.008 0.003" pos="-0.03 -0.012 0.001" rgba="0.9 0.8 0.2 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="box" size="0.015 0.008 0.003" pos="0.02 -0.012 0.001" rgba="0.25 0.45 0.8 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="box" size="0.010 0.006 0.003" pos="0.0 0.012 0.001" rgba="0.15 0.15 0.15 1" contype="0" conaffinity="0" mass="0" group="2" />
+    </body>
+    <body name="bit_holder" pos="0.5576 -0.0479 0.0095" quat="0.940288 0 0 -0.340380">
+      <freejoint />
+      <geom type="box" size="0.03 0.0125 0.0075" mass="0.04" rgba="0.75 0.76 0.77 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="basket_bottle" pos="0.5553 0.5409 0.0140" quat="0.999969 0 0 0.007854">
+      <freejoint />
+      <geom type="cylinder" size="0.032 0.1" pos="0 0 0.1" mass="0.5" rgba="0.08 0.10 0.20 1" condim="4" friction="0.6 0.005 0.0001" />
+      <geom type="cylinder" size="0.0325 0.035" pos="0 0 0.095" rgba="0.92 0.92 0.90 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="cylinder" size="0.0327 0.012" pos="0 0 0.072" rgba="0.25 0.55 0.35 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="cylinder" size="0.024 0.01" pos="0 0 0.21" rgba="0.08 0.10 0.20 1" contype="0" conaffinity="0" mass="0" group="2" />
+    </body>
+    <body name="basket_can" pos="0.4159 0.4987 0.0440" quat="0.999969 0 0 0.007854">
+      <freejoint />
+      <geom type="capsule" size="0.030 0.045" quat="0.707107 0.707107 0 0" mass="0.35" rgba="0.78 0.78 0.80 0" condim="4" friction="0.6 0.005 0.0001" />
+      <geom type="cylinder" size="0.030 0.065" quat="0.707107 0.707107 0 0" rgba="0.78 0.78 0.80 1" contype="0" conaffinity="0" mass="0" group="2" />
+      <geom type="cylinder" size="0.0302 0.03" quat="0.707107 0.707107 0 0" rgba="0.75 0.15 0.15 1" contype="0" conaffinity="0" mass="0" group="2" />
+    </body>
+    <body name="basket_card" pos="0.4971 0.4250 0.0170" quat="0.963863 0 0 0.266397">
+      <freejoint />
+      <geom type="box" size="0.045 0.03 0.003" mass="0.03" rgba="0.10 0.12 0.28 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="basket_card_white" pos="0.4971 0.4250 0.0220" quat="0.995479 0 0 0.094977">
+      <freejoint />
+      <geom type="box" size="0.04 0.028 0.001" mass="0.01" rgba="0.95 0.95 0.93 1" condim="4" friction="0.6 0.005 0.0001" />
+    </body>
+    <body name="clipper_case" pos="0.5940 0.1288 0.0020" quat="-0.036644 0 0 0.999328">
+      <freejoint />
+      <geom class="clipper_case_col" mesh="clipper_case_hull00" pos="0 0 0.0025" mass="0.00251" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull01" pos="0 0 0.0025" mass="0.00285" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull02" pos="0 0 0.0025" mass="0.00357" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull03" pos="0 0 0.0025" mass="0.00407" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull04" pos="0 0 0.0025" mass="0.00069" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull05" pos="0 0 0.0025" mass="0.00404" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull06" pos="0 0 0.0025" mass="0.00429" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull07" pos="0 0 0.0025" mass="0.00171" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull08" pos="0 0 0.0025" mass="0.00048" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull09" pos="0 0 0.0025" mass="0.00051" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull10" pos="0 0 0.0025" mass="0.00021" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull11" pos="0 0 0.0025" mass="0.00162" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull12" pos="0 0 0.0025" mass="0.00867" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull13" pos="0 0 0.0025" mass="0.00072" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull14" pos="0 0 0.0025" mass="0.00053" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull15" pos="0 0 0.0025" mass="0.00225" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull16" pos="0 0 0.0025" mass="0.00025" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull17" pos="0 0 0.0025" mass="0.00015" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull18" pos="0 0 0.0025" mass="0.00177" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull19" pos="0 0 0.0025" mass="0.00203" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull20" pos="0 0 0.0025" mass="0.00233" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull21" pos="0 0 0.0025" mass="0.00261" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull22" pos="0 0 0.0025" mass="0.00240" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull23" pos="0 0 0.0025" mass="0.00042" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull24" pos="0 0 0.0025" mass="0.00042" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull25" pos="0 0 0.0025" mass="0.00381" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull26" pos="0 0 0.0025" mass="0.00119" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull27" pos="0 0 0.0025" mass="0.00066" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull28" pos="0 0 0.0025" mass="0.00084" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull29" pos="0 0 0.0025" mass="0.00093" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull30" pos="0 0 0.0025" mass="0.00126" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull31" pos="0 0 0.0025" mass="0.00023" />
+      <geom type="box" group="3" size="0.0437 0.0590 0.0035" pos="0 0 0.0035" mass="0.005" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="case_slot_floors_visual" type="mesh" mesh="case_slot_floors" material="case_slot" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_foam_top_visual" type="mesh" mesh="case_foam_top" material="clipper_case_photo_mat" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_foam_sides_visual" type="mesh" mesh="case_foam_sides" material="case_foam" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_tin_visual" type="mesh" mesh="case_tin" material="case_tin" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_dark_visual" type="mesh" mesh="case_dark" material="case_dark" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_rolled_rim_visual" type="mesh" mesh="case_rolled_rim" material="case_tin" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="clipper_large" pos="0.5892 -0.1181 0.0071" quat="0.408330 0 0 0.912834">
+      <freejoint />
+      <geom group="3" type="box" size="0.0375 0.0060 0.0050" mass="0.025" rgba="0.5685 0.4522 0.3526 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="clipper_large_lower_visual" type="mesh" mesh="clipper_large_lower" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_spring_visual" type="mesh" mesh="clipper_large_spring" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_lever_visual" type="mesh" mesh="clipper_large_lever" material="clipper_large_detail" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_fork_left_visual" type="mesh" mesh="clipper_large_fork_left" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_fork_right_visual" type="mesh" mesh="clipper_large_fork_right" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_jaw_lower_visual" type="mesh" mesh="clipper_large_jaw_lower" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_jaw_upper_visual" type="mesh" mesh="clipper_large_jaw_upper" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_pivot_visual" type="mesh" mesh="clipper_large_pivot" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_pin_visual" type="mesh" mesh="clipper_large_pin" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="clipper_small" pos="0.5937 0.1489 0.0106" quat="0.68603 -0.02027 -0.02582 0.72683">
+      <freejoint />
+      <geom group="3" type="box" size="0.0265 0.0060 0.0045" mass="0.015" rgba="0.5685 0.4522 0.3526 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="clipper_small_lower_visual" type="mesh" mesh="clipper_small_lower" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_spring_visual" type="mesh" mesh="clipper_small_spring" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_lever_visual" type="mesh" mesh="clipper_small_lever" material="clipper_small_detail" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_fork_left_visual" type="mesh" mesh="clipper_small_fork_left" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_fork_right_visual" type="mesh" mesh="clipper_small_fork_right" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_jaw_lower_visual" type="mesh" mesh="clipper_small_jaw_lower" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_jaw_upper_visual" type="mesh" mesh="clipper_small_jaw_upper" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_pivot_visual" type="mesh" mesh="clipper_small_pivot" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_pin_visual" type="mesh" mesh="clipper_small_pin" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="basket" pos="0.4962 0.4800 0.0020" quat="0.999969 0 0 0.007854">
+      <freejoint />
+      <geom class="basket_col" name="basket_floor" size="0.1280 0.1030 0.0060" pos="0 0 0.0060" />
+      <geom class="basket_col" name="basket_wall_front" size="0.0060 0.1200 0.1060" pos="0.1390 0 0.1060" />
+      <geom class="basket_col" name="basket_wall_back" size="0.0060 0.1200 0.1060" pos="-0.1390 0 0.1060" />
+      <geom class="basket_col" name="basket_wall_right" size="0.1450 0.0060 0.1060" pos="0 0.1140 0.1060" />
+      <geom class="basket_col" name="basket_wall_left" size="0.1450 0.0060 0.1060" pos="0 -0.1140 0.1060" />
+      <geom class="basket_vis" name="basket_wall_outer_visual" mesh="basket_wall_outer" material="basket_weave" />
+      <geom class="basket_vis" name="basket_wall_inner_visual" mesh="basket_wall_inner" material="basket_weave_inner" />
+      <geom class="basket_vis" name="basket_floor_visual" mesh="basket_floor" material="basket_floor" />
+      <geom class="basket_vis" name="basket_rim_visual" mesh="basket_rim" material="basket_rim" />
+    </body>
+    <body name="headphone_case" pos="0.5896 -0.2895 0.0220" quat="0.744195 0 0 -0.667962">
+      <freejoint />
+      <geom name="headphone_case_block_a" type="box" group="3" size="0.08800 0.06200 0.01580" pos="0.00000 0.00000 -0.00420" quat="0.240433 0 0 -0.970666" mass="0.0700" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_block_b" type="box" group="3" size="0.08000 0.07000 0.01580" pos="0.00000 0.00000 -0.00420" quat="0.240433 0 0 -0.970666" mass="0.0500" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_earcups" type="box" group="3" size="0.06200 0.03100 0.00350" pos="-0.00070 0.00133 0.01510" quat="0.240433 0 0 -0.970666" mass="0.0300" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_loop_0" type="capsule" group="3" size="0.0030" fromto="-0.01252 0.08606 0.00218 -0.02316 0.09570 0.00668" mass="0.0010" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_loop_1" type="capsule" group="3" size="0.0030" fromto="-0.02316 0.09570 0.00668 -0.03651 0.10069 0.01023" mass="0.0010" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_loop_2" type="capsule" group="3" size="0.0030" fromto="-0.03651 0.10069 0.01023 -0.05152 0.09761 0.01165" mass="0.0010" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_loop_3" type="capsule" group="3" size="0.0030" fromto="-0.05152 0.09761 0.01165 -0.06253 0.08696 0.01023" mass="0.0010" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_loop_4" type="capsule" group="3" size="0.0030" fromto="-0.06253 0.08696 0.01023 -0.06594 0.07312 0.00668" mass="0.0010" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="headphone_case_loop_5" type="capsule" group="3" size="0.0030" fromto="-0.06594 0.07312 0.00668 -0.06399 0.05890 0.00218" mass="0.0010" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="hinged_nail_ep2_00" type="mesh" mesh="hinged_nail_ep2_00" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_01" type="mesh" mesh="hinged_nail_ep2_01" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_02" type="mesh" mesh="hinged_nail_ep2_02" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_03" type="mesh" mesh="hinged_nail_ep2_03" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_04" type="mesh" mesh="hinged_nail_ep2_04" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_05" type="mesh" mesh="hinged_nail_ep2_05" material="clutter_zipper" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_06" type="mesh" mesh="hinged_nail_ep2_06" material="clutter_gray" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_07" type="mesh" mesh="hinged_nail_ep2_07" material="clutter_rubber" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_08" type="mesh" mesh="hinged_nail_ep2_08" material="clutter_rubber" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_09" type="mesh" mesh="hinged_nail_ep2_09" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_10" type="mesh" mesh="hinged_nail_ep2_10" material="clutter_gray" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_11" type="mesh" mesh="hinged_nail_ep2_11" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_12" type="mesh" mesh="hinged_nail_ep2_12" material="clutter_zipper" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_13" type="mesh" mesh="hinged_nail_ep2_13" material="clutter_rubber" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_14" type="mesh" mesh="hinged_nail_ep2_14" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_15" type="mesh" mesh="hinged_nail_ep2_15" material="clutter_gray" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_16" type="mesh" mesh="hinged_nail_ep2_16" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_17" type="mesh" mesh="hinged_nail_ep2_17" material="clutter_zipper" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_18" type="mesh" mesh="hinged_nail_ep2_18" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_19" type="mesh" mesh="hinged_nail_ep2_19" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_20" type="mesh" mesh="hinged_nail_ep2_20" material="clutter_gray" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_21" type="mesh" mesh="hinged_nail_ep2_21" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep2_32" type="mesh" mesh="hinged_nail_ep2_32" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <body name="headphone_lid" pos="0.03683 -0.06979 0.01160">
+        <joint name="lid_hinge" type="hinge" axis="-0.88438 -0.46676 0.00000" range="0 3.14159" damping="0.02" frictionloss="0.002" solreflimit="0.004 1" solimplimit="0.95 0.99 0.001 0.5 2" />
+        <geom name="headphone_lid_floor" type="box" group="3" size="0.07000 0.05700 0.00250" pos="0.03683 -0.06979 -0.02860" quat="0.240433 0 0 -0.970666" mass="0.0240" condim="4" friction="0.8 0.005 0.0001" />
+        <geom name="headphone_lid_wall_xp" type="box" group="3" size="0.00350 0.06200 0.01180" pos="-0.04225 -0.11153 -0.01180" quat="0.240433 0 0 -0.970666" mass="0.0090" condim="4" friction="0.8 0.005 0.0001" />
+        <geom name="headphone_lid_wall_xn" type="box" group="3" size="0.00350 0.06200 0.01180" pos="0.11592 -0.02805 -0.01180" quat="0.240433 0 0 -0.970666" mass="0.0090" condim="4" friction="0.8 0.005 0.0001" />
+        <geom name="headphone_lid_wall_far" type="box" group="3" size="0.07800 0.00350 0.01180" pos="0.07040 -0.13339 -0.01180" quat="0.240433 0 0 -0.970666" mass="0.0090" condim="4" friction="0.8 0.005 0.0001" />
+        <geom name="headphone_lid_wall_hinge" type="box" group="3" size="0.07800 0.00350 0.01180" pos="0.00327 -0.00619 -0.01180" quat="0.240433 0 0 -0.970666" mass="0.0090" condim="4" friction="0.8 0.005 0.0001" />
+        <geom name="hinged_nail_ep2_22" type="mesh" mesh="hinged_nail_ep2_22" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_23" type="mesh" mesh="hinged_nail_ep2_23" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_24" type="mesh" mesh="hinged_nail_ep2_24" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_25" type="mesh" mesh="hinged_nail_ep2_25" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_26" type="mesh" mesh="hinged_nail_ep2_26" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_27" type="mesh" mesh="hinged_nail_ep2_27" material="clutter_zipper" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_28" type="mesh" mesh="hinged_nail_ep2_28" material="clutter_gray" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_29" type="mesh" mesh="hinged_nail_ep2_29" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_30" type="mesh" mesh="hinged_nail_ep2_30" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+        <geom name="hinged_nail_ep2_31" type="mesh" mesh="hinged_nail_ep2_31" material="clutter_lining" group="2" contype="0" conaffinity="0" mass="0" pos="-0.03683 0.06979 -0.01160" />
+      </body>
+    </body>
+    <body name="tape_roll" pos="0.1600 -0.3900 0.0170" quat="1.000000 0 0 0.000000">
+      <freejoint />
+      <geom group="3" name="tape_roll" type="cylinder" size="0.0375 0.0150" mass="0.03" rgba="0.4548 0.3618 0.2712 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="nail_ep3_tape_roll_00_visual" type="mesh" mesh="nail_ep3_tape_roll_00" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_01_visual" type="mesh" mesh="nail_ep3_tape_roll_01" material="clutter_core" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_02_visual" type="mesh" mesh="nail_ep3_tape_roll_02" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_03_visual" type="mesh" mesh="nail_ep3_tape_roll_03" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_04_visual" type="mesh" mesh="nail_ep3_tape_roll_04" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_05_visual" type="mesh" mesh="nail_ep3_tape_roll_05" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_06_visual" type="mesh" mesh="nail_ep3_tape_roll_06" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_07_visual" type="mesh" mesh="nail_ep3_tape_roll_07" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_08_visual" type="mesh" mesh="nail_ep3_tape_roll_08" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_09_visual" type="mesh" mesh="nail_ep3_tape_roll_09" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_tape_roll_10_visual" type="mesh" mesh="nail_ep3_tape_roll_10" material="clutter_tape" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="paper_cup" pos="0.2000 0.2500 0.0570" quat="1.000000 0 0 0.000000">
+      <freejoint />
+      <geom group="3" name="paper_cup" type="cylinder" size="0.0400 0.0550" mass="0.30" rgba="0.4548 0.3618 0.2712 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="nail_ep3_paper_cup_00_visual" type="mesh" mesh="nail_ep3_paper_cup_00" material="clutter_cup_print" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_paper_cup_01_visual" type="mesh" mesh="nail_ep3_paper_cup_01" material="clutter_inner" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_paper_cup_02_visual" type="mesh" mesh="nail_ep3_paper_cup_02" material="clutter_inner" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_paper_cup_03_visual" type="mesh" mesh="nail_ep3_paper_cup_03" material="clutter_cap" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep3_paper_cup_04_visual" type="mesh" mesh="nail_ep3_paper_cup_04" material="clutter_white" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <include file="appearance/lights.xml" />
+  </worldbody>
+  <tendon>
+    <fixed name="bits_kit_spring_left" springlength="0.1875 4" stiffness="1.0">
+      <joint joint="bits_kit_hinge_left" coef="1" />
+    </fixed>
+    <fixed name="bits_kit_spring_left_flap" springlength="0.1568 4" stiffness="1.0">
+      <joint joint="bits_kit_hinge_left_flap" coef="1" />
+    </fixed>
+    <fixed name="bits_kit_spring_right" springlength="0.1928 4" stiffness="1.0">
+      <joint joint="bits_kit_hinge_right" coef="1" />
+    </fixed>
+    <fixed name="bits_kit_spring_right_flap" springlength="0.1620 4" stiffness="1.0">
+      <joint joint="bits_kit_hinge_right_flap" coef="1" />
+    </fixed>
+  </tendon>
+</mujoco>

@@ -3,7 +3,7 @@
     uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/<root>] [--port 7871]
 
 Renders one review video per episode (top | wrist, burned-in t = episode seconds, red INTERVENTION tag) into
-migration/rollout_review_<date>/videos when missing, then opens http://127.0.0.1:<port>. In the page: pick an episode,
+outputs/_annotation/rollout_review_<date>/videos when missing, then opens http://127.0.0.1:<port>. In the page: pick an episode,
 play it (space; 1x / 2x / 4x; arrows seek 1 s, shift+arrows 10 s), press [ at the start and ] at the end of every stretch
 to REMOVE (or type the spans: "15-31, 36-43, 50-"), then Save. Save writes <work>/plan.json, builds the root with
 build_root --plan (the kept spans of a source episode are spliced into one episode, boundaries snapped to multiples of 3
@@ -359,11 +359,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("runs", nargs="+", help="outputs/train/<date>/<run> directories")
     ap.add_argument("--out", help="root to build; default outputs/rebot_rollouts_<date>-cut-v<N>")
-    ap.add_argument("--work", help="default migration/rollout_review_<date>")
+    ap.add_argument("--work", help="default outputs/_annotation/rollout_review_<date>")
     ap.add_argument("--port", type=int, default=7871)
     args = ap.parse_args()
     date = Path(args.runs[0]).resolve().parent.name
-    work = WORKSPACE / (args.work or f"migration/rollout_review_{date}")
+    work = WORKSPACE / (args.work or f"outputs/_annotation/rollout_review_{date}")
     rows = inventory(args.runs, work)
     for r in rows:
         print(

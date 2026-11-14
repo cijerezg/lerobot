@@ -1,0 +1,378 @@
+{
+  "version": 1,
+  "root": "outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2",
+  "time_convention": "episode-local seconds [from_s,to_s) on the anchor timeline (timestamp_s.npy)",
+  "history_policy": "Excluded action targets are forbidden; failed-attempt observation history may condition retained recovery actions.",
+  "exclusions": [
+    {
+      "episode_id": "droid__TRI__ep011600",
+      "from_s": 9.066667,
+      "to_s": 13.866667,
+      "from_frame": 136,
+      "to_frame": 208,
+      "unit": "unit_0112",
+      "kind": "trim",
+      "reason": "Approach and final line-up on the ball are fine; cut the ~5 s drift away from a visible ball with air half-closes f136-208."
+    },
+    {
+      "episode_id": "droid__WEIRD__ep013576",
+      "from_s": 0.0,
+      "to_s": 12.0,
+      "from_frame": 0,
+      "to_frame": 180,
+      "unit": "unit_0140",
+      "kind": "remove",
+      "reason": "Starts over the canister, swings away to the monitor and past the canister to the right; no grasp, nothing to imitate."
+    },
+    {
+      "episode_id": "droid__TRI__ep013116",
+      "from_s": 17.666667,
+      "to_s": 22.0,
+      "from_frame": 265,
+      "to_frame": 330,
+      "unit": "unit_0124",
+      "kind": "trim",
+      "reason": "Keep the reach, two closes and the re-oriented try into the mug; trim f265-330, where the same failed cap pinch repeats twice more."
+    },
+    {
+      "episode_id": "droid__AUTOLab__ep000098",
+      "from_s": 7.466667,
+      "to_s": 11.933333,
+      "from_frame": 112,
+      "to_frame": 179,
+      "unit": "unit_0087",
+      "kind": "trim",
+      "reason": "Top-down reach and close are fine; then ~4.5 s holding closed jaws beside the tin with no grasp. Trim that part."
+    },
+    {
+      "episode_id": "droid_success__CLVR__ep010801",
+      "from_s": 10.4,
+      "to_s": 17.2,
+      "from_frame": 156,
+      "to_frame": 258,
+      "unit": "unit_0155",
+      "kind": "trim",
+      "reason": "First miss and wrist re-roll are fine; then ~7 s of jaw pumping at the same spot. Trim the pumping, keep the tries leading to the grasp."
+    },
+    {
+      "episode_id": "droid_success__TRI__ep036694",
+      "from_s": 32.666667,
+      "to_s": 41.466667,
+      "from_frame": 490,
+      "to_frame": 622,
+      "unit": "unit_0196",
+      "kind": "trim",
+      "reason": "Towel pulled clear and lifted (good); then ~9 s of aimless drifting before it is set down on the counter. Trim the drift."
+    },
+    {
+      "episode_id": "droid__AUTOLab__ep003368",
+      "from_s": 43.2,
+      "to_s": 48.0,
+      "from_frame": 648,
+      "to_frame": 720,
+      "unit": "unit_0094",
+      "kind": "trim",
+      "reason": "Clean grasp kept; trim the swing out of the workspace and the drop on the table instead of the bowl (f648-720)."
+    },
+    {
+      "episode_id": "droid__TRI__ep013256",
+      "from_s": 16.0,
+      "to_s": 40.0,
+      "from_frame": 240,
+      "to_frame": 600,
+      "unit": "unit_0127",
+      "kind": "remove",
+      "reason": "Cup held tilted, off the bowl and nearly still, for 18 s while pellets spill onto the table. Unpredictable hold; discard."
+    },
+    {
+      "episode_id": "droid_success__TRI__ep050475",
+      "from_s": 1.733333,
+      "to_s": 32.0,
+      "from_frame": 26,
+      "to_frame": 480,
+      "unit": "unit_0197",
+      "kind": "remove",
+      "reason": "About seven identical pinches at the marker cap over 25 s, no change and no lift; repeated failure beyond 3 tries. Discard."
+    },
+    {
+      "episode_id": "droid__TRI__ep013263",
+      "from_s": 19.0,
+      "to_s": 26.0,
+      "from_frame": 285,
+      "to_frame": 390,
+      "unit": "unit_0130",
+      "kind": "remove",
+      "reason": "6 s static hold, then the block drops and the arm leaves without retrieving it."
+    },
+    {
+      "episode_id": "droid_success__TRI__ep051967",
+      "from_s": 21.066667,
+      "to_s": 24.8,
+      "from_frame": 316,
+      "to_frame": 372,
+      "unit": "unit_0202",
+      "kind": "trim",
+      "reason": "Lid already on container; trim the ~3.7 s aimless swing over the chocolate plate, keep back-off and return to align the lid."
+    },
+    {
+      "episode_id": "droid__REAL__ep009782",
+      "from_s": 50.8,
+      "to_s": 60.0,
+      "from_frame": 762,
+      "to_frame": 900,
+      "unit": "unit_0109",
+      "kind": "trim",
+      "reason": "Keep the fold step and the return approach; cut ~9 s of hovering over the towel and a wrist swing to the floor (f762-900)."
+    },
+    {
+      "episode_id": "droid__WEIRD__ep013522",
+      "from_s": 8.0,
+      "to_s": 30.2,
+      "from_frame": 120,
+      "to_frame": 453,
+      "unit": "unit_0137",
+      "kind": "remove",
+      "reason": "Same descend-close-rise-empty cycle on the pear ~6 times with no change; episode ends without a lift."
+    },
+    {
+      "episode_id": "droid_success__RAIL__ep027184",
+      "from_s": 6.0,
+      "to_s": 11.6,
+      "from_frame": 90,
+      "to_frame": 174,
+      "unit": "unit_0182",
+      "kind": "trim",
+      "reason": "Cut ~5.6 s of back-and-forth wrist swinging over the cart (f90-174); keep the slow but steady approach to the green plushie."
+    },
+    {
+      "episode_id": "droid__IPRL__ep005570",
+      "from_s": 32.0,
+      "to_s": 43.733333,
+      "from_frame": 480,
+      "to_frame": 656,
+      "unit": "unit_0099",
+      "kind": "remove",
+      "reason": "user-calibration remove"
+    },
+    {
+      "episode_id": "droid__IPRL__ep005570",
+      "from_s": 43.733333,
+      "to_s": 58.0,
+      "from_frame": 656,
+      "to_frame": 870,
+      "unit": "unit_0100",
+      "kind": "remove",
+      "reason": "user-calibration remove"
+    },
+    {
+      "episode_id": "droid__IPRL__ep005878",
+      "from_s": 45.266667,
+      "to_s": 48.2,
+      "from_frame": 679,
+      "to_frame": 723,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "droid__TRI__ep013256",
+      "from_s": 35.466667,
+      "to_s": 37.466667,
+      "from_frame": 532,
+      "to_frame": 562,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep001003",
+      "from_s": 50.933334,
+      "to_s": 53.0,
+      "from_frame": 1528,
+      "to_frame": 1590,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep001040",
+      "from_s": 7.033333,
+      "to_s": 13.2,
+      "from_frame": 211,
+      "to_frame": 396,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000199",
+      "from_s": 31.233334,
+      "to_s": 33.466667,
+      "from_frame": 937,
+      "to_frame": 1004,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000753",
+      "from_s": 36.766666,
+      "to_s": 39.866665,
+      "from_frame": 1103,
+      "to_frame": 1196,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000844",
+      "from_s": 41.833332,
+      "to_s": 44.733334,
+      "from_frame": 1255,
+      "to_frame": 1342,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000006",
+      "from_s": 21.833334,
+      "to_s": 25.833334,
+      "from_frame": 655,
+      "to_frame": 775,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000277",
+      "from_s": 22.333334,
+      "to_s": 25.0,
+      "from_frame": 670,
+      "to_frame": 750,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000979",
+      "from_s": 10.566667,
+      "to_s": 13.166667,
+      "from_frame": 317,
+      "to_frame": 395,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000861",
+      "from_s": 16.0,
+      "to_s": 18.166666,
+      "from_frame": 480,
+      "to_frame": 545,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "yam__espresso__ep000042",
+      "from_s": 6.366667,
+      "to_s": 8.8,
+      "from_frame": 191,
+      "to_frame": 264,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000005_1_M_L_3_vertical_n_0",
+      "from_s": 3.1,
+      "to_s": 5.7,
+      "from_frame": 31,
+      "to_frame": 57,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000015_2_M_L_7_vertical_y_5",
+      "from_s": 2.2,
+      "to_s": 5.4,
+      "from_frame": 22,
+      "to_frame": 54,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000035_4_M_L_2_horizontal_n_0",
+      "from_s": 14.8,
+      "to_s": 17.1,
+      "from_frame": 148,
+      "to_frame": 171,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000038_board_2_trajectory_3_48",
+      "from_s": 25.2,
+      "to_s": 27.2,
+      "from_frame": 252,
+      "to_frame": 272,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000043_board_3_trajectory_4_57",
+      "from_s": 9.2,
+      "to_s": 12.6,
+      "from_frame": 92,
+      "to_frame": 126,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000054_6_L_L_1_horizontal_y_0",
+      "from_s": 30.8,
+      "to_s": 33.9,
+      "from_frame": 308,
+      "to_frame": 339,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000057_6_M_L_6_horizontal_y_0",
+      "from_s": 32.2,
+      "to_s": 35.4,
+      "from_frame": 322,
+      "to_frame": 354,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000058_board_3_trajectory_3_48",
+      "from_s": 33.1,
+      "to_s": 35.9,
+      "from_frame": 331,
+      "to_frame": 359,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "episode_id": "episode_000059_board_3_trajectory_4_84",
+      "from_s": 12.9,
+      "to_s": 17.1,
+      "from_frame": 129,
+      "to_frame": 171,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    }
+  ]
+}

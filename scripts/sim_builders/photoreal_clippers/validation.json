@@ -1,0 +1,296 @@
+{
+  "original_files": {
+    "checked": 151,
+    "changed": []
+  },
+  "layouts": {
+    "nail_ep5": {
+      "equal_model_fields": [
+        "nq",
+        "nv",
+        "nu",
+        "nbody",
+        "njnt",
+        "body_mass",
+        "body_inertia",
+        "body_ipos",
+        "body_iquat",
+        "body_pos",
+        "body_quat",
+        "qpos0",
+        "jnt_type",
+        "jnt_pos",
+        "jnt_axis",
+        "jnt_range",
+        "dof_damping",
+        "dof_frictionloss",
+        "dof_armature",
+        "actuator_gainprm",
+        "actuator_biasprm",
+        "actuator_ctrlrange",
+        "eq_data",
+        "exclude_signature"
+      ],
+      "equal_collision_fields": [
+        "geom_bodyid",
+        "geom_contype",
+        "geom_conaffinity",
+        "geom_condim",
+        "geom_type",
+        "geom_size",
+        "geom_pos",
+        "geom_quat",
+        "geom_friction",
+        "geom_solref",
+        "geom_solimp",
+        "geom_margin",
+        "geom_gap",
+        "geom_priority",
+        "geom_solmix"
+      ],
+      "observations": {
+        "top": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist.depth": {
+          "shape": [
+            480,
+            640
+          ],
+          "dtype": "uint16"
+        }
+      },
+      "collision_geoms": 136,
+      "physics_equal": true
+    },
+    "nail_ep1": {
+      "equal_model_fields": [
+        "nq",
+        "nv",
+        "nu",
+        "nbody",
+        "njnt",
+        "body_mass",
+        "body_inertia",
+        "body_ipos",
+        "body_iquat",
+        "body_pos",
+        "body_quat",
+        "qpos0",
+        "jnt_type",
+        "jnt_pos",
+        "jnt_axis",
+        "jnt_range",
+        "dof_damping",
+        "dof_frictionloss",
+        "dof_armature",
+        "actuator_gainprm",
+        "actuator_biasprm",
+        "actuator_ctrlrange",
+        "eq_data",
+        "exclude_signature"
+      ],
+      "equal_collision_fields": [
+        "geom_bodyid",
+        "geom_contype",
+        "geom_conaffinity",
+        "geom_condim",
+        "geom_type",
+        "geom_size",
+        "geom_pos",
+        "geom_quat",
+        "geom_friction",
+        "geom_solref",
+        "geom_solimp",
+        "geom_margin",
+        "geom_gap",
+        "geom_priority",
+        "geom_solmix"
+      ],
+      "observations": {
+        "top": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist.depth": {
+          "shape": [
+            480,
+            640
+          ],
+          "dtype": "uint16"
+        }
+      },
+      "collision_geoms": 134,
+      "physics_equal": true
+    },
+    "nail_ep2": {
+      "equal_model_fields": [
+        "nq",
+        "nv",
+        "nu",
+        "nbody",
+        "njnt",
+        "body_mass",
+        "body_inertia",
+        "body_ipos",
+        "body_iquat",
+        "body_pos",
+        "body_quat",
+        "qpos0",
+        "jnt_type",
+        "jnt_pos",
+        "jnt_axis",
+        "jnt_range",
+        "dof_damping",
+        "dof_frictionloss",
+        "dof_armature",
+        "actuator_gainprm",
+        "actuator_biasprm",
+        "actuator_ctrlrange",
+        "eq_data",
+        "exclude_signature"
+      ],
+      "equal_collision_fields": [
+        "geom_bodyid",
+        "geom_contype",
+        "geom_conaffinity",
+        "geom_condim",
+        "geom_type",
+        "geom_size",
+        "geom_pos",
+        "geom_quat",
+        "geom_friction",
+        "geom_solref",
+        "geom_solimp",
+        "geom_margin",
+        "geom_gap",
+        "geom_priority",
+        "geom_solmix"
+      ],
+      "observations": {
+        "top": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist.depth": {
+          "shape": [
+            480,
+            640
+          ],
+          "dtype": "uint16"
+        }
+      },
+      "collision_geoms": 132,
+      "physics_equal": true
+    },
+    "nail_ep3": {
+      "equal_model_fields": [
+        "nq",
+        "nv",
+        "nu",
+        "nbody",
+        "njnt",
+        "body_mass",
+        "body_inertia",
+        "body_ipos",
+        "body_iquat",
+        "body_pos",
+        "body_quat",
+        "qpos0",
+        "jnt_type",
+        "jnt_pos",
+        "jnt_axis",
+        "jnt_range",
+        "dof_damping",
+        "dof_frictionloss",
+        "dof_armature",
+        "actuator_gainprm",
+        "actuator_biasprm",
+        "actuator_ctrlrange",
+        "eq_data",
+        "exclude_signature"
+      ],
+      "equal_collision_fields": [
+        "geom_bodyid",
+        "geom_contype",
+        "geom_conaffinity",
+        "geom_condim",
+        "geom_type",
+        "geom_size",
+        "geom_pos",
+        "geom_quat",
+        "geom_friction",
+        "geom_solref",
+        "geom_solimp",
+        "geom_margin",
+        "geom_gap",
+        "geom_priority",
+        "geom_solmix"
+      ],
+      "observations": {
+        "top": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist": {
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist.depth": {
+          "shape": [
+            480,
+            640
+          ],
+          "dtype": "uint16"
+        }
+      },
+      "collision_geoms": 134,
+      "physics_equal": true
+    }
+  }
+}

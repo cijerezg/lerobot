@@ -32,7 +32,7 @@ from .config_rebot_b601_follower import RebotB601FollowerRobotConfig
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller as MotorBridgeController, Mode as MotorBridgeMode
-    from motorbridge.damiao_registers import RID_MST_ID
+    from motorbridge.damiao_registers import RID_KP_APR, RID_MST_ID
     from motorbridge.errors import CallError
 else:
     MotorBridgeController = None
@@ -100,7 +100,23 @@ class RebotB601Follower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        # .pos is observation.state; .vel (deg/s) and .torque (N*m) are recorded as
+        # observation.velocity and observation.effort (hw_to_dataset_features).
+        return {
+            **self._motors_ft,
+            **{f"{motor}.vel": float for motor in self.motor_names},
+            **{f"{motor}.torque": float for motor in self.motor_names},
+            **self._cameras_ft,
+        }
+
+    @property
+    def control_settings(self) -> dict:
+        """The follower loop settings the recorded actions were executed under (meta/robot_control.json)."""
+        return {
+            "position_kp": self.config.position_kp,
+            "pos_vel_velocity": self.config.pos_vel_velocity,
+            "gripper_torque_ratio": self.config.gripper_torque_ratio,
+        }
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -200,6 +216,13 @@ class RebotB601Follower(Robot):
                         raise
                     time.sleep(_SETTLE_SEC)
             logger.debug(f"{motor_name} mode set to {target_mode}")
+        if self.config.position_kp is not None:
+            for motor_name, kp in self.config.position_kp.items():
+                self.motors[motor_name].damiao_write_param_f32(RID_KP_APR, kp)
+                kp_read = self.motors[motor_name].damiao_get_param_f32(RID_KP_APR)
+                if abs(kp_read - kp) > 1e-3:
+                    raise RuntimeError(f"{self} {motor_name} did not take KP_APR {kp:g} (reports {kp_read:g}).")
+                logger.info(f"{motor_name} KP_APR set to {kp:g} (not stored)")
         for _ in range(_ENABLE_CONFIRM_ROUNDS):
             self._present_pos()
             time.sleep(_SETTLE_SEC)
@@ -264,8 +287,8 @@ class RebotB601Follower(Robot):
         self._check_motor(self.motor_names[self._check_index])
         self._check_index = (self._check_index + 1) % len(self.motor_names)
         obs_dict = {f"{motor}.pos": pos for motor, pos in self._present_pos().items()}
-        # The motor's own velocity and torque estimate (phase current, before the gearbox). Emitted
-        # at runtime but not observation features, so observation.state stays joint positions only.
+        # The motor's own velocity and torque estimate (phase current, before the gearbox), raw, from
+        # the same feedback frame as the position.
         obs_dict.update({f"{motor}.vel": vel for motor, vel in self._present_vel.items()})
         obs_dict.update({f"{motor}.torque": torque for motor, torque in self._present_torque.items()})
         self._check_status()

@@ -1,8 +1,8 @@
 """AdamW whose bf16 weight write rounds stochastically instead of to nearest.
 
 Why: with bf16 parameters and no fp32 master copy, nearest rounding drops every Adam step
-smaller than half an ulp of the weight (|w| >= 1.56e-2 at lr 5e-5 never moves; see the
-2026-09-11 weight-delta audit, migration/weight_deltas_2026-09-11). Stochastic rounding makes
+smaller than half an ulp of the weight (|w| >= 1.56e-2 at lr 5e-5 never moves; measured in the
+2026-09-11 weight-delta audit). Stochastic rounding makes
 the stored weight an unbiased estimate of the fp32 update, so small steps land in expectation.
 
 Recipe follows Ozkara, Yu, Park (AISTATS 2025, arXiv 2502.20566): moments stay in the parameter

@@ -1,7 +1,7 @@
 """VLM judge: a local vision-language model behind an OpenAI-compatible HTTP endpoint assigns the current subtask
 (fixed per-task vocabulary, tasks/*.json) and the stage on the hand-written scorer's ladder from a strip of recent
 frames. Client only: the model runs on the Spark (lerobot/scripts/spark_judge_*.sh). Read
-migration/digital_twin_2026-10-29/judge/JUDGE_REPORT.md first."""
+lerobot/scripts/sim_builders/digital_twin/judge/JUDGE_REPORT.md first."""
 
 from .client import JudgeClient as JudgeClient
 from .config import JudgeConfig as JudgeConfig

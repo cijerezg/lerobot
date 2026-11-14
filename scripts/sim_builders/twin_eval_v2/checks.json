@@ -1,0 +1,5924 @@
+{
+ "_twin_snapshot": "2026-10-30 11:05",
+ "_rules": {
+  "placements": "hand-designed (v2)",
+  "margin_m": 0.02,
+  "reach_m": 1.0,
+  "basket_reach_m": 1.0,
+  "settle_s": 1.0,
+  "settle_tol_m": 0.005,
+  "start_contact_tol_m": 0.001,
+  "region_xy": [
+   [
+    -0.05,
+    -0.61
+   ],
+   [
+    -0.05,
+    0.61
+   ],
+   [
+    0.72,
+    0.61
+   ],
+   [
+    0.72,
+    -0.61
+   ]
+  ]
+ },
+ "twin_l1_tape_basket_right": {
+  "level": 1,
+  "letter": "a",
+  "tier": "twin_l1",
+  "bodies": [
+   "basket",
+   "tape_roll"
+  ],
+  "targets": [
+   "tape_roll"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l1_tape_basket_right_p1": {
+    "note": "v1 base: tape mid-left of the basket, basket right",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.36,
+       0.22
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.3,
+       -0.06
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -11.3,
+       -103.6,
+       -66.6,
+       53.0,
+       -0.0,
+       -9.8
+      ],
+      "target": [
+       0.3,
+       -0.06,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 60.57,
+      "q_deg": [
+       26.2,
+       -74.7,
+       -62.3,
+       17.8,
+       -12.1,
+       -0.0
+      ],
+      "target": [
+       0.36,
+       0.22,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14
+    },
+    "settle_all_max_mm": 2.14,
+    "worst_contact_dist_mm": -1.21
+   },
+   "twin_l1_tape_basket_right_p2": {
+    "note": "tape near-right, basket far-left turned 90",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.44,
+       -0.14
+      ],
+      "yaw_deg": 90.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.2,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       54.5,
+       -111.3,
+       -76.9,
+       55.6,
+       0.0,
+       45.8
+      ],
+      "target": [
+       0.2,
+       0.28,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.23,
+      "q_deg": [
+       -15.0,
+       -82.2,
+       -66.6,
+       12.3,
+       6.7,
+       0.0
+      ],
+      "target": [
+       0.44,
+       -0.14,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14
+    },
+    "settle_all_max_mm": 2.14,
+    "worst_contact_dist_mm": -1.21
+   },
+   "twin_l1_tape_basket_right_p3": {
+    "note": "tape far-left, basket near-right",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.28,
+       0.3
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.46,
+       -0.08
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -9.9,
+       -139.7,
+       -123.2,
+       73.5,
+       0.0,
+       -8.2
+      ],
+      "target": [
+       0.46,
+       -0.08,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 61.05,
+      "q_deg": [
+       38.9,
+       -72.8,
+       -60.8,
+       18.7,
+       -18.2,
+       -0.0
+      ],
+      "target": [
+       0.28,
+       0.3,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14
+    },
+    "settle_all_max_mm": 2.14,
+    "worst_contact_dist_mm": -1.21
+   },
+   "twin_l1_tape_basket_right_p4": {
+    "note": "tape right in front of the robot, basket far behind it",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.47,
+       0.03
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.19,
+       0.0
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       0.0,
+       -78.5,
+       -40.9,
+       52.4,
+       -0.0,
+       -0.0
+      ],
+      "target": [
+       0.19,
+       0.0,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.69,
+      "q_deg": [
+       3.1,
+       -83.8,
+       -67.5,
+       11.0,
+       -1.4,
+       -0.0
+      ],
+      "target": [
+       0.47,
+       0.03,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14
+    },
+    "settle_all_max_mm": 2.14,
+    "worst_contact_dist_mm": -1.21
+   }
+  }
+ },
+ "twin_l1_bit_single": {
+  "level": 1,
+  "letter": "b",
+  "tier": "twin_l1",
+  "bodies": [
+   "basket",
+   "bit_1"
+  ],
+  "targets": [
+   "bit_1"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l1_bit_single_p1": {
+    "note": "bit far-right at 30, basket out on the left side",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.26,
+       -0.42
+      ],
+      "yaw_deg": 90.0
+     },
+     "bit_1": {
+      "xy": [
+       0.54,
+       0.26
+      ],
+      "yaw_deg": 30.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       25.7,
+       -142.9,
+       -115.3,
+       32.4,
+       -0.0,
+       -0.0
+      ],
+      "target": [
+       0.54,
+       0.26,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 66.22,
+      "q_deg": [
+       -50.8,
+       -89.6,
+       -70.1,
+       5.9,
+       20.4,
+       0.0
+      ],
+      "target": [
+       0.26,
+       -0.42,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "bit_1": 1.03
+    },
+    "settle_all_max_mm": 2.02,
+    "worst_contact_dist_mm": -1.16
+   },
+   "twin_l1_bit_single_p2": {
+    "note": "bit far-left across the gripper (90), basket far-right corner",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.54,
+       0.36
+      ],
+      "yaw_deg": 0.0
+     },
+     "bit_1": {
+      "xy": [
+       0.58,
+       -0.2
+      ],
+      "yaw_deg": 90.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       -19.0,
+       -146.9,
+       -122.9,
+       36.0,
+       0.0,
+       -10.6
+      ],
+      "target": [
+       0.58,
+       -0.2,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 78.6,
+      "q_deg": [
+       31.1,
+       -119.8,
+       -95.5,
+       -12.8,
+       -9.1,
+       -0.0
+      ],
+      "target": [
+       0.54,
+       0.36,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "bit_1": 1.03
+    },
+    "settle_all_max_mm": 2.02,
+    "worst_contact_dist_mm": -1.16
+   },
+   "twin_l1_bit_single_p3": {
+    "note": "bit at the far end straight ahead, basket out on the right side",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.26,
+       0.4
+      ],
+      "yaw_deg": 90.0
+     },
+     "bit_1": {
+      "xy": [
+       0.62,
+       0.02
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       1.8,
+       -149.1,
+       -127.1,
+       38.0,
+       -0.0,
+       1.0
+      ],
+      "target": [
+       0.62,
+       0.02,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 65.1,
+      "q_deg": [
+       49.2,
+       -86.3,
+       -68.0,
+       8.4,
+       -20.5,
+       -0.0
+      ],
+      "target": [
+       0.26,
+       0.4,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "bit_1": 1.03
+    },
+    "settle_all_max_mm": 2.02,
+    "worst_contact_dist_mm": -1.16
+   },
+   "twin_l1_bit_single_p4": {
+    "note": "bit wide right beside the robot at -45, basket far-left corner",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.54,
+       -0.36
+      ],
+      "yaw_deg": 0.0
+     },
+     "bit_1": {
+      "xy": [
+       0.26,
+       0.48
+      ],
+      "yaw_deg": -45.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 15,
+      "q_deg": [
+       61.5,
+       -144.3,
+       -123.9,
+       54.6,
+       -0.0,
+       -0.0
+      ],
+      "target": [
+       0.26,
+       0.48,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 78.6,
+      "q_deg": [
+       -31.1,
+       -119.8,
+       -95.5,
+       -12.8,
+       9.1,
+       -0.0
+      ],
+      "target": [
+       0.54,
+       -0.36,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "bit_1": 1.03
+    },
+    "settle_all_max_mm": 2.02,
+    "worst_contact_dist_mm": -1.16
+   }
+  }
+ },
+ "twin_l1_pill_basket_far": {
+  "level": 1,
+  "letter": "c",
+  "tier": "twin_l1",
+  "bodies": [
+   "basket",
+   "pill_bottle"
+  ],
+  "targets": [
+   "pill_bottle"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l1_pill_basket_far_p1": {
+    "note": "pill near-right, basket far-left",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.42,
+       -0.18
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       51.8,
+       -110.0,
+       -94.3,
+       74.3,
+       0.0,
+       44.2
+      ],
+      "target": [
+       0.22,
+       0.28,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.05,
+      "q_deg": [
+       -19.7,
+       -81.4,
+       -66.1,
+       13.0,
+       8.7,
+       0.0
+      ],
+      "target": [
+       0.42,
+       -0.18,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   },
+   "twin_l1_pill_basket_far_p2": {
+    "note": "basket near-left, pill adjacent to its right wall",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.3,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.24,
+       -0.06
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -14.0,
+       -86.3,
+       -67.1,
+       70.8,
+       -0.0,
+       -12.4
+      ],
+      "target": [
+       0.24,
+       -0.06,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 60.12,
+      "q_deg": [
+       -33.5,
+       -69.8,
+       -59.6,
+       21.0,
+       16.1,
+       0.0
+      ],
+      "target": [
+       0.3,
+       -0.26,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   },
+   "twin_l1_pill_basket_far_p3": {
+    "note": "basket far-right turned 90, pill far-left",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.36,
+       0.3
+      ],
+      "yaw_deg": 90.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.42,
+       -0.12
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -15.9,
+       -131.0,
+       -126.6,
+       85.6,
+       -0.0,
+       -13.4
+      ],
+      "target": [
+       0.42,
+       -0.12,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 63.24,
+      "q_deg": [
+       34.2,
+       -84.2,
+       -67.5,
+       11.1,
+       -14.5,
+       -0.0
+      ],
+      "target": [
+       0.36,
+       0.3,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   },
+   "twin_l1_pill_basket_far_p4": {
+    "note": "basket far-right turned 30, pill near-left",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.4,
+       0.24
+      ],
+      "yaw_deg": 30.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       -0.24
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -47.5,
+       -103.3,
+       -85.5,
+       72.3,
+       0.0,
+       -40.8
+      ],
+      "target": [
+       0.22,
+       -0.24,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.77,
+      "q_deg": [
+       26.5,
+       -83.5,
+       -67.3,
+       11.6,
+       -11.5,
+       -0.0
+      ],
+      "target": [
+       0.4,
+       0.24,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   }
+  }
+ },
+ "twin_l1_kit_alone": {
+  "level": 1,
+  "letter": "d",
+  "tier": "twin_l1",
+  "bodies": [
+   "bits_kit"
+  ],
+  "targets": [
+   "bits_kit"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l1_kit_alone_p1": {
+    "note": "kit alone at its twin pose",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 245.6
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       20.0,
+       -133.9,
+       -107.8,
+       63.8,
+       0.0,
+       16.9
+      ],
+      "target": [
+       0.4156,
+       0.1513,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -49.0,
+       -113.9,
+       -75.1,
+       51.2,
+       -0.0,
+       -42.0
+      ],
+      "target": [
+       0.228,
+       -0.2622,
+       0.01
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15
+    },
+    "settle_all_max_mm": 3.15,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l1_kit_alone_p2": {
+    "note": "kit mirrored (bits flap on the right), centre-right",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.32,
+       0.08
+      ],
+      "yaw_deg": 65.6
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -29.1,
+       -96.6,
+       -52.3,
+       45.7,
+       -0.0,
+       -25.7
+      ],
+      "target": [
+       0.2264,
+       -0.1263,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       34.7,
+       -154.6,
+       -146.2,
+       81.7,
+       0.0,
+       29.6
+      ],
+      "target": [
+       0.414,
+       0.2872,
+       0.01
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15
+    },
+    "settle_all_max_mm": 3.15,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l1_kit_alone_p3": {
+    "note": "kit turned -30 on the left side",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.32,
+       -0.12
+      ],
+      "yaw_deg": 215.6
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       1.3,
+       -154.9,
+       -146.8,
+       81.9,
+       0.0,
+       1.1
+      ],
+      "target": [
+       0.5042,
+       0.0119,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -61.8,
+       -102.0,
+       -58.8,
+       46.8,
+       0.0,
+       -49.6
+      ],
+      "target": [
+       0.135,
+       -0.2524,
+       0.01
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15
+    },
+    "settle_all_max_mm": 3.15,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l1_kit_alone_p4": {
+    "note": "kit turned +60 on the right side",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.34,
+       0.14
+      ],
+      "yaw_deg": 305.6
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       57.3,
+       -121.4,
+       -86.7,
+       55.3,
+       -0.0,
+       47.9
+      ],
+      "target": [
+       0.2081,
+       0.3242,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -5.4,
+       -142.8,
+       -123.7,
+       70.9,
+       -0.0,
+       -4.5
+      ],
+      "target": [
+       0.4724,
+       -0.045,
+       0.01
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15
+    },
+    "settle_all_max_mm": 3.15,
+    "worst_contact_dist_mm": -3.0
+   }
+  }
+ },
+ "twin_l2_bit_clutter": {
+  "level": 2,
+  "letter": "a",
+  "tier": "twin_l2",
+  "bodies": [
+   "basket",
+   "bit_1",
+   "tape_roll",
+   "pill_bottle",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small"
+  ],
+  "targets": [
+   "bit_1"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l2_bit_clutter_p1": {
+    "note": "basket far-left corner, bit far-right, case at the far end, tape centre, pill near-left",
+    "kit_closed": false,
+    "poses": {
+     "clipper_case": {
+      "xy": [
+       0.62,
+       0.08
+      ],
+      "yaw_deg": 90.0
+     },
+     "basket": {
+      "xy": [
+       0.54,
+       -0.36
+      ],
+      "yaw_deg": 0.0
+     },
+     "bit_1": {
+      "xy": [
+       0.54,
+       0.26
+      ],
+      "yaw_deg": 30.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.38,
+       0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       -0.34
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       25.7,
+       -142.9,
+       -115.3,
+       32.4,
+       -0.0,
+       -0.0
+      ],
+      "target": [
+       0.54,
+       0.26,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 78.6,
+      "q_deg": [
+       -31.1,
+       -119.8,
+       -95.5,
+       -12.8,
+       9.1,
+       -0.0
+      ],
+      "target": [
+       0.54,
+       -0.36,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99,
+     "basket": 2.02,
+     "bit_1": 1.03,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   },
+   "twin_l2_bit_clutter_p2": {
+    "note": "basket out on the right side, bit far-left, tape at the far end, pill in the carry path, case near-left",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.26,
+       0.4
+      ],
+      "yaw_deg": 90.0
+     },
+     "bit_1": {
+      "xy": [
+       0.58,
+       -0.2
+      ],
+      "yaw_deg": 90.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.62,
+       0.04
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.42,
+       0.18
+      ],
+      "yaw_deg": 0.0
+     },
+     "clipper_case": {
+      "xy": [
+       0.24,
+       -0.38
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       -19.0,
+       -146.9,
+       -122.9,
+       36.0,
+       0.0,
+       -10.6
+      ],
+      "target": [
+       0.58,
+       -0.2,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 65.1,
+      "q_deg": [
+       49.2,
+       -86.3,
+       -68.0,
+       8.4,
+       -20.5,
+       -0.0
+      ],
+      "target": [
+       0.26,
+       0.4,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "bit_1": 1.03,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   },
+   "twin_l2_bit_clutter_p3": {
+    "note": "basket out on the left side, bit at the far end in the clutter: tape and pill beside it, case in front of it",
+    "kit_closed": false,
+    "poses": {
+     "clipper_case": {
+      "xy": [
+       0.4,
+       0.04
+      ],
+      "yaw_deg": 90.0
+     },
+     "basket": {
+      "xy": [
+       0.3,
+       -0.42
+      ],
+      "yaw_deg": 90.0
+     },
+     "bit_1": {
+      "xy": [
+       0.62,
+       0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.58,
+       -0.18
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.62,
+       0.18
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       1.8,
+       -149.1,
+       -127.1,
+       38.0,
+       -0.0,
+       1.0
+      ],
+      "target": [
+       0.62,
+       0.02,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 67.2,
+      "q_deg": [
+       -48.0,
+       -93.8,
+       -73.3,
+       3.6,
+       18.5,
+       0.0
+      ],
+      "target": [
+       0.3,
+       -0.42,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99,
+     "basket": 2.02,
+     "bit_1": 1.03,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   },
+   "twin_l2_bit_clutter_p4": {
+    "note": "basket far-right corner, bit wide right beside the robot with the pill next to it, tape far-left, case centre",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.54,
+       0.36
+      ],
+      "yaw_deg": 0.0
+     },
+     "bit_1": {
+      "xy": [
+       0.26,
+       0.48
+      ],
+      "yaw_deg": -45.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       0.36
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.58,
+       -0.24
+      ],
+      "yaw_deg": 0.0
+     },
+     "clipper_case": {
+      "xy": [
+       0.4,
+       -0.08
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 15,
+      "q_deg": [
+       61.5,
+       -144.3,
+       -123.9,
+       54.6,
+       -0.0,
+       -0.0
+      ],
+      "target": [
+       0.26,
+       0.48,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 78.6,
+      "q_deg": [
+       31.1,
+       -119.8,
+       -95.5,
+       -12.8,
+       -9.1,
+       -0.0
+      ],
+      "target": [
+       0.54,
+       0.36,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "bit_1": 1.03,
+     "pill_bottle": 2.21,
+     "tape_roll": 2.14,
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   }
+  }
+ },
+ "twin_l2_pill_case": {
+  "level": 2,
+  "letter": "b",
+  "tier": "twin_l2",
+  "bodies": [
+   "basket",
+   "pill_bottle",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small"
+  ],
+  "targets": [
+   "pill_bottle"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l2_pill_case_p1": {
+    "note": "basket right, pill near-left, case far-left",
+    "kit_closed": false,
+    "poses": {
+     "clipper_case": {
+      "xy": [
+       0.44,
+       -0.14
+      ],
+      "yaw_deg": 180.0
+     },
+     "basket": {
+      "xy": [
+       0.36,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       -0.22
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -45.0,
+       -100.1,
+       -81.7,
+       71.6,
+       -0.0,
+       -38.9
+      ],
+      "target": [
+       0.22,
+       -0.22,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 61.77,
+      "q_deg": [
+       30.3,
+       -79.2,
+       -64.7,
+       14.6,
+       -13.5,
+       -0.0
+      ],
+      "target": [
+       0.36,
+       0.26,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99,
+     "basket": 2.02,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   },
+   "twin_l2_pill_case_p2": {
+    "note": "basket far-left, case near-right turned 90, pill near centre",
+    "kit_closed": false,
+    "poses": {
+     "clipper_case": {
+      "xy": [
+       0.22,
+       0.3
+      ],
+      "yaw_deg": 90.0
+     },
+     "basket": {
+      "xy": [
+       0.44,
+       -0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       0.08
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       20.0,
+       -83.4,
+       -64.4,
+       71.0,
+       -0.0,
+       17.8
+      ],
+      "target": [
+       0.22,
+       0.08,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.23,
+      "q_deg": [
+       -15.0,
+       -82.2,
+       -66.6,
+       12.3,
+       6.7,
+       0.0
+      ],
+      "target": [
+       0.44,
+       -0.14,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99,
+     "basket": 2.02,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   },
+   "twin_l2_pill_case_p3": {
+    "note": "basket far centre, pill far-right, case left turned 90: pill and case on opposite sides",
+    "kit_closed": false,
+    "poses": {
+     "clipper_case": {
+      "xy": [
+       0.3,
+       -0.26
+      ],
+      "yaw_deg": 90.0
+     },
+     "basket": {
+      "xy": [
+       0.46,
+       0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.3,
+       0.32
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       46.8,
+       -131.6,
+       -127.7,
+       86.0,
+       0.0,
+       40.8
+      ],
+      "target": [
+       0.3,
+       0.32,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.06,
+      "q_deg": [
+       2.1,
+       -81.8,
+       -66.3,
+       12.5,
+       -1.0,
+       -0.0
+      ],
+      "target": [
+       0.46,
+       0.02,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99,
+     "basket": 2.02,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   },
+   "twin_l2_pill_case_p4": {
+    "note": "basket right turned 90, pill near-left, case between pill and basket",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.36,
+       0.3
+      ],
+      "yaw_deg": 90.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.2,
+       -0.22
+      ],
+      "yaw_deg": 0.0
+     },
+     "clipper_case": {
+      "xy": [
+       0.3,
+       -0.02
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -47.7,
+       -97.1,
+       -78.2,
+       71.1,
+       -0.0,
+       -41.1
+      ],
+      "target": [
+       0.2,
+       -0.22,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 63.24,
+      "q_deg": [
+       34.2,
+       -84.2,
+       -67.5,
+       11.1,
+       -14.5,
+       -0.0
+      ],
+      "target": [
+       0.36,
+       0.3,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "pill_bottle": 2.21,
+     "clipper_case": 2.17,
+     "clipper_large": 2.89,
+     "clipper_small": 3.99
+    },
+    "settle_all_max_mm": 3.99,
+    "worst_contact_dist_mm": -1.85
+   }
+  }
+ },
+ "twin_l2_roar_tapes": {
+  "level": 2,
+  "letter": "c",
+  "tier": "twin_l2",
+  "bodies": [
+   "basket",
+   "roar_bottle",
+   "tape_roll",
+   "tape_roll_2",
+   "clipper_large",
+   "clipper_small"
+  ],
+  "targets": [
+   "roar_bottle"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l2_roar_tapes_p1": {
+    "note": "basket right, bottle near-left, tapes far-left and far centre, clippers near centre",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.34,
+       0.3
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.2,
+       -0.22
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.44,
+       -0.22
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll_2": {
+      "xy": [
+       0.4,
+       0.06
+      ],
+      "yaw_deg": 0.0
+     },
+     "clipper_large": {
+      "xy": [
+       0.22,
+       0.04
+      ],
+      "yaw_deg": 45.0
+     },
+     "clipper_small": {
+      "xy": [
+       0.3,
+       -0.04
+      ],
+      "yaw_deg": -30.0
+     }
+    },
+    "ik": {
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 39.19,
+      "q_deg": [
+       -35.8,
+       -64.5,
+       -40.7,
+       31.5,
+       19.6,
+       0.0
+      ],
+      "target": [
+       0.2,
+       -0.22,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.52,
+      "q_deg": [
+       35.3,
+       -81.2,
+       -65.7,
+       13.1,
+       -15.4,
+       -0.0
+      ],
+      "target": [
+       0.34,
+       0.3,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "roar_bottle": 2.14,
+     "tape_roll": 2.14,
+     "tape_roll_2": 2.14,
+     "clipper_large": 2.21,
+     "clipper_small": 2.11
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.53
+   },
+   "twin_l2_roar_tapes_p2": {
+    "note": "basket near-left, bottle far-right, tapes near-right and far centre-left, clippers centre",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.28,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.4,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.18,
+       0.3
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll_2": {
+      "xy": [
+       0.46,
+       -0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "clipper_large": {
+      "xy": [
+       0.3,
+       0.08
+      ],
+      "yaw_deg": 90.0
+     },
+     "clipper_small": {
+      "xy": [
+       0.36,
+       0.16
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 48.31,
+      "q_deg": [
+       30.6,
+       -101.3,
+       -65.0,
+       6.5,
+       -11.8,
+       -0.0
+      ],
+      "target": [
+       0.4,
+       0.28,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 59.8,
+      "q_deg": [
+       -34.8,
+       -66.8,
+       -58.1,
+       23.1,
+       17.1,
+       0.0
+      ],
+      "target": [
+       0.28,
+       -0.26,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "roar_bottle": 2.14,
+     "tape_roll": 2.14,
+     "tape_roll_2": 2.14,
+     "clipper_large": 2.21,
+     "clipper_small": 2.11
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.53
+   },
+   "twin_l2_roar_tapes_p3": {
+    "note": "basket far-left, bottle near-right, tapes near-left and far-right, clippers centre and right",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.44,
+       -0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.22,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.2,
+       -0.1
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll_2": {
+      "xy": [
+       0.44,
+       0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "clipper_large": {
+      "xy": [
+       0.32,
+       0.08
+      ],
+      "yaw_deg": 45.0
+     },
+     "clipper_small": {
+      "xy": [
+       0.3,
+       0.34
+      ],
+      "yaw_deg": -30.0
+     }
+    },
+    "ik": {
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 41.14,
+      "q_deg": [
+       39.4,
+       -74.1,
+       -45.2,
+       24.2,
+       -19.5,
+       -0.0
+      ],
+      "target": [
+       0.22,
+       0.26,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.64,
+      "q_deg": [
+       -17.1,
+       -83.5,
+       -67.3,
+       11.4,
+       7.5,
+       0.0
+      ],
+      "target": [
+       0.44,
+       -0.16,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "roar_bottle": 2.14,
+     "tape_roll": 2.14,
+     "tape_roll_2": 2.14,
+     "clipper_large": 2.21,
+     "clipper_small": 2.11
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.53
+   },
+   "twin_l2_roar_tapes_p4": {
+    "note": "basket right turned 90, bottle far-left with a tape beside it, other tape near centre, clippers near-left and far centre",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.33,
+       0.32
+      ],
+      "yaw_deg": 90.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.46,
+       -0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.42,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll_2": {
+      "xy": [
+       0.2,
+       -0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "clipper_large": {
+      "xy": [
+       0.2,
+       -0.24
+      ],
+      "yaw_deg": 45.0
+     },
+     "clipper_small": {
+      "xy": [
+       0.46,
+       0.06
+      ],
+      "yaw_deg": -30.0
+     }
+    },
+    "ik": {
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 46.74,
+      "q_deg": [
+       -14.7,
+       -99.7,
+       -64.2,
+       8.0,
+       5.9,
+       0.0
+      ],
+      "target": [
+       0.46,
+       -0.14,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 63.01,
+      "q_deg": [
+       37.7,
+       -82.5,
+       -66.4,
+       12.1,
+       -16.2,
+       -0.0
+      ],
+      "target": [
+       0.33,
+       0.32,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "roar_bottle": 2.14,
+     "tape_roll": 2.14,
+     "tape_roll_2": 2.14,
+     "clipper_large": 2.21,
+     "clipper_small": 2.11
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.53
+   }
+  }
+ },
+ "twin_l2_tape_bottles": {
+  "level": 2,
+  "letter": "d",
+  "tier": "twin_l2",
+  "bodies": [
+   "basket",
+   "tape_roll",
+   "pill_bottle",
+   "roar_bottle"
+  ],
+  "targets": [
+   "tape_roll"
+  ],
+  "anchor_basket": false,
+  "placements": {
+   "twin_l2_tape_bottles_p1": {
+    "note": "v1 base: basket near-left, tape far-right, bottles right",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.28,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.44,
+       0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.4,
+       0.34
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       20.0,
+       -140.1,
+       -124.0,
+       73.8,
+       0.0,
+       16.8
+      ],
+      "target": [
+       0.44,
+       0.16,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 59.8,
+      "q_deg": [
+       -34.8,
+       -66.8,
+       -58.1,
+       23.1,
+       17.1,
+       0.0
+      ],
+      "target": [
+       0.28,
+       -0.26,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "roar_bottle": 2.14
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   },
+   "twin_l2_tape_bottles_p2": {
+    "note": "basket far-left, tape near-left with the pill adjacent, orange bottle near-right",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.44,
+       -0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.2,
+       -0.2
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.2,
+       -0.08
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.22,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -45.0,
+       -99.0,
+       -60.8,
+       51.9,
+       -0.0,
+       -39.0
+      ],
+      "target": [
+       0.2,
+       -0.2,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.64,
+      "q_deg": [
+       -17.1,
+       -83.5,
+       -67.3,
+       11.4,
+       7.5,
+       0.0
+      ],
+      "target": [
+       0.44,
+       -0.16,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "roar_bottle": 2.14
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   },
+   "twin_l2_tape_bottles_p3": {
+    "note": "basket near-right, tape far-left between the two bottles",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.26,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.46,
+       -0.12
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.48,
+       0.08
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.36,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -14.6,
+       -142.5,
+       -128.3,
+       75.8,
+       0.0,
+       -12.2
+      ],
+      "target": [
+       0.46,
+       -0.12,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 60.16,
+      "q_deg": [
+       38.2,
+       -66.9,
+       -57.9,
+       22.7,
+       -18.8,
+       -0.0
+      ],
+      "target": [
+       0.26,
+       0.28,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "roar_bottle": 2.14
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   },
+   "twin_l2_tape_bottles_p4": {
+    "note": "basket left turned 90, tape near, orange bottle between tape and basket, pill far-right",
+    "kit_closed": false,
+    "poses": {
+     "basket": {
+      "xy": [
+       0.4,
+       -0.22
+      ],
+      "yaw_deg": 90.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.2,
+       0.08
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.32,
+       0.04
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.42,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       21.8,
+       -84.5,
+       -45.9,
+       51.4,
+       -0.0,
+       19.5
+      ],
+      "target": [
+       0.2,
+       0.08,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 62.16,
+      "q_deg": [
+       -24.5,
+       -81.5,
+       -66.1,
+       13.0,
+       10.8,
+       0.0
+      ],
+      "target": [
+       0.4,
+       -0.22,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "basket": 2.02,
+     "tape_roll": 2.14,
+     "roar_bottle": 2.14,
+     "pill_bottle": 2.21
+    },
+    "settle_all_max_mm": 2.21,
+    "worst_contact_dist_mm": -1.32
+   }
+  }
+ },
+ "twin_l3_tape": {
+  "level": 3,
+  "letter": "a",
+  "tier": "twin_l3",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bit_3",
+   "bit_4",
+   "bit_5",
+   "bit_6",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "tape_roll"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l3_tape_p1": {
+    "note": "A twin desk, tape in the near-right pocket",
+    "kit_closed": false,
+    "poses": {
+     "tape_roll": {
+      "xy": [
+       0.19,
+       0.12
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       32.3,
+       -86.6,
+       -47.8,
+       51.2,
+       0.0,
+       28.7
+      ],
+      "target": [
+       0.19,
+       0.12,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "tape_roll": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l3_tape_p2": {
+    "note": "B kit closed, tape near-left, cup moved right of the kit",
+    "kit_closed": true,
+    "poses": {
+     "tape_roll": {
+      "xy": [
+       0.22,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.42,
+       0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -49.8,
+       -110.6,
+       -75.9,
+       55.3,
+       -0.0,
+       -42.6
+      ],
+      "target": [
+       0.22,
+       -0.26,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "tape_roll": 2.14,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l3_tape_p3": {
+    "note": "C kit mirrored, cup to the far-right pocket, tape near-right",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 65.6
+     },
+     "paper_cup": {
+      "xy": [
+       0.33,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.2,
+       0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       38.6,
+       -93.4,
+       -54.6,
+       51.2,
+       -0.0,
+       34.0
+      ],
+      "target": [
+       0.2,
+       0.16,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "paper_cup": 2.14,
+     "tape_roll": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l3_tape_p4": {
+    "note": "D kit closed and moved right, tape far-left, cup centre",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "tape_roll": {
+      "xy": [
+       0.44,
+       -0.1
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.3,
+       -0.08
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -12.8,
+       -135.2,
+       -115.1,
+       69.9,
+       0.0,
+       -10.7
+      ],
+      "target": [
+       0.44,
+       -0.1,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "tape_roll": 2.14,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   }
+  }
+ },
+ "twin_l3_pill": {
+  "level": 3,
+  "letter": "b",
+  "tier": "twin_l3",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bit_3",
+   "bit_4",
+   "bit_5",
+   "bit_6",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "pill_bottle"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l3_pill_p1": {
+    "note": "A twin desk, pill in the near-right pocket",
+    "kit_closed": false,
+    "poses": {
+     "pill_bottle": {
+      "xy": [
+       0.21,
+       0.15
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       35.5,
+       -88.6,
+       -69.3,
+       70.6,
+       0.0,
+       31.3
+      ],
+      "target": [
+       0.21,
+       0.15,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "pill_bottle": 2.21,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l3_pill_p2": {
+    "note": "B kit closed, pill left, cup moved right of the kit",
+    "kit_closed": true,
+    "poses": {
+     "pill_bottle": {
+      "xy": [
+       0.3,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.36,
+       0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -40.9,
+       -119.7,
+       -108.4,
+       78.7,
+       -0.0,
+       -35.5
+      ],
+      "target": [
+       0.3,
+       -0.26,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "pill_bottle": 2.21,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l3_pill_p3": {
+    "note": "C kit mirrored, pill in the far-right pocket, cup stays",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 65.6
+     },
+     "pill_bottle": {
+      "xy": [
+       0.33,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       40.3,
+       -129.7,
+       -124.4,
+       84.7,
+       0.0,
+       34.9
+      ],
+      "target": [
+       0.33,
+       0.28,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "pill_bottle": 2.21,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l3_pill_p4": {
+    "note": "D kit closed and moved right, pill far-left, cup near centre",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "pill_bottle": {
+      "xy": [
+       0.42,
+       -0.12
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.22,
+       -0.04
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -15.9,
+       -131.0,
+       -126.6,
+       85.6,
+       -0.0,
+       -13.4
+      ],
+      "target": [
+       0.42,
+       -0.12,
+       0.113
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "pill_bottle": 2.21,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   }
+  }
+ },
+ "twin_l3_fold_kit": {
+  "level": 3,
+  "letter": "c",
+  "tier": "twin_l3",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bit_3",
+   "bit_4",
+   "bit_5",
+   "bit_6",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "bits_kit"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l3_fold_kit_p1": {
+    "note": "A twin desk, kit at its twin pose",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 245.6
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       20.0,
+       -133.9,
+       -107.8,
+       63.8,
+       0.0,
+       16.9
+      ],
+      "target": [
+       0.4156,
+       0.1513,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -49.0,
+       -113.9,
+       -75.1,
+       51.2,
+       -0.0,
+       -42.0
+      ],
+      "target": [
+       0.228,
+       -0.2622,
+       0.01
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l3_fold_kit_p2": {
+    "note": "kit mirrored: bits flap on the other side",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 65.6
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -48.8,
+       -113.8,
+       -75.0,
+       51.2,
+       -0.0,
+       -41.9
+      ],
+      "target": [
+       0.2284,
+       -0.2613,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       20.1,
+       -134.1,
+       -108.1,
+       63.9,
+       0.0,
+       17.0
+      ],
+      "target": [
+       0.416,
+       0.1522,
+       0.01
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l3_fold_kit_p3": {
+    "note": "kit shifted right, cup moved to the near-left strip",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.32,
+       0.08
+      ],
+      "yaw_deg": 245.6
+     },
+     "paper_cup": {
+      "xy": [
+       0.22,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       34.7,
+       -154.1,
+       -145.3,
+       81.2,
+       0.0,
+       29.6
+      ],
+      "target": [
+       0.4136,
+       0.2863,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -29.4,
+       -96.6,
+       -52.3,
+       45.7,
+       -0.0,
+       -25.9
+      ],
+      "target": [
+       0.226,
+       -0.1272,
+       0.01
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l3_fold_kit_p4": {
+    "note": "kit turned 60 deg, cup moved to the near-left strip",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.3,
+       0.0
+      ],
+      "yaw_deg": 305.6
+     },
+     "paper_cup": {
+      "xy": [
+       0.22,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bits_kit_left": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       47.6,
+       -94.6,
+       -50.0,
+       45.5,
+       0.0,
+       41.3
+      ],
+      "target": [
+       0.1681,
+       0.1842,
+       0.01
+      ]
+     },
+     "bits_kit_right": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -23.2,
+       -141.5,
+       -121.3,
+       69.8,
+       -0.0,
+       -19.5
+      ],
+      "target": [
+       0.4324,
+       -0.185,
+       0.01
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   }
+  }
+ },
+ "twin_l3_close_lid": {
+  "level": 3,
+  "letter": "d",
+  "tier": "twin_l3",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bit_3",
+   "bit_4",
+   "bit_5",
+   "bit_6",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "headphone_case"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l3_close_lid_p1": {
+    "note": "v1 base: kit closed at its twin pose, case far-left, lid toward the robot",
+    "kit_closed": true,
+    "poses": {
+     "headphone_case": {
+      "xy": [
+       0.46,
+       -0.4
+      ],
+      "yaw_deg": 210.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "headphone_lid_wall_xp": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -32.7,
+       -133.4,
+       -112.3,
+       68.9,
+       0.0,
+       -28.1
+      ],
+      "target": [
+       0.374,
+       -0.2403,
+       0.0336
+      ]
+     },
+     "headphone_lid_wall_xn": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -54.5,
+       -144.4,
+       -132.2,
+       77.8,
+       -0.0,
+       -48.0
+      ],
+      "target": [
+       0.2788,
+       -0.3916,
+       0.0336
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "headphone_case": 2.06,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l3_close_lid_p2": {
+    "note": "kit closed and moved right, case near the centre-left",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "headphone_case": {
+      "xy": [
+       0.34,
+       -0.2
+      ],
+      "yaw_deg": 210.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "headphone_lid_wall_xp": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -9.0,
+       -93.5,
+       -55.1,
+       51.6,
+       0.0,
+       -8.0
+      ],
+      "target": [
+       0.254,
+       -0.0403,
+       0.0336
+      ]
+     },
+     "headphone_lid_wall_xn": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -50.3,
+       -91.7,
+       -53.2,
+       51.5,
+       -0.0,
+       -43.5
+      ],
+      "target": [
+       0.1588,
+       -0.1916,
+       0.0336
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "headphone_case": 2.06,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l3_close_lid_p3": {
+    "note": "kit closed and moved right, case mid-left turned so the lid opens to the robot's left",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "headphone_case": {
+      "xy": [
+       0.42,
+       -0.16
+      ],
+      "yaw_deg": 255.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "headphone_lid_wall_xp": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -23.6,
+       -95.9,
+       -57.7,
+       51.8,
+       0.0,
+       -20.8
+      ],
+      "target": [
+       0.2463,
+       -0.1078,
+       0.0336
+      ]
+     },
+     "headphone_lid_wall_xn": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -44.6,
+       -123.2,
+       -95.3,
+       62.1,
+       -0.0,
+       -38.7
+      ],
+      "target": [
+       0.286,
+       -0.2822,
+       0.0336
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "headphone_case": 2.06,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l3_close_lid_p4": {
+    "note": "kit closed at its twin pose, case at the far end of the feasible band",
+    "kit_closed": true,
+    "poses": {
+     "headphone_case": {
+      "xy": [
+       0.5,
+       -0.34
+      ],
+      "yaw_deg": 225.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "headphone_lid_wall_xp": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -29.0,
+       -129.5,
+       -105.7,
+       66.2,
+       0.0,
+       -24.8
+      ],
+      "target": [
+       0.3756,
+       -0.208,
+       0.0336
+      ]
+     },
+     "headphone_lid_wall_xn": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -49.6,
+       -152.3,
+       -147.3,
+       84.9,
+       -0.0,
+       -43.7
+      ],
+      "target": [
+       0.3228,
+       -0.3788,
+       0.0336
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "headphone_case": 2.06,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   }
+  }
+ },
+ "twin_l4_tape_cup": {
+  "level": 4,
+  "letter": "a",
+  "tier": "twin_l4",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bit_3",
+   "bit_4",
+   "bit_5",
+   "bit_6",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "tape_roll",
+   "paper_cup"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l4_tape_cup_p1": {
+    "note": "A twin desk, tape beside the cup in the near-right pocket",
+    "kit_closed": false,
+    "poses": {
+     "tape_roll": {
+      "xy": [
+       0.19,
+       0.12
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.2,
+       0.25
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       32.3,
+       -86.6,
+       -47.8,
+       51.2,
+       0.0,
+       28.7
+      ],
+      "target": [
+       0.19,
+       0.12,
+       0.032
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       51.3,
+       -102.1,
+       -83.9,
+       71.9,
+       0.0,
+       43.7
+      ],
+      "target": [
+       0.2,
+       0.25,
+       0.1124
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "tape_roll": 2.14,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_tape_cup_p2": {
+    "note": "B kit closed, tape near-left, cup right of the kit",
+    "kit_closed": true,
+    "poses": {
+     "tape_roll": {
+      "xy": [
+       0.22,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.42,
+       0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -49.8,
+       -110.6,
+       -75.9,
+       55.3,
+       -0.0,
+       -42.6
+      ],
+      "target": [
+       0.22,
+       -0.26,
+       0.032
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       18.4,
+       -133.0,
+       -129.9,
+       86.9,
+       -0.0,
+       15.5
+      ],
+      "target": [
+       0.42,
+       0.14,
+       0.1124
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "tape_roll": 2.14,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l4_tape_cup_p3": {
+    "note": "C kit mirrored, cup in the far-right pocket, tape near-right",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 65.6
+     },
+     "paper_cup": {
+      "xy": [
+       0.33,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.2,
+       0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       35.0,
+       -90.9,
+       -51.9,
+       51.1,
+       -0.0,
+       30.9
+      ],
+      "target": [
+       0.2,
+       0.14,
+       0.032
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       40.3,
+       -129.7,
+       -124.3,
+       84.6,
+       0.0,
+       34.9
+      ],
+      "target": [
+       0.33,
+       0.28,
+       0.1124
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "paper_cup": 2.14,
+     "tape_roll": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_tape_cup_p4": {
+    "note": "D kit closed and moved right, tape far-left, cup near centre",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "tape_roll": {
+      "xy": [
+       0.44,
+       -0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.22,
+       -0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -17.6,
+       -138.2,
+       -120.4,
+       72.2,
+       0.0,
+       -14.8
+      ],
+      "target": [
+       0.44,
+       -0.14,
+       0.032
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -5.2,
+       -80.5,
+       -61.8,
+       71.3,
+       -0.0,
+       -4.6
+      ],
+      "target": [
+       0.22,
+       -0.02,
+       0.1124
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "tape_roll": 2.14,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   }
+  }
+ },
+ "twin_l4_two_bits": {
+  "level": 4,
+  "letter": "b",
+  "tier": "twin_l4",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "bit_1",
+   "bit_2"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l4_two_bits_p1": {
+    "note": "A twin desk, one bit between kit and basket, one at the far end among the clippers",
+    "kit_closed": false,
+    "poses": {
+     "bit_1": {
+      "xy": [
+       0.5,
+       0.24
+      ],
+      "yaw_deg": 30.0
+     },
+     "bit_2": {
+      "xy": [
+       0.64,
+       0.02
+      ],
+      "yaw_deg": -45.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 15,
+      "q_deg": [
+       25.6,
+       -147.2,
+       -129.3,
+       57.2,
+       -0.0,
+       17.2
+      ],
+      "target": [
+       0.5,
+       0.24,
+       0.007
+      ]
+     },
+     "bit_2": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       1.8,
+       -157.1,
+       -142.7,
+       45.6,
+       -0.0,
+       1.0
+      ],
+      "target": [
+       0.64,
+       0.02,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bit_1": 1.03,
+     "bit_2": 1.03,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_two_bits_p2": {
+    "note": "B kit closed, bits far-left and far-right",
+    "kit_closed": true,
+    "poses": {
+     "bit_1": {
+      "xy": [
+       0.44,
+       -0.24
+      ],
+      "yaw_deg": 60.0
+     },
+     "bit_2": {
+      "xy": [
+       0.5,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -28.6,
+       -153.0,
+       -142.5,
+       79.5,
+       -0.0,
+       -24.1
+      ],
+      "target": [
+       0.44,
+       -0.24,
+       0.007
+      ]
+     },
+     "bit_2": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 15,
+      "q_deg": [
+       27.5,
+       -150.5,
+       -135.8,
+       60.2,
+       -0.0,
+       18.4
+      ],
+      "target": [
+       0.5,
+       0.26,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bit_1": 1.03,
+     "bit_2": 1.03,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l4_two_bits_p3": {
+    "note": "C kit mirrored, cup far-right pocket, one bit at the far end, one wide right beside the robot",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 65.6
+     },
+     "paper_cup": {
+      "xy": [
+       0.33,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "bit_1": {
+      "xy": [
+       0.64,
+       0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "bit_2": {
+      "xy": [
+       0.3,
+       0.42
+      ],
+      "yaw_deg": 90.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 30,
+      "q_deg": [
+       1.8,
+       -157.1,
+       -142.7,
+       45.6,
+       -0.0,
+       1.0
+      ],
+      "target": [
+       0.64,
+       0.02,
+       0.007
+      ]
+     },
+     "bit_2": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "tilt_deg": 15,
+      "q_deg": [
+       54.5,
+       -136.1,
+       -109.0,
+       47.8,
+       -0.0,
+       -0.0
+      ],
+      "target": [
+       0.3,
+       0.42,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "paper_cup": 2.14,
+     "bit_1": 1.03,
+     "bit_2": 1.03,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_two_bits_p4": {
+    "note": "D kit closed and moved right, bits far-left and wide left beside the robot, cup centre-left",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "bit_1": {
+      "xy": [
+       0.44,
+       -0.22
+      ],
+      "yaw_deg": 45.0
+     },
+     "bit_2": {
+      "xy": [
+       0.24,
+       -0.44
+      ],
+      "yaw_deg": -30.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.3,
+       -0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "bit_1": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -26.6,
+       -148.9,
+       -134.5,
+       75.6,
+       -0.0,
+       -22.4
+      ],
+      "target": [
+       0.44,
+       -0.22,
+       0.007
+      ]
+     },
+     "bit_2": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -61.4,
+       -153.0,
+       -142.5,
+       79.5,
+       -0.0,
+       -54.2
+      ],
+      "target": [
+       0.24,
+       -0.44,
+       0.007
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "bit_1": 1.03,
+     "bit_2": 1.03,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   }
+  }
+ },
+ "twin_l4_pill_roar": {
+  "level": 4,
+  "letter": "c",
+  "tier": "twin_l4",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bit_3",
+   "bit_4",
+   "bit_5",
+   "bit_6",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "pill_bottle",
+   "roar_bottle"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l4_pill_roar_p1": {
+    "note": "A twin desk, pill near-right, orange bottle far-right pocket",
+    "kit_closed": false,
+    "poses": {
+     "pill_bottle": {
+      "xy": [
+       0.2,
+       0.12
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.37,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       31.0,
+       -83.2,
+       -64.3,
+       71.1,
+       -0.0,
+       27.5
+      ],
+      "target": [
+       0.2,
+       0.12,
+       0.113
+      ]
+     },
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 46.51,
+      "q_deg": [
+       32.1,
+       -97.2,
+       -61.7,
+       9.4,
+       -12.8,
+       -0.0
+      ],
+      "target": [
+       0.37,
+       0.28,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "pill_bottle": 2.21,
+     "roar_bottle": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_pill_roar_p2": {
+    "note": "B kit closed, orange bottle near-left, pill right of the kit",
+    "kit_closed": true,
+    "poses": {
+     "roar_bottle": {
+      "xy": [
+       0.22,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.42,
+       0.12
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       15.9,
+       -131.0,
+       -126.6,
+       85.6,
+       -0.0,
+       13.4
+      ],
+      "target": [
+       0.42,
+       0.12,
+       0.113
+      ]
+     },
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 41.14,
+      "q_deg": [
+       -39.4,
+       -74.1,
+       -45.2,
+       24.2,
+       19.5,
+       0.0
+      ],
+      "target": [
+       0.22,
+       -0.26,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "roar_bottle": 2.14,
+     "pill_bottle": 2.21,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l4_pill_roar_p3": {
+    "note": "C kit mirrored, both bottles in the near-right pocket, cup far-right",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 65.6
+     },
+     "paper_cup": {
+      "xy": [
+       0.33,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.2,
+       0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       49.8,
+       -106.6,
+       -89.7,
+       73.2,
+       0.0,
+       42.6
+      ],
+      "target": [
+       0.22,
+       0.26,
+       0.113
+      ]
+     },
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 34.79,
+      "q_deg": [
+       24.0,
+       -52.2,
+       -37.7,
+       43.6,
+       -14.7,
+       -0.0
+      ],
+      "target": [
+       0.2,
+       0.14,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "paper_cup": 2.14,
+     "roar_bottle": 2.14,
+     "pill_bottle": 2.21,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_pill_roar_p4": {
+    "note": "D kit closed and moved right, pill far-left, orange bottle near centre, cup left",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "pill_bottle": {
+      "xy": [
+       0.42,
+       -0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "roar_bottle": {
+      "xy": [
+       0.24,
+       -0.06
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.3,
+       -0.24
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -18.4,
+       -133.0,
+       -130.1,
+       87.1,
+       -0.0,
+       -15.5
+      ],
+      "target": [
+       0.42,
+       -0.14,
+       0.113
+      ]
+     },
+     "roar_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 32.13,
+      "q_deg": [
+       -9.7,
+       -53.7,
+       -39.4,
+       44.1,
+       5.8,
+       0.0
+      ],
+      "target": [
+       0.24,
+       -0.06,
+       0.122
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "pill_bottle": 2.21,
+     "roar_bottle": 2.14,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   }
+  }
+ },
+ "twin_l4_three": {
+  "level": 4,
+  "letter": "d",
+  "tier": "twin_l4",
+  "bodies": [
+   "bits_kit",
+   "pill_bottle",
+   "roar_bottle",
+   "navy_bottle",
+   "bit_1",
+   "bit_2",
+   "bit_3",
+   "bit_4",
+   "bit_5",
+   "bit_6",
+   "bits_box",
+   "bit_holder",
+   "basket_bottle",
+   "basket_can",
+   "basket_card",
+   "basket_card_white",
+   "clipper_case",
+   "clipper_large",
+   "clipper_small",
+   "basket",
+   "headphone_case",
+   "tape_roll",
+   "paper_cup",
+   "tape_roll_2"
+  ],
+  "targets": [
+   "pill_bottle",
+   "paper_cup",
+   "tape_roll"
+  ],
+  "anchor_basket": true,
+  "placements": {
+   "twin_l4_three_p1": {
+    "note": "A twin desk, tape and cup near-right, pill far-right pocket",
+    "kit_closed": false,
+    "poses": {
+     "tape_roll": {
+      "xy": [
+       0.19,
+       0.13
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.33,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.21,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       40.3,
+       -129.7,
+       -124.4,
+       84.7,
+       0.0,
+       34.9
+      ],
+      "target": [
+       0.33,
+       0.28,
+       0.113
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       51.1,
+       -105.2,
+       -87.8,
+       72.6,
+       0.0,
+       43.5
+      ],
+      "target": [
+       0.21,
+       0.26,
+       0.1124
+      ]
+     },
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       34.4,
+       -87.8,
+       -48.9,
+       51.1,
+       -0.0,
+       30.5
+      ],
+      "target": [
+       0.19,
+       0.13,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_three_p2": {
+    "note": "B kit closed, tape and pill on the near-left strip, cup right of the kit",
+    "kit_closed": true,
+    "poses": {
+     "tape_roll": {
+      "xy": [
+       0.2,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.3,
+       -0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.42,
+       0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -40.9,
+       -119.7,
+       -108.4,
+       78.7,
+       -0.0,
+       -35.5
+      ],
+      "target": [
+       0.3,
+       -0.26,
+       0.113
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       18.4,
+       -133.0,
+       -129.9,
+       86.9,
+       -0.0,
+       15.5
+      ],
+      "target": [
+       0.42,
+       0.14,
+       0.1124
+      ]
+     },
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -52.4,
+       -108.1,
+       -72.4,
+       54.4,
+       -0.0,
+       -44.4
+      ],
+      "target": [
+       0.2,
+       -0.26,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35,
+     "bits_kit": 3.16
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   },
+   "twin_l4_three_p3": {
+    "note": "C kit mirrored, cup far-right pocket, tape and pill near-right",
+    "kit_closed": false,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.322,
+       -0.055
+      ],
+      "yaw_deg": 65.6
+     },
+     "paper_cup": {
+      "xy": [
+       0.33,
+       0.28
+      ],
+      "yaw_deg": 0.0
+     },
+     "tape_roll": {
+      "xy": [
+       0.2,
+       0.14
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       0.26
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       49.8,
+       -106.6,
+       -89.7,
+       73.2,
+       0.0,
+       42.6
+      ],
+      "target": [
+       0.22,
+       0.26,
+       0.113
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       40.3,
+       -129.7,
+       -124.3,
+       84.6,
+       0.0,
+       34.9
+      ],
+      "target": [
+       0.33,
+       0.28,
+       0.1124
+      ]
+     },
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       35.0,
+       -90.9,
+       -51.9,
+       51.1,
+       -0.0,
+       30.9
+      ],
+      "target": [
+       0.2,
+       0.14,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": 0.0,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.15,
+     "paper_cup": 2.14,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -3.0
+   },
+   "twin_l4_three_p4": {
+    "note": "D kit closed and moved right, tape far-left, pill near centre, cup left",
+    "kit_closed": true,
+    "poses": {
+     "bits_kit": {
+      "xy": [
+       0.38,
+       0.14
+      ],
+      "yaw_deg": 155.6
+     },
+     "tape_roll": {
+      "xy": [
+       0.44,
+       -0.16
+      ],
+      "yaw_deg": 0.0
+     },
+     "pill_bottle": {
+      "xy": [
+       0.22,
+       -0.02
+      ],
+      "yaw_deg": 0.0
+     },
+     "paper_cup": {
+      "xy": [
+       0.32,
+       -0.24
+      ],
+      "yaw_deg": 0.0
+     },
+     "basket": {
+      "xy": [
+       0.4962,
+       0.48
+      ],
+      "yaw_deg": 0.9
+     }
+    },
+    "ik": {
+     "pill_bottle": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -5.2,
+       -80.5,
+       -61.9,
+       71.5,
+       -0.0,
+       -4.6
+      ],
+      "target": [
+       0.22,
+       -0.02,
+       0.113
+      ]
+     },
+     "paper_cup": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -36.9,
+       -120.5,
+       -109.5,
+       78.9,
+       0.0,
+       -31.9
+      ],
+      "target": [
+       0.32,
+       -0.24,
+       0.1124
+      ]
+     },
+     "tape_roll": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 0.0,
+      "q_deg": [
+       -20.0,
+       -140.1,
+       -124.0,
+       73.8,
+       -0.0,
+       -16.8
+      ],
+      "target": [
+       0.44,
+       -0.16,
+       0.032
+      ]
+     },
+     "basket": {
+      "ok": true,
+      "pos_err_mm": 0.0,
+      "angle_err_deg": 84.21,
+      "q_deg": [
+       41.5,
+       -129.7,
+       -105.5,
+       -18.3,
+       -9.6,
+       0.0
+      ],
+      "target": [
+       0.4962,
+       0.48,
+       0.264
+      ]
+     }
+    },
+    "start_contact_mm": -0.1,
+    "settle_watched_moved_mm": {
+     "bits_kit": 3.16,
+     "tape_roll": 2.14,
+     "pill_bottle": 2.21,
+     "paper_cup": 2.14,
+     "basket": 2.03,
+     "basket_bottle": 2.6,
+     "basket_can": 2.25,
+     "basket_card": 2.27,
+     "basket_card_white": 3.35
+    },
+    "settle_all_max_mm": 3.35,
+    "worst_contact_dist_mm": -1.84
+   }
+  }
+ }
+}

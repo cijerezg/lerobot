@@ -1,0 +1,17 @@
+{
+  "replay_frames": [
+    260,
+    709
+  ],
+  "fps": 30,
+  "max_qpos_difference": 0,
+  "rgb_observation_ms_mean": [
+    17.618878559998546,
+    17.443617211117978
+  ],
+  "rgb_observation_ms_p95": [
+    19.15903354998818,
+    19.35741824993329
+  ],
+  "note": "Two native 640x480 RGB observations, including top composite; excludes depth and policy."
+}

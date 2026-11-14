@@ -1,0 +1,375 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="scene_nail">
+  <compiler angle="radian" assetdir="/home/user/Documents/Research/RL/LeRobot/lerobot/src/lerobot/robots/rebot_b601_sim/scenes" autolimits="true" />
+  <include file="/home/user/Documents/Research/RL/LeRobot/lerobot/src/lerobot/robots/rebot_b601_sim/scenes/rebot_b601_dm_photo.xml" />
+  <visual>
+    <headlight diffuse=".15 .15 .15" ambient=".37 .37 .37" specular=".10 .10 .10" />
+    <rgba haze="0.4548 0.3618 0.2712 1.0000" />
+    <global offwidth="1280" offheight="960" />
+    <quality shadowsize="4096" />
+  </visual>
+  <asset>
+    <texture name="bits_box_photo_tex" type="2d" file="nail_ep5/materials/bits_box_photo.png" />
+    <material name="bits_box_photo_mat" texture="bits_box_photo_tex" specular="0" shininess="0" />
+    <mesh name="bits_box_photo" file="nail_ep5/materials/bits_box_photo.obj" />
+    <texture name="blue_pouch_photo_tex" type="2d" file="nail_ep5/materials/blue_pouch_photo.png" />
+    <material name="blue_pouch_photo_mat" texture="blue_pouch_photo_tex" specular="0" shininess="0" />
+    <mesh name="blue_pouch_photo" file="nail_ep5/materials/blue_pouch_photo.obj" />
+    <texture name="bottle_white_lying_photo_tex" type="2d" file="nail_ep5/materials/bottle_white_lying_photo.png" />
+    <material name="bottle_white_lying_photo_mat" texture="bottle_white_lying_photo_tex" specular="0" shininess="0" />
+    <mesh name="bottle_white_lying_photo" file="nail_ep5/materials/bottle_white_lying_photo.obj" />
+    <texture name="bottle_yellow_cap_standing_photo_tex" type="2d" file="nail_ep5/materials/bottle_yellow_cap_standing_photo.png" />
+    <material name="bottle_yellow_cap_standing_photo_mat" texture="bottle_yellow_cap_standing_photo_tex" specular="0" shininess="0" />
+    <mesh name="bottle_yellow_cap_standing_photo" file="nail_ep5/materials/bottle_yellow_cap_standing_photo.obj" />
+    <texture name="clipper_case_photo_tex" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_surface.png" />
+    <material name="clipper_case_photo_mat" texture="clipper_case_photo_tex" specular="0" shininess="0" />
+    <mesh name="clipper_case_photo" file="nail_ep5/materials/clipper_case_photo.obj" />
+    <texture name="clipper_case_metal_photo_tex" type="2d" file="nail_ep5/materials/clipper_case_metal_photo.png" />
+    <material name="clipper_case_metal_photo_mat" texture="clipper_case_metal_photo_tex" specular=".7" shininess=".55" />
+    <mesh name="clipper_case_metal_photo" file="nail_ep5/materials/clipper_case_metal_photo.obj" />
+    <texture name="clipper_large_photo_tex" type="2d" file="nail_ep5/materials/clipper_large_photo.png" />
+    <material name="clipper_large_photo_mat" texture="clipper_large_photo_tex" specular="0.3" shininess="0.4" />
+    <mesh name="clipper_large_photo" file="nail_ep5/materials/clipper_large_photo.obj" />
+    <texture name="clipper_small_photo_tex" type="2d" file="nail_ep5/materials/clipper_small_photo.png" />
+    <material name="clipper_small_photo_mat" texture="clipper_small_photo_tex" specular="0.3" shininess="0.4" />
+    <mesh name="clipper_small_photo" file="nail_ep5/materials/clipper_small_photo.obj" />
+    <texture name="headphone_case_closed_photo_tex" type="2d" file="nail_ep5/materials/headphone_case_closed_photo.png" />
+    <material name="headphone_case_closed_photo_mat" texture="headphone_case_closed_photo_tex" specular="0" shininess="0" />
+    <mesh name="headphone_case_closed_photo" file="nail_ep5/materials/headphone_case_closed_photo.obj" />
+    <texture name="mic_knob_photo_tex" type="2d" file="nail_ep5/materials/mic_knob_photo.png" />
+    <material name="mic_knob_photo_mat" texture="mic_knob_photo_tex" specular="0" shininess="0" />
+    <mesh name="mic_knob_photo" file="nail_ep5/materials/mic_knob_photo.obj" />
+    <texture name="spray_bottle_lying_photo_tex" type="2d" file="nail_ep5/materials/spray_bottle_lying_photo.png" />
+    <material name="spray_bottle_lying_photo_mat" texture="spray_bottle_lying_photo_tex" specular="0" shininess="0" />
+    <mesh name="spray_bottle_lying_photo" file="nail_ep5/materials/spray_bottle_lying_photo.obj" />
+    <texture name="table_top_tex" type="2d" file="table_top.png" />
+    <material name="table_top" texture="table_top_tex" texrepeat="1 1" texuniform="false" specular="0" shininess="0" />
+    <texture name="clipper_case_tex" type="2d" file="assets/clipper_case/clipper_case_visual_colors.png" />
+    <material name="clipper_case_mat" texture="clipper_case_tex" specular="0.2" shininess="0.2" />
+    <mesh name="clipper_case_textured" file="assets/clipper_case/clipper_case_visual_textured.obj" />
+    <texture type="skybox" builtin="flat" rgb1="0.5685 0.4643 0.3526" rgb2="0.5685 0.4643 0.3526" width="32" height="32" />
+    <material name="wood" rgba="0.5291 0.3455 0.2161 1.0000" specular="0.15" shininess="0.2" />
+    <material name="floor_mat" rgba="0.1213 0.1025 0.0542 1.0000" />
+    <mesh name="clipper_case_visual" file="assets/clipper_case/clipper_case_visual.obj" />
+    <mesh name="clipper_case_hull00" file="assets/clipper_case/clipper_case_hull00.obj" />
+    <mesh name="clipper_case_hull01" file="assets/clipper_case/clipper_case_hull01.obj" />
+    <mesh name="clipper_case_hull02" file="assets/clipper_case/clipper_case_hull02.obj" />
+    <mesh name="clipper_case_hull03" file="assets/clipper_case/clipper_case_hull03.obj" />
+    <mesh name="clipper_case_hull04" file="assets/clipper_case/clipper_case_hull04.obj" />
+    <mesh name="clipper_case_hull05" file="assets/clipper_case/clipper_case_hull05.obj" />
+    <mesh name="clipper_case_hull06" file="assets/clipper_case/clipper_case_hull06.obj" />
+    <mesh name="clipper_case_hull07" file="assets/clipper_case/clipper_case_hull07.obj" />
+    <mesh name="clipper_case_hull08" file="assets/clipper_case/clipper_case_hull08.obj" />
+    <mesh name="clipper_case_hull09" file="assets/clipper_case/clipper_case_hull09.obj" />
+    <mesh name="clipper_case_hull10" file="assets/clipper_case/clipper_case_hull10.obj" />
+    <mesh name="clipper_case_hull11" file="assets/clipper_case/clipper_case_hull11.obj" />
+    <mesh name="clipper_case_hull12" file="assets/clipper_case/clipper_case_hull12.obj" />
+    <mesh name="clipper_case_hull13" file="assets/clipper_case/clipper_case_hull13.obj" />
+    <mesh name="clipper_case_hull14" file="assets/clipper_case/clipper_case_hull14.obj" />
+    <mesh name="clipper_case_hull15" file="assets/clipper_case/clipper_case_hull15.obj" />
+    <mesh name="clipper_case_hull16" file="assets/clipper_case/clipper_case_hull16.obj" />
+    <mesh name="clipper_case_hull17" file="assets/clipper_case/clipper_case_hull17.obj" />
+    <mesh name="clipper_case_hull18" file="assets/clipper_case/clipper_case_hull18.obj" />
+    <mesh name="clipper_case_hull19" file="assets/clipper_case/clipper_case_hull19.obj" />
+    <mesh name="clipper_case_hull20" file="assets/clipper_case/clipper_case_hull20.obj" />
+    <mesh name="clipper_case_hull21" file="assets/clipper_case/clipper_case_hull21.obj" />
+    <mesh name="clipper_case_hull22" file="assets/clipper_case/clipper_case_hull22.obj" />
+    <mesh name="clipper_case_hull23" file="assets/clipper_case/clipper_case_hull23.obj" />
+    <mesh name="clipper_case_hull24" file="assets/clipper_case/clipper_case_hull24.obj" />
+    <mesh name="clipper_case_hull25" file="assets/clipper_case/clipper_case_hull25.obj" />
+    <mesh name="clipper_case_hull26" file="assets/clipper_case/clipper_case_hull26.obj" />
+    <mesh name="clipper_case_hull27" file="assets/clipper_case/clipper_case_hull27.obj" />
+    <mesh name="clipper_case_hull28" file="assets/clipper_case/clipper_case_hull28.obj" />
+    <mesh name="clipper_case_hull29" file="assets/clipper_case/clipper_case_hull29.obj" />
+    <mesh name="clipper_case_hull30" file="assets/clipper_case/clipper_case_hull30.obj" />
+    <mesh name="clipper_case_hull31" file="assets/clipper_case/clipper_case_hull31.obj" />
+    <texture name="clipper_large_detail" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_lever.png" />
+    <material name="clipper_large_detail" texture="clipper_large_detail" specular=".85" shininess=".65" />
+    <material name="clipper_large_steel" rgba=".56 .58 .60 1" specular=".95" shininess=".75" />
+    <material name="clipper_large_edge" rgba=".30 .32 .34 1" specular=".9" shininess=".7" />
+    <mesh name="clipper_large_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_lower.obj" />
+    <mesh name="clipper_large_spring" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_spring.obj" />
+    <mesh name="clipper_large_lever" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_lever.obj" />
+    <mesh name="clipper_large_fork_left" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_fork_left.obj" />
+    <mesh name="clipper_large_fork_right" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_fork_right.obj" />
+    <mesh name="clipper_large_jaw_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_jaw_lower.obj" />
+    <mesh name="clipper_large_jaw_upper" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_jaw_upper.obj" />
+    <mesh name="clipper_large_pivot" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_pivot.obj" />
+    <mesh name="clipper_large_pin" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_pin.obj" />
+    <texture name="clipper_small_detail" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_lever.png" />
+    <material name="clipper_small_detail" texture="clipper_small_detail" specular=".85" shininess=".65" />
+    <material name="clipper_small_steel" rgba=".56 .58 .60 1" specular=".95" shininess=".75" />
+    <material name="clipper_small_edge" rgba=".30 .32 .34 1" specular=".9" shininess=".7" />
+    <mesh name="clipper_small_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_lower.obj" />
+    <mesh name="clipper_small_spring" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_spring.obj" />
+    <mesh name="clipper_small_lever" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_lever.obj" />
+    <mesh name="clipper_small_fork_left" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_fork_left.obj" />
+    <mesh name="clipper_small_fork_right" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_fork_right.obj" />
+    <mesh name="clipper_small_jaw_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_jaw_lower.obj" />
+    <mesh name="clipper_small_jaw_upper" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_jaw_upper.obj" />
+    <mesh name="clipper_small_pivot" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_pivot.obj" />
+    <mesh name="clipper_small_pin" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_pin.obj" />
+    <material name="case_slot" rgba=".50 .49 .52 1" specular="0" shininess="0" />
+    <material name="case_foam" rgba=".76 .74 .78 1" specular="0" shininess="0" />
+    <material name="case_tin" rgba=".54 .56 .58 1" specular=".8" shininess=".65" />
+    <material name="case_dark" rgba=".13 .15 .17 1" specular=".35" shininess=".4" />
+    <mesh name="case_slot_floors" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_slot_floors.obj" inertia="shell" />
+    <mesh name="case_foam_top" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_foam_top.obj" inertia="shell" />
+    <mesh name="case_foam_sides" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_foam_sides.obj" inertia="shell" />
+    <mesh name="case_tin" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_tin.obj" inertia="shell" />
+    <mesh name="case_dark" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_dark.obj" inertia="shell" />
+    <mesh name="case_rolled_rim" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_rolled_rim.obj" inertia="shell" />
+    <texture name="detail_yellow_label" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/yellow_label.png" />
+    <texture name="detail_orange_label" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/orange_label.png" />
+    <texture name="detail_spray_label" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/spray_label.png" />
+    <texture name="detail_cup_print" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/cup_print.png" />
+    <texture name="detail_fabric" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/fabric.png" />
+    <texture name="detail_lining" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/lining.png" />
+    <texture name="detail_pouch" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/pouch.png" />
+    <material name="clutter_white" rgba=".80 .81 .79 1" specular=".23" shininess=".35" />
+    <material name="clutter_cap" rgba=".88 .89 .87 1" specular=".28" shininess=".45" />
+    <material name="clutter_black" rgba=".045 .050 .058 1" specular=".3" shininess=".4" />
+    <material name="clutter_rubber" rgba=".045 .048 .052 1" specular=".08" shininess=".12" />
+    <material name="clutter_gray" rgba=".15 .17 .19 1" specular=".35" shininess=".55" />
+    <material name="clutter_blue" rgba=".025 .105 .44 1" specular=".17" shininess=".25" />
+    <material name="clutter_zipper" rgba=".18 .20 .23 1" specular=".4" shininess=".5" />
+    <material name="clutter_silver" rgba=".56 .59 .62 1" specular=".85" shininess=".75" />
+    <material name="clutter_red" rgba=".68 .025 .035 1" specular=".2" shininess=".3" />
+    <material name="clutter_yellow" rgba=".83 .67 .08 1" specular=".2" shininess=".3" />
+    <material name="clutter_cyan" rgba=".02 .42 .62 1" specular=".2" shininess=".3" />
+    <material name="clutter_plug_gray" rgba=".30 .33 .33 1" specular=".15" shininess=".25" />
+    <material name="clutter_plastic" rgba=".59 .64 .65 .66" specular=".4" shininess=".55" />
+    <material name="clutter_lid" rgba=".70 .75 .77 .10" specular=".4" shininess=".6" />
+    <material name="clutter_tape" rgba=".57 .53 .38 1" specular=".55" shininess=".6" />
+    <material name="clutter_core" rgba=".72 .73 .68 1" specular=".04" shininess=".1" />
+    <material name="clutter_inner" rgba=".83 .83 .80 1" specular=".06" shininess=".1" />
+    <material name="clutter_yellow_label" texture="detail_yellow_label" specular=".15" shininess=".25" />
+    <material name="clutter_orange_label" texture="detail_orange_label" specular=".15" shininess=".25" />
+    <material name="clutter_spray_label" texture="detail_spray_label" specular=".15" shininess=".25" />
+    <material name="clutter_cup_print" texture="detail_cup_print" specular=".15" shininess=".25" />
+    <material name="clutter_fabric" texture="detail_fabric" specular=".08" shininess=".25" />
+    <material name="clutter_lining" texture="detail_lining" specular=".08" shininess=".25" />
+    <material name="clutter_pouch" texture="detail_pouch" specular=".08" shininess=".25" />
+    <mesh name="nail_ep5_bottle_yellow_cap_standing_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bottle_yellow_cap_standing_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_bottle_yellow_cap_standing_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bottle_yellow_cap_standing_01.obj" inertia="shell" />
+    <mesh name="nail_ep5_bottle_yellow_cap_standing_02" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bottle_yellow_cap_standing_02.obj" inertia="shell" />
+    <mesh name="nail_ep5_bottle_white_lying_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bottle_white_lying_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_bottle_white_lying_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bottle_white_lying_01.obj" inertia="shell" />
+    <mesh name="nail_ep5_bottle_white_lying_02" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bottle_white_lying_02.obj" inertia="shell" />
+    <mesh name="nail_ep5_spray_bottle_lying_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_spray_bottle_lying_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_spray_bottle_lying_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_spray_bottle_lying_01.obj" inertia="shell" />
+    <mesh name="nail_ep5_spray_bottle_lying_02" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_spray_bottle_lying_02.obj" inertia="shell" />
+    <mesh name="nail_ep5_spray_bottle_lying_03" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_spray_bottle_lying_03.obj" inertia="shell" />
+    <mesh name="nail_ep5_spray_bottle_lying_04" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_spray_bottle_lying_04.obj" inertia="shell" />
+    <mesh name="nail_ep5_spray_bottle_lying_05" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_spray_bottle_lying_05.obj" inertia="shell" />
+    <mesh name="nail_ep5_blue_pouch_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_blue_pouch_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_blue_pouch_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_blue_pouch_01.obj" inertia="shell" />
+    <mesh name="nail_ep5_blue_pouch_02" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_blue_pouch_02.obj" inertia="shell" />
+    <mesh name="nail_ep5_blue_pouch_03" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_blue_pouch_03.obj" inertia="shell" />
+    <mesh name="nail_ep5_blue_pouch_04" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_blue_pouch_04.obj" inertia="shell" />
+    <mesh name="nail_ep5_headphone_case_closed_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_headphone_case_closed_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_headphone_case_closed_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_headphone_case_closed_01.obj" inertia="shell" />
+    <mesh name="nail_ep5_headphone_case_closed_02" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_headphone_case_closed_02.obj" inertia="shell" />
+    <mesh name="nail_ep5_headphone_case_closed_03" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_headphone_case_closed_03.obj" inertia="shell" />
+    <mesh name="nail_ep5_headphone_case_closed_04" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_headphone_case_closed_04.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_01.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_02" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_02.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_03" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_03.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_04" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_04.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_05" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_05.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_06" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_06.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_07" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_07.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_08" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_08.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_09" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_09.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_10" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_10.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_11" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_11.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_12" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_12.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_13" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_13.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_14" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_14.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_15" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_15.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_16" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_16.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_17" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_17.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_18" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_18.obj" inertia="shell" />
+    <mesh name="nail_ep5_bits_box_19" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_bits_box_19.obj" inertia="shell" />
+    <mesh name="nail_ep5_mic_knob_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_mic_knob_00.obj" inertia="shell" />
+    <mesh name="nail_ep5_mic_knob_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_objects/assets/nail_ep5_mic_knob_01.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep5_00" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_headphone_hinge/assets/hinged_nail_ep5_00.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep5_01" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_headphone_hinge/assets/hinged_nail_ep5_01.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep5_02" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_headphone_hinge/assets/hinged_nail_ep5_02.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep5_03" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_headphone_hinge/assets/hinged_nail_ep5_03.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep5_04" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_headphone_hinge/assets/hinged_nail_ep5_04.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep5_05" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_headphone_hinge/assets/hinged_nail_ep5_05.obj" inertia="shell" />
+    <mesh name="hinged_nail_ep5_06" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_headphone_hinge/assets/hinged_nail_ep5_06.obj" inertia="shell" />
+  </asset>
+  <default>
+    <default class="clipper_case_col">
+      <geom type="mesh" group="3" condim="4" friction="0.8 0.005 0.0001" />
+    </default>
+    <default class="clipper_case_vis">
+      <geom type="mesh" group="2" contype="0" conaffinity="0" mass="0" rgba="0.4169 0.3317 0.2622 1.0000" />
+    </default>
+  </default>
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" pos="0 0 -0.72" material="floor_mat" />
+    <geom name="table" type="box" size="0.3708 0.5053 0.015" pos="0.3467 0.0244 -0.015" material="wood" contype="0" conaffinity="0" />
+    <geom name="table_top" type="plane" size="0.3708 0.5053 0.001" pos="0.3467 0.0244 0.0005" material="table_top" contype="0" conaffinity="0" />
+    <geom name="table_contact" type="plane" size="0.3708 0.5053 0.001" pos="0.3467 0.0244 0" group="3" />
+    <camera name="ext" pos="0.60900 -0.01395 0.84855" quat="0.716093 0.064734 0.080219 0.690351" fovy="60.730" />
+    <body name="bottle_yellow_cap_standing" pos="0.4118 -0.2671 0.0450" quat="1 0 0 0">
+      <freejoint />
+      <geom group="3" name="bottle_yellow_cap_standing" type="cylinder" size="0.0275 0.0450" mass="0.12" rgba="0.7201 0.5728 0.4158 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="bottle_yellow_cap_standing_photo" type="mesh" mesh="bottle_yellow_cap_standing_photo" material="bottle_yellow_cap_standing_photo_mat" group="5" contype="0" conaffinity="0" />
+      <geom name="nail_ep5_bottle_yellow_cap_standing_00_visual" type="mesh" mesh="nail_ep5_bottle_yellow_cap_standing_00" material="clutter_white" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bottle_yellow_cap_standing_01_visual" type="mesh" mesh="nail_ep5_bottle_yellow_cap_standing_01" material="clutter_cap" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bottle_yellow_cap_standing_02_visual" type="mesh" mesh="nail_ep5_bottle_yellow_cap_standing_02" material="clutter_yellow_label" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="bottle_white_lying" pos="0.4000 -0.2999 0.0250" quat="0.61714 -0.34516 0.61714 0.34516">
+      <freejoint />
+      <geom group="3" name="bottle_white_lying" type="cylinder" size="0.0250 0.0599" mass="0.08" rgba="0.7201 0.5728 0.4158 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="bottle_white_lying_photo" type="mesh" mesh="bottle_white_lying_photo" material="bottle_white_lying_photo_mat" group="5" contype="0" conaffinity="0" />
+      <geom name="nail_ep5_bottle_white_lying_00_visual" type="mesh" mesh="nail_ep5_bottle_white_lying_00" material="clutter_white" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bottle_white_lying_01_visual" type="mesh" mesh="nail_ep5_bottle_white_lying_01" material="clutter_cap" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bottle_white_lying_02_visual" type="mesh" mesh="nail_ep5_bottle_white_lying_02" material="clutter_orange_label" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="spray_bottle_lying" pos="0.4927 -0.0853 0.0275" quat="0.58655 -0.39492 0.58655 0.39492">
+      <freejoint />
+      <geom group="3" name="spray_bottle_lying" type="cylinder" size="0.0275 0.1239" mass="0.25" rgba="0.0606 0.0482 0.0452 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="spray_bottle_lying_photo" type="mesh" mesh="spray_bottle_lying_photo" material="spray_bottle_lying_photo_mat" group="5" contype="0" conaffinity="0" />
+      <geom name="nail_ep5_spray_bottle_lying_00_visual" type="mesh" mesh="nail_ep5_spray_bottle_lying_00" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_spray_bottle_lying_01_visual" type="mesh" mesh="nail_ep5_spray_bottle_lying_01" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_spray_bottle_lying_02_visual" type="mesh" mesh="nail_ep5_spray_bottle_lying_02" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_spray_bottle_lying_03_visual" type="mesh" mesh="nail_ep5_spray_bottle_lying_03" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_spray_bottle_lying_04_visual" type="mesh" mesh="nail_ep5_spray_bottle_lying_04" material="clutter_gray" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_spray_bottle_lying_05_visual" type="mesh" mesh="nail_ep5_spray_bottle_lying_05" material="clutter_spray_label" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="blue_pouch" pos="0.1929 -0.3258 0.0150" quat="0.53647 0 0 0.84392">
+      <freejoint />
+      <geom group="3" name="blue_pouch" type="box" size="0.1174 0.0664 0.0150" mass="0.15" rgba="0.0758 0.0603 0.0542 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="blue_pouch_photo" type="mesh" mesh="blue_pouch_photo" material="blue_pouch_photo_mat" group="5" contype="0" conaffinity="0" />
+      <geom name="nail_ep5_blue_pouch_00_visual" type="mesh" mesh="nail_ep5_blue_pouch_00" material="clutter_pouch" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_blue_pouch_01_visual" type="mesh" mesh="nail_ep5_blue_pouch_01" material="clutter_blue" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_blue_pouch_02_visual" type="mesh" mesh="nail_ep5_blue_pouch_02" material="clutter_blue" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_blue_pouch_03_visual" type="mesh" mesh="nail_ep5_blue_pouch_03" material="clutter_zipper" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_blue_pouch_04_visual" type="mesh" mesh="nail_ep5_blue_pouch_04" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="headphone_case_closed" pos="0.1600 0.3400 0.0350" quat="0.76224 0 0 0.64729">
+      <freejoint />
+      <geom group="3" name="headphone_case_closed" type="ellipsoid" size="0.1457 0.0874 0.0350" mass="0.25" rgba="0.0606 0.0482 0.0362 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="headphone_case_closed_photo" type="mesh" mesh="headphone_case_closed_photo" material="headphone_case_closed_photo_mat" group="5" contype="0" conaffinity="0" />
+      <geom name="hinged_nail_ep5_00" type="mesh" mesh="hinged_nail_ep5_00" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep5_01" type="mesh" mesh="hinged_nail_ep5_01" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep5_02" type="mesh" mesh="hinged_nail_ep5_02" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep5_03" type="mesh" mesh="hinged_nail_ep5_03" material="clutter_zipper" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep5_04" type="mesh" mesh="hinged_nail_ep5_04" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep5_05" type="mesh" mesh="hinged_nail_ep5_05" material="clutter_fabric" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="hinged_nail_ep5_06" type="mesh" mesh="hinged_nail_ep5_06" material="clutter_zipper" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="bits_box" pos="0.4129 0.2820 0.0175" quat="0.49284 0 0 0.87012">
+      <freejoint />
+      <geom group="3" name="bits_box" type="box" size="0.0863 0.0507 0.0175" mass="0.15" rgba="0.5685 0.4522 0.3526 0.9000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="bits_box_photo" type="mesh" mesh="bits_box_photo" material="bits_box_photo_mat" group="5" contype="0" conaffinity="0" />
+      <geom name="nail_ep5_bits_box_00_visual" type="mesh" mesh="nail_ep5_bits_box_00" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_01_visual" type="mesh" mesh="nail_ep5_bits_box_01" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_02_visual" type="mesh" mesh="nail_ep5_bits_box_02" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_03_visual" type="mesh" mesh="nail_ep5_bits_box_03" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_04_visual" type="mesh" mesh="nail_ep5_bits_box_04" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_05_visual" type="mesh" mesh="nail_ep5_bits_box_05" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_06_visual" type="mesh" mesh="nail_ep5_bits_box_06" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_07_visual" type="mesh" mesh="nail_ep5_bits_box_07" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_08_visual" type="mesh" mesh="nail_ep5_bits_box_08" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_09_visual" type="mesh" mesh="nail_ep5_bits_box_09" material="clutter_red" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_10_visual" type="mesh" mesh="nail_ep5_bits_box_10" material="clutter_plug_gray" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_11_visual" type="mesh" mesh="nail_ep5_bits_box_11" material="clutter_yellow" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_12_visual" type="mesh" mesh="nail_ep5_bits_box_12" material="clutter_silver" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_13_visual" type="mesh" mesh="nail_ep5_bits_box_13" material="clutter_cyan" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_14_visual" type="mesh" mesh="nail_ep5_bits_box_14" material="clutter_silver" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_15_visual" type="mesh" mesh="nail_ep5_bits_box_15" material="clutter_lid" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_16_visual" type="mesh" mesh="nail_ep5_bits_box_16" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_17_visual" type="mesh" mesh="nail_ep5_bits_box_17" material="clutter_red" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_18_visual" type="mesh" mesh="nail_ep5_bits_box_18" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_bits_box_19_visual" type="mesh" mesh="nail_ep5_bits_box_19" material="clutter_plastic" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="mic_knob" pos="0.4884 0.1069 0.0250" quat="1 0 0 0">
+      <freejoint />
+      <geom group="3" name="mic_knob" type="cylinder" size="0.0275 0.0250" mass="0.05" rgba="0.0606 0.0482 0.0362 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="mic_knob_photo" type="mesh" mesh="mic_knob_photo" material="mic_knob_photo_mat" group="5" contype="0" conaffinity="0" />
+      <geom name="nail_ep5_mic_knob_00_visual" type="mesh" mesh="nail_ep5_mic_knob_00" material="clutter_rubber" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="nail_ep5_mic_knob_01_visual" type="mesh" mesh="nail_ep5_mic_knob_01" material="clutter_black" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="clipper_case" pos="0.3670 0.0174 0.0" quat="0.72263 0 0 0.69124">
+      <freejoint />
+      <geom class="clipper_case_col" mesh="clipper_case_hull00" pos="0 0 0.0025" mass="0.00251" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull01" pos="0 0 0.0025" mass="0.00285" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull02" pos="0 0 0.0025" mass="0.00357" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull03" pos="0 0 0.0025" mass="0.00407" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull04" pos="0 0 0.0025" mass="0.00069" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull05" pos="0 0 0.0025" mass="0.00404" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull06" pos="0 0 0.0025" mass="0.00429" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull07" pos="0 0 0.0025" mass="0.00171" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull08" pos="0 0 0.0025" mass="0.00048" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull09" pos="0 0 0.0025" mass="0.00051" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull10" pos="0 0 0.0025" mass="0.00021" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull11" pos="0 0 0.0025" mass="0.00162" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull12" pos="0 0 0.0025" mass="0.00867" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull13" pos="0 0 0.0025" mass="0.00072" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull14" pos="0 0 0.0025" mass="0.00053" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull15" pos="0 0 0.0025" mass="0.00225" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull16" pos="0 0 0.0025" mass="0.00025" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull17" pos="0 0 0.0025" mass="0.00015" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull18" pos="0 0 0.0025" mass="0.00177" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull19" pos="0 0 0.0025" mass="0.00203" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull20" pos="0 0 0.0025" mass="0.00233" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull21" pos="0 0 0.0025" mass="0.00261" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull22" pos="0 0 0.0025" mass="0.00240" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull23" pos="0 0 0.0025" mass="0.00042" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull24" pos="0 0 0.0025" mass="0.00042" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull25" pos="0 0 0.0025" mass="0.00381" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull26" pos="0 0 0.0025" mass="0.00119" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull27" pos="0 0 0.0025" mass="0.00066" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull28" pos="0 0 0.0025" mass="0.00084" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull29" pos="0 0 0.0025" mass="0.00093" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull30" pos="0 0 0.0025" mass="0.00126" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull31" pos="0 0 0.0025" mass="0.00023" />
+      <geom type="box" group="3" size="0.0437 0.0590 0.0035" pos="0 0 0.0035" mass="0.005" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="case_slot_floors_visual" type="mesh" mesh="case_slot_floors" material="case_slot" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_foam_top_visual" type="mesh" mesh="case_foam_top" material="clipper_case_photo_mat" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_foam_sides_visual" type="mesh" mesh="case_foam_sides" material="case_foam" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_tin_visual" type="mesh" mesh="case_tin" material="case_tin" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_dark_visual" type="mesh" mesh="case_dark" material="case_dark" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_rolled_rim_visual" type="mesh" mesh="case_rolled_rim" material="case_tin" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="clipper_large" pos="0.3748 -0.1195 0.0051" quat="0.77218 0 0 0.63540">
+      <freejoint />
+      <geom group="3" type="box" size="0.0375 0.0060 0.0050" mass="0.025" rgba="0.5685 0.4522 0.3526 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="clipper_large_lower_visual" type="mesh" mesh="clipper_large_lower" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_spring_visual" type="mesh" mesh="clipper_large_spring" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_lever_visual" type="mesh" mesh="clipper_large_lever" material="clipper_large_detail" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_fork_left_visual" type="mesh" mesh="clipper_large_fork_left" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_fork_right_visual" type="mesh" mesh="clipper_large_fork_right" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_jaw_lower_visual" type="mesh" mesh="clipper_large_jaw_lower" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_jaw_upper_visual" type="mesh" mesh="clipper_large_jaw_upper" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_pivot_visual" type="mesh" mesh="clipper_large_pivot" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_pin_visual" type="mesh" mesh="clipper_large_pin" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="clipper_small" pos="0.3751 0.1553 0.0046" quat="0.99999 0 0 0.00418">
+      <freejoint />
+      <geom group="3" type="box" size="0.0265 0.0060 0.0045" mass="0.015" rgba="0.5685 0.4522 0.3526 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="clipper_small_lower_visual" type="mesh" mesh="clipper_small_lower" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_spring_visual" type="mesh" mesh="clipper_small_spring" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_lever_visual" type="mesh" mesh="clipper_small_lever" material="clipper_small_detail" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_fork_left_visual" type="mesh" mesh="clipper_small_fork_left" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_fork_right_visual" type="mesh" mesh="clipper_small_fork_right" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_jaw_lower_visual" type="mesh" mesh="clipper_small_jaw_lower" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_jaw_upper_visual" type="mesh" mesh="clipper_small_jaw_upper" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_pivot_visual" type="mesh" mesh="clipper_small_pivot" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_pin_visual" type="mesh" mesh="clipper_small_pin" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <light directional="true" name="detail_key" pos=".3 -.3 2" dir="-.1 .15 -1" diffuse=".40 .40 .40" specular=".8 .8 .8" castshadow="false" />
+    <light directional="true" name="detail_fill" pos="1.5 1 1.5" dir="-.6 -.5 -.6" diffuse=".16 .16 .16" specular=".45 .45 .45" castshadow="false" />
+    <light name="soft_shadow_0" directional="true" pos=".3 -.3 2" dir="-0.17 0.07999999999999999 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+    <light name="soft_shadow_1" directional="true" pos=".3 -.3 2" dir="-0.17 0.22 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+    <light name="soft_shadow_2" directional="true" pos=".3 -.3 2" dir="-0.03 0.07999999999999999 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+    <light name="soft_shadow_3" directional="true" pos=".3 -.3 2" dir="-0.03 0.22 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+  </worldbody>
+</mujoco>

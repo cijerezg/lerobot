@@ -1,15 +1,15 @@
-# v3 YAM addendum to AGENT_BRIEF.md (read AGENT_BRIEF.md, REVIEW_GUIDE.md and AGENT_BRIEF_V2_ADDENDUM.md first)
+# v3 YAM addendum to AGENT_BRIEF.md (read AGENT_BRIEF.md, rubrics/subtask_atoms_rubric.md and AGENT_BRIEF_V2_ADDENDUM.md first)
 
 This round reviews the `yam__*` episodes of the v3 corpus. EVERY command you run must be prefixed
 with these three environment variables, exactly:
 
-    DIVERSE_DATASET_ROOT=outputs/diverse_robot_dataset_v3 ATOMS_REVIEW_ROOT=outputs/_annotation/subtask_atoms_review_v3 ATOMS_WORK_ROOT=migration/subtask_atoms_v3_2026-09-19 uv run python migration/subtask_atoms_2026-09-08/<tool>.py ...
+    DIVERSE_DATASET_ROOT=outputs/diverse_robot_dataset_v3 ATOMS_REVIEW_ROOT=outputs/_annotation/subtask_atoms_review_v3 ATOMS_WORK_ROOT=lerobot/annotation_data/atoms_v3 uv run python -m lerobot.annotation.atoms.<tool> ...
 
 Paths differ from the brief accordingly: sheets are under
 `outputs/_annotation/subtask_atoms_review_v3/sheets/yam/<episode_id>_NN.jpg` (already rendered,
 2-3 pages per episode; `_00` is the overview with the trace, `_01`/`_02` the candidate-atom
 pages), agent reviews go to `outputs/_annotation/subtask_atoms_review_v3/agent_reviews/<episode_id>.json`,
-proposals are `migration/subtask_atoms_v3_2026-09-19/proposals.jsonl`. Dense strips and
+proposals are `lerobot/annotation_data/atoms_v3/proposals.jsonl`. Dense strips and
 closeups (`sheets.py dense`, `look.py`) work as in the brief and land under the v3 review root.
 
 Source `yam` (I2RT YAM, one 6-joint arm + gripper, embodiment string `YAM`, joint layout 8).

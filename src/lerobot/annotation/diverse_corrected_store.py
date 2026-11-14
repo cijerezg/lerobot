@@ -48,12 +48,12 @@ Examples::
     uv run python -m lerobot.annotation.diverse_corrected_store \
       --source-root outputs/diverse_robot_dataset_v3 \
       --out-root outputs/diverse_robot_dataset_v3_audit1 \
-      --fix-dir migration/diverse_annotation_audit_2026-10-07/fixes --dry-run
+      --fix-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes --dry-run
 
     uv run python -m lerobot.annotation.diverse_corrected_store \
       --source-root outputs/diverse_robot_dataset_v3 \
       --out-root outputs/diverse_robot_dataset_v3_audit1 \
-      --fix-dir migration/diverse_annotation_audit_2026-10-07/fixes
+      --fix-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes
 """
 
 from __future__ import annotations

@@ -86,7 +86,7 @@ if __name__ == "__main__":
     from lerobot.annotation.paths import WORKSPACE
 
     os.chdir(WORKSPACE)
-    HERE = Path("migration/precision_contact_annotation_2026-09-25")
+    HERE = Path("outputs/_annotation/precision_contact_annotation_2026-09-25")
     counts = Counter()
     for l in open(HERE / "rows.jsonl"):
         d = json.loads(l)

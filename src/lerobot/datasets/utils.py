@@ -81,6 +81,7 @@ DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
+ROBOT_CONTROL_PATH = "meta/robot_control.json"  # the robot's control_settings at record time
 
 EPISODES_DIR = "meta/episodes"
 DATA_DIR = "data"

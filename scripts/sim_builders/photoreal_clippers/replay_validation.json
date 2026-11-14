@@ -1,0 +1,18 @@
+{
+  "replay_frames": [
+    260,
+    709
+  ],
+  "fps": 30,
+  "source": "outputs/rebot_2026-10-16-annotated-v1 episode 5 observation.state",
+  "max_qpos_difference": 0,
+  "rgb_observation_ms_mean": [
+    14.735432068888864,
+    15.110800804443443
+  ],
+  "rgb_observation_ms_p95": [
+    16.015797600033455,
+    16.405506300009158
+  ],
+  "note": "Two 640x480 RGB cameras, including top composite; excludes depth and policy. No performance claim for concurrent training."
+}

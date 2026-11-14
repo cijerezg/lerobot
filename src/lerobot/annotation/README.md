@@ -8,17 +8,18 @@ Everything that defines or produces a label lives in this folder.
 |---|---|
 | Every annotation script | here |
 | Every rubric, label spec and vocabulary | here (`rubrics/`, `vocab.py`) |
-| Results: inventories, label files, sheets, strips, review pages, reports, logs | outside the repo: `migration/<pass>_<date>/` or `outputs/_annotation/` |
+| Results: inventories, label files, sheets, strips, review pages, reports, logs | outside the repo: `outputs/_annotation/` (a pass: `outputs/_annotation/passes/<pass>_<date>/`) |
+| Stores that later passes read: class files and references, atom proposals, measured approach angles, rubric case evidence | `lerobot/annotation_data/` (in the repo folder, outside `src/`, not committed) |
 | Labels of record | ReBot: dataset `meta/` tables; diverse: JSONL sidecars in each `corpus/` and `fmb/` store under `outputs/` |
 
-- No annotation script or rubric is written in `migration/`. A script written there for a quick look moves
+- No annotation script or rubric is written in a results folder. A script written there for a quick look moves
   here before the pass ends, or is deleted.
 - No result is committed to this repo.
 - Before writing a function, look for it in the shared modules below. If two passes need the same thing, it
   goes in a shared module and both call it. A pass script holds only what is specific to that pass (its source
   roots, its cut plan, its exemptions).
 - Scripts take the results folder as an argument or an environment variable. They never write next to
-  themselves. `paths.WORKSPACE` is the folder that holds `lerobot/`, `migration/` and `outputs/`.
+  themselves. `paths.WORKSPACE` is the folder that holds `lerobot/` and `outputs/`.
 - Commands run from the workspace root: `uv run python -m lerobot.annotation.<folder>.<script> ...`.
 
 ## Authority and entry points
@@ -48,12 +49,17 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 | `rubrics/contact_strategy_rubric.md` | Contact strategy per step; the table `vocab.py` is tested against. |
 | `rubrics/subtask_atoms_rubric.md` | Atom grammar, naming and quality rules for the diverse corpus. |
 | `rubrics/depth_gripper_event_labels.md` | Gripper-event targets of the depth auxiliary loss. |
+| `rubrics/external_grading_decisions.md` | Rulings of the external ReBot grading pass (D1-D40) and its audit sweeps. |
+| `rubrics/diverse_audit_decisions.md` | Rulings of the diverse corpus audit and the known defects not swept (K1-K14). |
+| `rubrics/usefulness_review_rubric.md` | Which low-quality footage is cut from training (the exclusion manifests). |
+| `rubrics/fmb_review_protocol.md` | Visual review of the FMB multi-object trajectories. |
+| `rubrics/OPEN_ITEMS.md` | Annotation questions waiting for a decision. |
 | `vocab.py` | Closed vocabularies: contact elements (code, phrase) and mistake types. Imported by training code. |
-| `paths.py` | `WORKSPACE` and `QUALITY_V2` (the results folder of the class pass). |
+| `paths.py` | `WORKSPACE` and `QUALITY_V2` (the results folder of the class pass, `lerobot/annotation_data/quality_v2`). |
 | `rebot/` | A ReBot pass, start to finish (order below). `AGENT_BRIEF.md` is the brief the annotating and grading agents follow; review feedback is folded into it and into the rubrics. |
 | `rebot/task_sheet.py` | Writes `lerobot/docs/annotation_notes/rebot_tasks.md`: every task of the training mix with its subtask script, precision and contact per step, ready to paste into an inference config. |
 | `quality_v2/` | The rubric v2 class pass, shared by every pool: class rules, side-by-side material, dense strips, grading batches, second read, label compiler, checks. |
-| `precision_contact/` | Frame grabbing, approach angle, row sheets and strips (used by `quality_v2`), and the text-rule priors for precision and contact. |
+| `precision_contact/` | Frame grabbing, approach angle, row sheets and strips (used by `quality_v2`), and the text-rule priors for precision and contact. `AGENT_BRIEF.md` (+ `AGENT_BRIEF_diverse.md`) is the reviewer brief of the row pass. |
 | `atoms/` | Subtask-atom pipeline over the diverse corpus: propose, sheets, verdict, agent_check, assemble, manual editor, validator; its reviewer briefs. |
 | `speed/` | Speed label: `hybrid_motion_speed` (the adopted method; `frame_runs` turns its per-frame score into the frame-level label the trainer reads: rounded, no run under 1 s), `speed_annotate`, `joint_motion_speed`, and the runners `rebot_speed_pass` (ReBot: trace, per-segment table, and `meta/speed_hybrid_v1_runs.parquet` = `REBOT_SPEED_TABLE`) and `hybrid_diverse` (diverse: traces, per-atom sidecar, and `speed_runs_hybrid_v1.jsonl` = `SPEED_ATOMS_VIEW`; `hybrid_diverse runs <store>` writes the runs alone). |
 | `gripper_events/` | Depth gripper-event labels and their review videos. |
@@ -67,7 +73,7 @@ Tests: `tests/annotation/`.
 
 To annotate a ReBot root, an agent needs only this page: it names what to read, the order of work and when to stop.
 
-A pass is one results folder, `<work> = migration/<pass>_<date>/`. Everything specific to the pass is data in it:
+A pass is one results folder, `<work> = outputs/_annotation/passes/<pass>_<date>/`. Everything specific to the pass is data in it:
 
 | File in `<work>` | Content |
 |---|---|
@@ -139,7 +145,7 @@ The agent that receives the request coordinates; the frame reading is done by ag
 A root whose labels are bad is re-annotated as a new pass with the root as its source (`inventory --kind teleop|rollout`).
 Everything is redone (keep ranges, segments, texts, channels, mistakes, grading); the old labels are a first guess. Go back
 to the raw recording only when a cut looks wrong. When the request says to keep some fields, copy the old `labels/` and
-redo only the rest (example: `migration/rollouts_annotation_v2_2026-10-06/`).
+redo only the rest (done once, for the 2026-10-06 rollouts re-annotation).
 
 ### Auditing annotated data by random sampling
 
@@ -176,7 +182,7 @@ Do not use git. Do not change training configs or publish/adopt a replacement da
 - Inventory unique source episodes, source family, split, native rate, retained intervals, camera availability,
   state/action schema and label provenance. Do not count multiple views, atoms or derived copies as new episodes.
   The families are DROID, DROID success, MolmoAct, RoboChallenge, UR7e, YAM and FMB; verify against the actual inventory.
-- Create a new results folder `migration/diverse_annotation_audit_<date>/` (unique suffix if needed), or resume its
+- Create a new results folder `outputs/_annotation/passes/diverse_annotation_audit_<date>/` (unique suffix if needed), or resume its
   recorded progress. `audit.md` is the ledger: roots and provenance, inventory, sampling policy, seed and picks per
   round, evidence paths, issues and severity, fixes/sweeps, validation and unresolved work. Record pre-fix counts;
   fixing a round does not make its original error count zero. Keep episode decisions in `checks/` there.
@@ -351,7 +357,7 @@ kept. Agent summaries or a long launch prompt are not substitutes for those arti
   where applicable. Inspect arguments and paths first: some still target the old global pass or v3 roots.
   `paths.QUALITY_V2` can be redirected with `QUALITY_V2_WORK`. Isolate this pass's files and pool/class names;
   never run a global inventory/compiler that also writes the concurrent ReBot sessions' outputs.
-- Existing references and labels are discoverable under `migration/annotation_v2_2026-09-29/` through
+- Existing references and labels are discoverable under `lerobot/annotation_data/quality_v2/` through
   `paths.QUALITY_V2`. Reuse them as evidence; write audit-specific resolutions in the new pass. Existing `F_`
   resolve-row machinery can represent quality/mistake/precision fixes when compatible; text, boundary, contact
   and retention edits need the corresponding versioned sources too. Check the compiler's actual output coverage.

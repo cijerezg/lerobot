@@ -1,0 +1,240 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="scene_nail">
+  <compiler angle="radian" assetdir="/home/user/Documents/Research/RL/LeRobot/lerobot/src/lerobot/robots/rebot_b601_sim/scenes" autolimits="true" />
+  <include file="/home/user/Documents/Research/RL/LeRobot/lerobot/src/lerobot/robots/rebot_b601_sim/scenes/rebot_b601_dm_photo.xml" />
+  <visual>
+    <headlight diffuse=".15 .15 .15" ambient=".37 .37 .37" specular=".10 .10 .10" />
+    <rgba haze="0.4548 0.3618 0.2712 1.0000" />
+    <global offwidth="1280" offheight="960" />
+    <quality shadowsize="4096" />
+  </visual>
+  <asset>
+    <texture name="bits_box_photo_tex" type="2d" file="nail_ep3/materials/bits_box_photo.png" />
+    <material name="bits_box_photo_mat" texture="bits_box_photo_tex" specular="0" shininess="0" />
+    <mesh name="bits_box_photo" file="nail_ep3/materials/bits_box_photo.obj" />
+    <texture name="blue_pouch_photo_tex" type="2d" file="nail_ep3/materials/blue_pouch_photo.png" />
+    <material name="blue_pouch_photo_mat" texture="blue_pouch_photo_tex" specular="0" shininess="0" />
+    <mesh name="blue_pouch_photo" file="nail_ep3/materials/blue_pouch_photo.obj" />
+    <texture name="bottle_white_lying_photo_tex" type="2d" file="nail_ep3/materials/bottle_white_lying_photo.png" />
+    <material name="bottle_white_lying_photo_mat" texture="bottle_white_lying_photo_tex" specular="0" shininess="0" />
+    <mesh name="bottle_white_lying_photo" file="nail_ep3/materials/bottle_white_lying_photo.obj" />
+    <texture name="bottle_yellow_cap_standing_photo_tex" type="2d" file="nail_ep3/materials/bottle_yellow_cap_standing_photo.png" />
+    <material name="bottle_yellow_cap_standing_photo_mat" texture="bottle_yellow_cap_standing_photo_tex" specular="0" shininess="0" />
+    <mesh name="bottle_yellow_cap_standing_photo" file="nail_ep3/materials/bottle_yellow_cap_standing_photo.obj" />
+    <texture name="clipper_case_photo_tex" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_surface.png" />
+    <material name="clipper_case_photo_mat" texture="clipper_case_photo_tex" specular="0" shininess="0" />
+    <mesh name="clipper_case_photo" file="nail_ep3/materials/clipper_case_photo.obj" />
+    <texture name="clipper_case_metal_photo_tex" type="2d" file="nail_ep3/materials/clipper_case_metal_photo.png" />
+    <material name="clipper_case_metal_photo_mat" texture="clipper_case_metal_photo_tex" specular=".7" shininess=".55" />
+    <mesh name="clipper_case_metal_photo" file="nail_ep3/materials/clipper_case_metal_photo.obj" />
+    <texture name="clipper_large_photo_tex" type="2d" file="nail_ep3/materials/clipper_large_photo.png" />
+    <material name="clipper_large_photo_mat" texture="clipper_large_photo_tex" specular="0.3" shininess="0.4" />
+    <mesh name="clipper_large_photo" file="nail_ep3/materials/clipper_large_photo.obj" />
+    <texture name="clipper_small_photo_tex" type="2d" file="nail_ep3/materials/clipper_small_photo.png" />
+    <material name="clipper_small_photo_mat" texture="clipper_small_photo_tex" specular="0.3" shininess="0.4" />
+    <mesh name="clipper_small_photo" file="nail_ep3/materials/clipper_small_photo.obj" />
+    <texture name="headphone_half_a_photo_tex" type="2d" file="nail_ep3/materials/headphone_half_a_photo.png" />
+    <material name="headphone_half_a_photo_mat" texture="headphone_half_a_photo_tex" specular="0" shininess="0" />
+    <mesh name="headphone_half_a_photo" file="nail_ep3/materials/headphone_half_a_photo.obj" />
+    <texture name="headphone_half_b_photo_tex" type="2d" file="nail_ep3/materials/headphone_half_b_photo.png" />
+    <material name="headphone_half_b_photo_mat" texture="headphone_half_b_photo_tex" specular="0" shininess="0" />
+    <mesh name="headphone_half_b_photo" file="nail_ep3/materials/headphone_half_b_photo.obj" />
+    <texture name="paper_cup_photo_tex" type="2d" file="nail_ep3/materials/paper_cup_photo.png" />
+    <material name="paper_cup_photo_mat" texture="paper_cup_photo_tex" specular="0" shininess="0" />
+    <mesh name="paper_cup_photo" file="nail_ep3/materials/paper_cup_photo.obj" />
+    <texture name="tape_roll_photo_tex" type="2d" file="nail_ep3/materials/tape_roll_photo.png" />
+    <material name="tape_roll_photo_mat" texture="tape_roll_photo_tex" specular="0" shininess="0" />
+    <mesh name="tape_roll_photo" file="nail_ep3/materials/tape_roll_photo.obj" />
+    <texture name="table_top_tex" type="2d" file="table_top.png" />
+    <material name="table_top" texture="table_top_tex" texrepeat="1 1" texuniform="false" specular="0" shininess="0" />
+    <texture name="clipper_case_tex" type="2d" file="assets/clipper_case/clipper_case_visual_colors.png" />
+    <material name="clipper_case_mat" texture="clipper_case_tex" specular="0.2" shininess="0.2" />
+    <mesh name="clipper_case_textured" file="assets/clipper_case/clipper_case_visual_textured.obj" />
+    <texture type="skybox" builtin="flat" rgb1="0.5685 0.4643 0.3526" rgb2="0.5685 0.4643 0.3526" width="32" height="32" />
+    <material name="wood" rgba="0.5291 0.3455 0.2161 1.0000" specular="0.15" shininess="0.2" />
+    <material name="floor_mat" rgba="0.1213 0.1025 0.0542 1.0000" />
+    <mesh name="clipper_case_visual" file="assets/clipper_case/clipper_case_visual.obj" />
+    <mesh name="clipper_case_hull00" file="assets/clipper_case/clipper_case_hull00.obj" />
+    <mesh name="clipper_case_hull01" file="assets/clipper_case/clipper_case_hull01.obj" />
+    <mesh name="clipper_case_hull02" file="assets/clipper_case/clipper_case_hull02.obj" />
+    <mesh name="clipper_case_hull03" file="assets/clipper_case/clipper_case_hull03.obj" />
+    <mesh name="clipper_case_hull04" file="assets/clipper_case/clipper_case_hull04.obj" />
+    <mesh name="clipper_case_hull05" file="assets/clipper_case/clipper_case_hull05.obj" />
+    <mesh name="clipper_case_hull06" file="assets/clipper_case/clipper_case_hull06.obj" />
+    <mesh name="clipper_case_hull07" file="assets/clipper_case/clipper_case_hull07.obj" />
+    <mesh name="clipper_case_hull08" file="assets/clipper_case/clipper_case_hull08.obj" />
+    <mesh name="clipper_case_hull09" file="assets/clipper_case/clipper_case_hull09.obj" />
+    <mesh name="clipper_case_hull10" file="assets/clipper_case/clipper_case_hull10.obj" />
+    <mesh name="clipper_case_hull11" file="assets/clipper_case/clipper_case_hull11.obj" />
+    <mesh name="clipper_case_hull12" file="assets/clipper_case/clipper_case_hull12.obj" />
+    <mesh name="clipper_case_hull13" file="assets/clipper_case/clipper_case_hull13.obj" />
+    <mesh name="clipper_case_hull14" file="assets/clipper_case/clipper_case_hull14.obj" />
+    <mesh name="clipper_case_hull15" file="assets/clipper_case/clipper_case_hull15.obj" />
+    <mesh name="clipper_case_hull16" file="assets/clipper_case/clipper_case_hull16.obj" />
+    <mesh name="clipper_case_hull17" file="assets/clipper_case/clipper_case_hull17.obj" />
+    <mesh name="clipper_case_hull18" file="assets/clipper_case/clipper_case_hull18.obj" />
+    <mesh name="clipper_case_hull19" file="assets/clipper_case/clipper_case_hull19.obj" />
+    <mesh name="clipper_case_hull20" file="assets/clipper_case/clipper_case_hull20.obj" />
+    <mesh name="clipper_case_hull21" file="assets/clipper_case/clipper_case_hull21.obj" />
+    <mesh name="clipper_case_hull22" file="assets/clipper_case/clipper_case_hull22.obj" />
+    <mesh name="clipper_case_hull23" file="assets/clipper_case/clipper_case_hull23.obj" />
+    <mesh name="clipper_case_hull24" file="assets/clipper_case/clipper_case_hull24.obj" />
+    <mesh name="clipper_case_hull25" file="assets/clipper_case/clipper_case_hull25.obj" />
+    <mesh name="clipper_case_hull26" file="assets/clipper_case/clipper_case_hull26.obj" />
+    <mesh name="clipper_case_hull27" file="assets/clipper_case/clipper_case_hull27.obj" />
+    <mesh name="clipper_case_hull28" file="assets/clipper_case/clipper_case_hull28.obj" />
+    <mesh name="clipper_case_hull29" file="assets/clipper_case/clipper_case_hull29.obj" />
+    <mesh name="clipper_case_hull30" file="assets/clipper_case/clipper_case_hull30.obj" />
+    <mesh name="clipper_case_hull31" file="assets/clipper_case/clipper_case_hull31.obj" />
+    <texture name="clipper_large_detail" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_lever.png" />
+    <material name="clipper_large_detail" texture="clipper_large_detail" specular=".85" shininess=".65" />
+    <material name="clipper_large_steel" rgba=".56 .58 .60 1" specular=".95" shininess=".75" />
+    <material name="clipper_large_edge" rgba=".30 .32 .34 1" specular=".9" shininess=".7" />
+    <mesh name="clipper_large_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_lower.obj" />
+    <mesh name="clipper_large_spring" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_spring.obj" />
+    <mesh name="clipper_large_lever" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_lever.obj" />
+    <mesh name="clipper_large_fork_left" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_fork_left.obj" />
+    <mesh name="clipper_large_fork_right" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_fork_right.obj" />
+    <mesh name="clipper_large_jaw_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_jaw_lower.obj" />
+    <mesh name="clipper_large_jaw_upper" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_jaw_upper.obj" />
+    <mesh name="clipper_large_pivot" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_pivot.obj" />
+    <mesh name="clipper_large_pin" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_large_pin.obj" />
+    <texture name="clipper_small_detail" type="2d" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_lever.png" />
+    <material name="clipper_small_detail" texture="clipper_small_detail" specular=".85" shininess=".65" />
+    <material name="clipper_small_steel" rgba=".56 .58 .60 1" specular=".95" shininess=".75" />
+    <material name="clipper_small_edge" rgba=".30 .32 .34 1" specular=".9" shininess=".7" />
+    <mesh name="clipper_small_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_lower.obj" />
+    <mesh name="clipper_small_spring" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_spring.obj" />
+    <mesh name="clipper_small_lever" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_lever.obj" />
+    <mesh name="clipper_small_fork_left" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_fork_left.obj" />
+    <mesh name="clipper_small_fork_right" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_fork_right.obj" />
+    <mesh name="clipper_small_jaw_lower" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_jaw_lower.obj" />
+    <mesh name="clipper_small_jaw_upper" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_jaw_upper.obj" />
+    <mesh name="clipper_small_pivot" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_pivot.obj" />
+    <mesh name="clipper_small_pin" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/clipper_small_pin.obj" />
+    <material name="case_slot" rgba=".50 .49 .52 1" specular="0" shininess="0" />
+    <material name="case_foam" rgba=".76 .74 .78 1" specular="0" shininess="0" />
+    <material name="case_tin" rgba=".54 .56 .58 1" specular=".8" shininess=".65" />
+    <material name="case_dark" rgba=".13 .15 .17 1" specular=".35" shininess=".4" />
+    <mesh name="case_slot_floors" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_slot_floors.obj" inertia="shell" />
+    <mesh name="case_foam_top" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_foam_top.obj" inertia="shell" />
+    <mesh name="case_foam_sides" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_foam_sides.obj" inertia="shell" />
+    <mesh name="case_tin" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_tin.obj" inertia="shell" />
+    <mesh name="case_dark" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_dark.obj" inertia="shell" />
+    <mesh name="case_rolled_rim" file="/home/user/Documents/Research/RL/LeRobot/lerobot/scripts/sim_builders/photoreal_clippers/assets/case_rolled_rim.obj" inertia="shell" />
+  </asset>
+  <default>
+    <default class="clipper_case_col">
+      <geom type="mesh" group="3" condim="4" friction="0.8 0.005 0.0001" />
+    </default>
+    <default class="clipper_case_vis">
+      <geom type="mesh" group="2" contype="0" conaffinity="0" mass="0" rgba="0.4169 0.3317 0.2622 1.0000" />
+    </default>
+  </default>
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" pos="0 0 -0.72" material="floor_mat" />
+    <geom name="table" type="box" size="0.3708 0.5053 0.015" pos="0.3467 0.0244 -0.015" material="wood" contype="0" conaffinity="0" />
+    <geom name="table_top" type="plane" size="0.3708 0.5053 0.001" pos="0.3467 0.0244 0.0005" material="table_top" contype="0" conaffinity="0" />
+    <geom name="table_contact" type="plane" size="0.3708 0.5053 0.001" pos="0.3467 0.0244 0" group="3" />
+    <camera name="ext" pos="0.60900 -0.01395 0.84855" quat="0.716093 0.064734 0.080219 0.690351" fovy="60.730" />
+    <body name="tape_roll" pos="0.0465 -0.3378 0.0150" quat="1 0 0 0">
+      <freejoint />
+      <geom group="3" name="tape_roll" type="cylinder" size="0.0375 0.0150" mass="0.1" rgba="0.4548 0.3618 0.2712 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="tape_roll_photo" type="mesh" mesh="tape_roll_photo" material="tape_roll_photo_mat" group="2" contype="0" conaffinity="0" />
+    </body>
+    <body name="paper_cup" pos="0.1305 0.2625 0.0550" quat="1 0 0 0">
+      <freejoint />
+      <geom group="3" name="paper_cup" type="cylinder" size="0.0400 0.0550" mass="0.02" rgba="0.4548 0.3618 0.2712 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="paper_cup_photo" type="mesh" mesh="paper_cup_photo" material="paper_cup_photo_mat" group="2" contype="0" conaffinity="0" />
+    </body>
+    <body name="headphone_half_b" pos="0.4244 0.0929 0.0200" quat="0.93621 0 0 0.35145">
+      <freejoint />
+      <geom group="3" name="headphone_half_b" type="ellipsoid" size="0.1009 0.1009 0.0200" mass="0.12" rgba="0.4548 0.3618 0.2712 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="headphone_half_b_photo" type="mesh" mesh="headphone_half_b_photo" material="headphone_half_b_photo_mat" group="2" contype="0" conaffinity="0" />
+    </body>
+    <body name="bottle_white_lying" pos="0.4479 -0.2222 0.0250" quat="0.61697 -0.34547 0.61697 0.34547">
+      <freejoint />
+      <geom group="3" name="bottle_white_lying" type="cylinder" size="0.0250 0.0525" mass="0.08" rgba="0.7201 0.5728 0.4158 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="bottle_white_lying_photo" type="mesh" mesh="bottle_white_lying_photo" material="bottle_white_lying_photo_mat" group="2" contype="0" conaffinity="0" />
+    </body>
+    <body name="bottle_yellow_cap_standing" pos="0.3986 0.3019 0.0450" quat="1 0 0 0">
+      <freejoint />
+      <geom group="3" name="bottle_yellow_cap_standing" type="cylinder" size="0.0275 0.0450" mass="0.12" rgba="0.7201 0.5728 0.4158 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="bottle_yellow_cap_standing_photo" type="mesh" mesh="bottle_yellow_cap_standing_photo" material="bottle_yellow_cap_standing_photo_mat" group="2" contype="0" conaffinity="0" />
+    </body>
+    <body name="clipper_case" pos="0.2712 -0.2724 0.0" quat="-0.45622 0 0 -0.88987">
+      <freejoint />
+      <geom class="clipper_case_col" mesh="clipper_case_hull00" pos="0 0 0.0025" mass="0.00251" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull01" pos="0 0 0.0025" mass="0.00285" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull02" pos="0 0 0.0025" mass="0.00357" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull03" pos="0 0 0.0025" mass="0.00407" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull04" pos="0 0 0.0025" mass="0.00069" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull05" pos="0 0 0.0025" mass="0.00404" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull06" pos="0 0 0.0025" mass="0.00429" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull07" pos="0 0 0.0025" mass="0.00171" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull08" pos="0 0 0.0025" mass="0.00048" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull09" pos="0 0 0.0025" mass="0.00051" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull10" pos="0 0 0.0025" mass="0.00021" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull11" pos="0 0 0.0025" mass="0.00162" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull12" pos="0 0 0.0025" mass="0.00867" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull13" pos="0 0 0.0025" mass="0.00072" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull14" pos="0 0 0.0025" mass="0.00053" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull15" pos="0 0 0.0025" mass="0.00225" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull16" pos="0 0 0.0025" mass="0.00025" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull17" pos="0 0 0.0025" mass="0.00015" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull18" pos="0 0 0.0025" mass="0.00177" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull19" pos="0 0 0.0025" mass="0.00203" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull20" pos="0 0 0.0025" mass="0.00233" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull21" pos="0 0 0.0025" mass="0.00261" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull22" pos="0 0 0.0025" mass="0.00240" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull23" pos="0 0 0.0025" mass="0.00042" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull24" pos="0 0 0.0025" mass="0.00042" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull25" pos="0 0 0.0025" mass="0.00381" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull26" pos="0 0 0.0025" mass="0.00119" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull27" pos="0 0 0.0025" mass="0.00066" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull28" pos="0 0 0.0025" mass="0.00084" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull29" pos="0 0 0.0025" mass="0.00093" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull30" pos="0 0 0.0025" mass="0.00126" />
+      <geom class="clipper_case_col" mesh="clipper_case_hull31" pos="0 0 0.0025" mass="0.00023" />
+      <geom type="box" group="3" size="0.0437 0.0590 0.0035" pos="0 0 0.0035" mass="0.005" condim="4" friction="0.8 0.005 0.0001" />
+      <geom name="case_slot_floors_visual" type="mesh" mesh="case_slot_floors" material="case_slot" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_foam_top_visual" type="mesh" mesh="case_foam_top" material="clipper_case_photo_mat" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_foam_sides_visual" type="mesh" mesh="case_foam_sides" material="case_foam" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_tin_visual" type="mesh" mesh="case_tin" material="case_tin" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_dark_visual" type="mesh" mesh="case_dark" material="case_dark" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="case_rolled_rim_visual" type="mesh" mesh="case_rolled_rim" material="case_tin" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="clipper_large" pos="0.4900 -0.0800 0.0051" quat="0.90795 0 0 0.41908">
+      <freejoint />
+      <geom group="3" type="box" size="0.0375 0.0060 0.0050" mass="0.025" rgba="0.5685 0.4522 0.3526 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="clipper_large_lower_visual" type="mesh" mesh="clipper_large_lower" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_spring_visual" type="mesh" mesh="clipper_large_spring" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_lever_visual" type="mesh" mesh="clipper_large_lever" material="clipper_large_detail" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_fork_left_visual" type="mesh" mesh="clipper_large_fork_left" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_fork_right_visual" type="mesh" mesh="clipper_large_fork_right" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_jaw_lower_visual" type="mesh" mesh="clipper_large_jaw_lower" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_jaw_upper_visual" type="mesh" mesh="clipper_large_jaw_upper" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_pivot_visual" type="mesh" mesh="clipper_large_pivot" material="clipper_large_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_large_pin_visual" type="mesh" mesh="clipper_large_pin" material="clipper_large_steel" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <body name="clipper_small" pos="0.3000 0.0000 0.0046" quat="0.91452 0 0 0.40455">
+      <freejoint />
+      <geom group="3" type="box" size="0.0265 0.0060 0.0045" mass="0.015" rgba="0.5685 0.4522 0.3526 1.0000" condim="4" friction="0.6 0.005 0.0001" />
+      <geom name="clipper_small_lower_visual" type="mesh" mesh="clipper_small_lower" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_spring_visual" type="mesh" mesh="clipper_small_spring" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_lever_visual" type="mesh" mesh="clipper_small_lever" material="clipper_small_detail" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_fork_left_visual" type="mesh" mesh="clipper_small_fork_left" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_fork_right_visual" type="mesh" mesh="clipper_small_fork_right" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_jaw_lower_visual" type="mesh" mesh="clipper_small_jaw_lower" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_jaw_upper_visual" type="mesh" mesh="clipper_small_jaw_upper" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_pivot_visual" type="mesh" mesh="clipper_small_pivot" material="clipper_small_edge" group="2" contype="0" conaffinity="0" mass="0" />
+      <geom name="clipper_small_pin_visual" type="mesh" mesh="clipper_small_pin" material="clipper_small_steel" group="2" contype="0" conaffinity="0" mass="0" />
+    </body>
+    <light directional="true" name="detail_key" pos=".3 -.3 2" dir="-.1 .15 -1" diffuse=".40 .40 .40" specular=".8 .8 .8" castshadow="false" />
+    <light directional="true" name="detail_fill" pos="1.5 1 1.5" dir="-.6 -.5 -.6" diffuse=".16 .16 .16" specular=".45 .45 .45" castshadow="false" />
+    <light name="soft_shadow_0" directional="true" pos=".3 -.3 2" dir="-0.17 0.07999999999999999 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+    <light name="soft_shadow_1" directional="true" pos=".3 -.3 2" dir="-0.17 0.22 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+    <light name="soft_shadow_2" directional="true" pos=".3 -.3 2" dir="-0.03 0.07999999999999999 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+    <light name="soft_shadow_3" directional="true" pos=".3 -.3 2" dir="-0.03 0.22 -1" diffuse=".045 .045 .045" specular="0 0 0" castshadow="true" />
+  </worldbody>
+</mujoco>

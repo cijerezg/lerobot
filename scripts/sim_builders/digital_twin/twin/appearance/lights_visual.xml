@@ -1,0 +1,16 @@
+<mujocoinclude>
+  <!-- Appearance pass 2026-10-30: TOP-LEVEL include (next to <asset>, NOT inside <worldbody>). Pairs with lights.xml (worldbody).
+       Replaces the scene's own <visual> block (drop that one, or keep only its <global offwidth/offheight>; a second <visual> section
+       merges field by field, later wins). -->
+  <visual>
+    <!-- ambient = the soft, shadow-free part of the room light; headlight diffuse off (the camera-attached light flattened everything) -->
+    <headlight ambient=".46 .46 .46" diffuse="0 0 0" specular="0 0 0" />
+    <global offwidth="1280" offheight="960" />
+    <!-- shadow map: 8k texels over a frustum tied to the model extent below (0.6 * 2.0 m half-size = 1.2 m around the desk ->
+         ~0.3 mm per texel instead of ~1.6 mm with the 4k map over the 5.4 m room extent); shadowclip only matters for spot lights -->
+    <quality shadowsize="8192" />
+    <map shadowscale="0.6" shadowclip="1.0" />
+  </visual>
+  <!-- the room planes (4 m floor, 3 m walls) push the auto extent to 5.4 m; pin it to the desk so the directional shadow map is dense -->
+  <statistic extent="2.0" center="0.34 0 -0.2" />
+</mujocoinclude>

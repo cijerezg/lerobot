@@ -1,0 +1,21 @@
+<mujoco>
+  <asset>
+    <texture name="roar_bottle_tex" type="2d" file="roar_bottle_tex.png"/>
+    <material name="roar_bottle_mat" texture="roar_bottle_tex" specular="0.3" shininess="0.4"/>
+    <mesh name="roar_bottle_body" file="roar_bottle_body.obj"/>
+  </asset>
+  <default>
+    <default class="roar_bottle_col"><geom group="3" condim="4" friction="0.6 0.005 0.0001"/></default>
+    <default class="roar_bottle_vis"><geom group="2" contype="0" conaffinity="0" mass="0"/></default>
+  </default>
+  <worldbody>
+    <body name="roar_bottle" pos="0 0 0">
+      <freejoint/>
+      <geom class="roar_bottle_vis" type="mesh" mesh="roar_bottle_body" material="roar_bottle_mat"/>
+      <geom class="roar_bottle_vis" type="cylinder" size="0.0175 0.0125" pos="0 0 0.1975" rgba="0.048 0.580 0.614 1"/>
+      <geom class="roar_bottle_col" type="cylinder" size="0.0325 0.0725" pos="0 0 0.0725" mass="0.45"/>
+      <geom class="roar_bottle_col" type="cylinder" size="0.022 0.020" pos="0 0 0.165" mass="0.03"/>
+      <geom class="roar_bottle_col" type="cylinder" size="0.0175 0.0125" pos="0 0 0.1975" mass="0.02"/>
+    </body>
+  </worldbody>
+</mujoco>

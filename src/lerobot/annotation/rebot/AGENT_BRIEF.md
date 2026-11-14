@@ -13,7 +13,7 @@ One agent annotates one source episode of a ReBot pass: task string, subtask seg
 and mistakes. Quality stretches and precision windows are graded afterwards, per class and side by side; do not
 write grades here, but describe what you see (with frames) so the grader can use it.
 
-Run commands from the workspace root (the folder holding `lerobot/`, `migration/`, `outputs/`) with `uv run python`.
+Run commands from the workspace root (the folder holding `lerobot/` and `outputs/`) with `uv run python`.
 `<work>` is the results folder of the pass, `<idx>` your episode's inventory index. Sources are read only. Write only
 `<work>/labels/<idx>.json` and sheets under `<work>/review/<idx>/`. No GPU, no installs, no new scripts.
 
@@ -45,7 +45,7 @@ Run commands from the workspace root (the folder holding `lerobot/`, `migration/
 ### External contributor roots (external_rebot_train, 2026-10-08)
 
 Community recordings of the same B601 arm, 34 repos (`<work>/episodes.tsv`: repo, source fps, cameras, the old task).
-Audit round 1 of the old labels (`migration/audit_external_rebot_2026-10-07/checks/`) found a wrong issue in 7 of 8
+Audit round 1 of the old labels (2026-10-07) found a wrong issue in 7 of 8
 episodes; the rules below come from it.
 
 - Cameras: a tile stacks every camera the episode has, named in the sheet header (`rows: external_0 / external_1 /
@@ -75,6 +75,12 @@ episodes; the rules below come from it.
   never attempted, a slow drift), end the range about 1 s after that step settles. Do not label it `return to home`.
 - A stretch of more than 3 s inside the range where the arm sits still or makes no progress is reported in `flags` with
   its frames, not cut.
+- Rollouts end with a scripted ramp back to home: end the range before it (2026-11-10).
+- Recorder seam: a one-frame state jump of more than 3 deg, then 2 frozen frames, and the scene jumps. Split there into
+  two entries of `episodes`, dropping a few frames on each side. A snap at an operator handback with a continuous scene
+  is not a seam (2026-11-10).
+- A person moving the kit or an object during the episode stays in the range and is described for the grader (`other`
+  1). An episode with no approach to any object is still kept and labelled (user: use the entire data).
 
 **Task string.** A short, high-level description of the goal of the episode, sentence case, the way a person would ask
 for it: "Stand the bottle upright", "Put the nail clippers in the clipper case". It is not a list
@@ -86,7 +92,8 @@ clipper case, put the bottles in the basket and close the bit kit"). Not "Tidy u
 already holds it many times; name what was put away). Objects and containers get the words the segment texts use; a
 colour, size or position word only when the task itself must tell two apart, otherwise the plural ("the nail
 clippers"; audit 2026-10-07: 57 tasks kept "brown basket", "navy shirt" after the segment texts dropped them). A goal
-that was attempted and failed still counts; a goal never attempted does not.
+that was attempted and failed still counts; a goal never attempted does not. At most 100 characters (teleop
+2026-10-26).
 
 | rejected | accepted |
 |---|---|
@@ -118,6 +125,11 @@ that was attempted and failed still counts; a goal never attempted does not.
   (user 2026-10-07).
 - An object that is grasped, lost and grasped again gives two grasp segments. They keep the same text when it is still
   the only object of its kind (principles section 2).
+- A carry that changes target on the way is split where the heading reverses (the pan minimum): "move X to the bin",
+  then "move X to the basket".
+- Rollouts: a step the arm visibly goes for gets its segment even when it fails. A short piece of intent is kept when
+  its target is clear. An approach that drifts onto a neighbour under the prompt keeps the text of the object it set out
+  for (user 2026-11-11).
 
 **Subtask text** (principles section 2). There is no fixed list: write the least text that tells the robot what to do
 next. Start from the bare verb and noun ("grasp the bit", "move the cup to the basket") and add a word only when the
@@ -127,6 +139,18 @@ targets in the scene never share a text. Lower case, starts with the verb, descr
 Short, simple sentences; no coined names; no colour or position on an object that has no look-alike. If
 the frames cannot resolve it, write the best reference and add `ambiguous: <why>` to the segment's `note`. Add one
 `NEW_SUBTASK: <string>` flag per distinct string (the validator needs it).
+
+Settled wordings (own scenes):
+
+| object | text |
+|---|---|
+| nail clippers | "nail clipper" and "large nail clipper" (not "small nail clipper") |
+| bottles | "spray bottle" (not "black spray bottle"), "orange bottle" (not "roar bottle") |
+| wall plugs | name the destination compartment, not the piece's own colour |
+| pill-bottle cap | "grasp the cap" with one cap in the scene; "push the cap off the pill bottle" |
+| floss case | "insert the tube onto the peg of the floss case" |
+| shirts | colour read on the wrist view: green = the olive shirt, navy = dark navy with a white size tag, brown (was "dark shirt"), grey = light grey; "blue shirt" is the dark blue one, "light blue shirt" its own text |
+| bits (bits-box roots) | "grasp the [colour] bit at <hour> o'clock near / far from the box": clock centred on the organizer box in the top image, 12 = up, 3 = right, nearest hour, from pixel coordinates (`round(atan2(dx, -dy) / 30 deg) mod 12`), position at the start of the unit, target = the piece finally picked; near = under 140 px from the box centre (640x480). No direction when the target is unsure. Move and release keep the colour only |
 
 **Per segment.**
 
@@ -145,7 +169,13 @@ read from the frames. Change the text only when the scene has a look-alike it fa
 tests (the frame it happens, the visible outcome), span by rubric 4.4, set on a dense sheet. Every close that reopens
 within about 3 s is a candidate. Not mistakes: hovering, regrasping where the object lay, nudging, a wrong object (the
 text names what was done). A released cloth left draped over the container rim and carried in again is not a `drop`
-(rubric 4.5): `drop` when it rests wholly outside the container, or mostly outside and is not carried in again.
+(rubric 4.5): `drop` when it rests wholly outside the container, or mostly outside and is not carried in again. A
+partial close in the air while lining up is not a `failed_close` (2026-11-10).
+
+**Rollout pre-filter** (which rollout episodes enter a pass, 2026-09-17). Failed closes and drops are fine in
+moderation; a wrong object or container is not a mistake. Not worth frames: a stationary arm, and loops of failed closes
+running 60-110 s. Reject an episode with a frozen joint column (a cached CAN read: the proprio is stale). Heads are
+trimmed to 1 s before the first motion. Operator holds of 3 s or more are spliced out by `idle_scan`.
 
 **Validation candidates** (only when the pass asks for them). The user holds out a small validation set, about 8
 episodes, that should cover many different tasks rather than many copies of one; a stretch of an episode is enough, and

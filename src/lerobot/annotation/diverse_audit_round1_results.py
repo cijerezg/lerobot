@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-WORK = Path("migration/diverse_annotation_audit_2026-10-07")
+WORK = Path("outputs/_annotation/diverse_annotation_audit_2026-10-07")
 
 
 def issue(parent, atom, frames, field, evidence, correction, severity="wrong", looked="dense"):

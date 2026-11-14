@@ -25,7 +25,7 @@ with `uv run python`, never bare python; install nothing).
 - finer look: `uv run python -m lerobot.annotation.atoms.sheets dense --episode E --from-s 10 --to-s 20 --stride-s 0.5`
   writes `outputs/_annotation/subtask_atoms_review/sheets/dense/...jpg` (path is printed). Use it
   whenever a boundary is not obvious from the overview; the cost is small.
-- proposal details (frames of every gripper event, arrival, failed closes): `migration/subtask_atoms_2026-09-08/proposals.jsonl`
+- proposal details (frames of every gripper event, arrival, failed closes): `lerobot/annotation_data/atoms/proposals.jsonl`
   (one JSON line per parent; `grep '"episode_id": "E"'`).
 - verdict skeleton: `uv run python -m lerobot.annotation.atoms.verdict skeleton --episode E`
   writes `outputs/_annotation/subtask_atoms_review/verdicts/E.json` prefilled with the

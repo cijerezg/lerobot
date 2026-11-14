@@ -1,0 +1,19 @@
+{
+ "origin_table_m": [
+  0.056024340242700574,
+  -0.004675736654342136,
+  0.0
+ ],
+ "size_mm": [
+  486.1,
+  266.1,
+  23.6
+ ],
+ "faces": 97061,
+ "hulls": 32,
+ "hull_volume_m3": 0.0012074992703543428,
+ "mass_kg": 0.25,
+ "texture_px": 624,
+ "mesh_cluster_tris": 97061,
+ "clusters_in_mesh": 1
+}

@@ -3,7 +3,7 @@ the 8012 service; the timeline keeps the last frame's progress and success (what
 the whole per-frame vector of that query.
 
     uv run python -m lerobot.rewards.robometer.score_episode --sim-dir <...>/sim/bottle_basket_v1 --episode 1 \
-        --task bottle_basket --out migration/digital_twin_2026-10-29/judge/runs/bb_v1_ep1.robometer.json
+        --task bottle_basket --out lerobot/scripts/sim_builders/digital_twin/judge/runs/bb_v1_ep1.robometer.json
     uv run python -m lerobot.rewards.robometer.score_episode --root outputs/rebot_teleop_2026-10-29-cut-v1 --episode 0 \
         --task "basket:pill bottle" --out ...
 

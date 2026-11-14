@@ -1,0 +1,88 @@
+<mujoco>
+  <asset>
+    <mesh name="clipper_case_visual" file="clipper_case_visual.obj"/>
+    <mesh name="clipper_case_hull00" file="clipper_case_hull00.obj"/>
+    <mesh name="clipper_case_hull01" file="clipper_case_hull01.obj"/>
+    <mesh name="clipper_case_hull02" file="clipper_case_hull02.obj"/>
+    <mesh name="clipper_case_hull03" file="clipper_case_hull03.obj"/>
+    <mesh name="clipper_case_hull04" file="clipper_case_hull04.obj"/>
+    <mesh name="clipper_case_hull05" file="clipper_case_hull05.obj"/>
+    <mesh name="clipper_case_hull06" file="clipper_case_hull06.obj"/>
+    <mesh name="clipper_case_hull07" file="clipper_case_hull07.obj"/>
+    <mesh name="clipper_case_hull08" file="clipper_case_hull08.obj"/>
+    <mesh name="clipper_case_hull09" file="clipper_case_hull09.obj"/>
+    <mesh name="clipper_case_hull10" file="clipper_case_hull10.obj"/>
+    <mesh name="clipper_case_hull11" file="clipper_case_hull11.obj"/>
+    <mesh name="clipper_case_hull12" file="clipper_case_hull12.obj"/>
+    <mesh name="clipper_case_hull13" file="clipper_case_hull13.obj"/>
+    <mesh name="clipper_case_hull14" file="clipper_case_hull14.obj"/>
+    <mesh name="clipper_case_hull15" file="clipper_case_hull15.obj"/>
+    <mesh name="clipper_case_hull16" file="clipper_case_hull16.obj"/>
+    <mesh name="clipper_case_hull17" file="clipper_case_hull17.obj"/>
+    <mesh name="clipper_case_hull18" file="clipper_case_hull18.obj"/>
+    <mesh name="clipper_case_hull19" file="clipper_case_hull19.obj"/>
+    <mesh name="clipper_case_hull20" file="clipper_case_hull20.obj"/>
+    <mesh name="clipper_case_hull21" file="clipper_case_hull21.obj"/>
+    <mesh name="clipper_case_hull22" file="clipper_case_hull22.obj"/>
+    <mesh name="clipper_case_hull23" file="clipper_case_hull23.obj"/>
+    <mesh name="clipper_case_hull24" file="clipper_case_hull24.obj"/>
+    <mesh name="clipper_case_hull25" file="clipper_case_hull25.obj"/>
+    <mesh name="clipper_case_hull26" file="clipper_case_hull26.obj"/>
+    <mesh name="clipper_case_hull27" file="clipper_case_hull27.obj"/>
+    <mesh name="clipper_case_hull28" file="clipper_case_hull28.obj"/>
+    <mesh name="clipper_case_hull29" file="clipper_case_hull29.obj"/>
+    <mesh name="clipper_case_hull30" file="clipper_case_hull30.obj"/>
+    <mesh name="clipper_case_hull31" file="clipper_case_hull31.obj"/>
+  </asset>
+  <default>
+    <default class="clipper_case_col"><geom type="mesh" group="3" condim="4" friction="0.8 0.005 0.0001"/></default>
+    <default class="clipper_case_vis"><geom type="mesh" group="2" contype="0" conaffinity="0" mass="0" rgba="0.55 0.55 0.58 1"/></default>
+  </default>
+  <worldbody>
+    <body name="clipper_case" pos="0.2769 -0.0022 0.0">
+      <freejoint/>
+      <geom class="clipper_case_vis" mesh="clipper_case_visual" pos="0 0 0.0025"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull00" pos="0 0 0.0025" mass="0.00251"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull01" pos="0 0 0.0025" mass="0.00285"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull02" pos="0 0 0.0025" mass="0.00357"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull03" pos="0 0 0.0025" mass="0.00407"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull04" pos="0 0 0.0025" mass="0.00069"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull05" pos="0 0 0.0025" mass="0.00404"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull06" pos="0 0 0.0025" mass="0.00429"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull07" pos="0 0 0.0025" mass="0.00171"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull08" pos="0 0 0.0025" mass="0.00048"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull09" pos="0 0 0.0025" mass="0.00051"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull10" pos="0 0 0.0025" mass="0.00021"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull11" pos="0 0 0.0025" mass="0.00162"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull12" pos="0 0 0.0025" mass="0.00867"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull13" pos="0 0 0.0025" mass="0.00072"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull14" pos="0 0 0.0025" mass="0.00053"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull15" pos="0 0 0.0025" mass="0.00225"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull16" pos="0 0 0.0025" mass="0.00025"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull17" pos="0 0 0.0025" mass="0.00015"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull18" pos="0 0 0.0025" mass="0.00177"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull19" pos="0 0 0.0025" mass="0.00203"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull20" pos="0 0 0.0025" mass="0.00233"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull21" pos="0 0 0.0025" mass="0.00261"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull22" pos="0 0 0.0025" mass="0.00240"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull23" pos="0 0 0.0025" mass="0.00042"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull24" pos="0 0 0.0025" mass="0.00042"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull25" pos="0 0 0.0025" mass="0.00381"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull26" pos="0 0 0.0025" mass="0.00119"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull27" pos="0 0 0.0025" mass="0.00066"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull28" pos="0 0 0.0025" mass="0.00084"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull29" pos="0 0 0.0025" mass="0.00093"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull30" pos="0 0 0.0025" mass="0.00126"/>
+      <geom class="clipper_case_col" mesh="clipper_case_hull31" pos="0 0 0.0025" mass="0.00023"/>
+      <geom type="box" group="3" size="0.0437 0.0590 0.0035" pos="0 0 0.0035" mass="0.005" condim="4" friction="0.8 0.005 0.0001"/>  <!-- skirt: the scan lost the bottom 7 mm; box, not the skirt mesh (a flat convex mesh vs the table box settled 6 mm) -->
+    </body>
+    <body name="clipper_large" pos="0.3900 -0.0064 0.0070" quat="0.70711 0 0 0.70711">
+      <freejoint/>
+      <geom type="box" size="0.0375 0.0060 0.0050" mass="0.025" rgba="0.75 0.75 0.78 1" condim="4" friction="0.6 0.005 0.0001"/>
+    </body>
+    <body name="clipper_small" pos="0.4590 -0.0004 0.0065" quat="0.70711 0 0 0.70711">
+      <freejoint/>
+      <geom type="box" size="0.0265 0.0060 0.0045" mass="0.015" rgba="0.75 0.75 0.78 1" condim="4" friction="0.6 0.005 0.0001"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,10 @@
+<mujocoinclude>
+  <!-- Appearance pass 2026-10-30: ASSET-LEVEL include (inside <asset>, or top-level: <asset> sections merge).
+       Texture paths are relative to the scene's compiler assetdir (lerobot/src/lerobot/robots/rebot_b601_sim/scenes), five levels
+       below the lerobot repo root, same convention as the twin's own asset textures. -->
+  <asset>
+    <!-- floor: Poly Haven "Laminate Floor 02" (CC0, 1k diffuse; downloads/textures/laminate_floor_02) toned to the fitted floor colour -->
+    <texture name="room_floor_tex" type="2d" file="../../../../../scripts/sim_builders/digital_twin/twin/appearance/floor_planks.png" />
+    <material name="room_floor_mat" texture="room_floor_tex" texrepeat="4 4" texuniform="true" specular="0.1" shininess="0.15" />
+  </asset>
+</mujocoinclude>

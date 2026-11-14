@@ -12,10 +12,10 @@ Draft 5 (after the step 2 pilot, 290 grasps): there is no segment-wide grade. Ev
 4 by default, only an exceptionally clean action is 5, and critiques are stretches graded
 3, 2 or 1 (user decision 2026-09-29: "everything starts at a 4, only exceptional clean
 actions go to 5, critiques go down to 3, 2, 1"). Pilot files:
-`migration/annotation_v2_2026-09-29/pilot/`.
+`lerobot/annotation_data/quality_v2/pilot/`.
 
 Built from 70 cases read on strips and traces (20 mistakes and 50 others), two
-side-by-side sheets and an idle count (`migration/quality_span_2026-09-29/`). Section 8
+side-by-side sheets and an idle count (`lerobot/annotation_data/quality_span/`). Section 8
 lists the cases.
 
 ## 1. How to use this rubric
@@ -172,6 +172,11 @@ Half-open, $[m_a, m_b)$, in frames of the dataset's own rate.
 | a partial close that stops at the commanded value (teleop command or policy output, not stopped by the object) and touches nothing, then reopens (re-annotation 2026-10-07: idx 28, 40 no row; 65, 73 unsure rows) | line-up (4.3): no mistake row; `hover` if long. `failed_close` needs the pads to reach the object. |
 | the object is released upright on its target, then the opening or rising fingers catch it and tip or move it (re-annotation 2026-10-07, additions idx 7 cup on the towel) | `knock`, not `drop`: the release itself succeeded; once let go the object is a free object the arm moved. Span from the catch to the object at rest. Only where standing upright is part of the goal (a cup on a towel, a bottle on the table): an object that tips over inside a basket or bin as the fingers rise is still in its container, no mistake (re-annotation grading 2026-10-07, ra1007 ep71 seg8 spray bottle). |
 | the container moves (audit 2026-10-06) | the arm working on that container itself (opening its lid, pulling its flap) moves it: no mistake, `strategy` 3. The container is the receiver of another object (a pour, a release) and is pushed or turned and stays moved: `knock`. |
+| a hinged lid or flap is let go short of over-centre and falls back open (re-annotation 2026-10-07; rollouts 2026-11-10) | `drop`. |
+| the object is released on its container but not in its place (large clipper left on top of the case, rollouts 2026-11-10) | `poor_place` 3, not `drop`: it rests on the target. |
+| the object being grasped is tipped over by a fingertip (rollouts 2026-11-10, bottle) | `reposition` 2, not `knock`: `knock` is on another object. |
+| a close after which the object never rises (rollouts 2026-11-11) | `failed_close`, not `slip`: a slip needs the object to leave a closed gripper during a lift or carry. |
+| a first close at the container rim that does not hold the garment (inference audit 2026-09-08) | `failed_close`; the motion to the rim before it is not a carry. |
 
 ## 5. Quality
 
@@ -215,6 +220,8 @@ There is no segment-wide grade. Quality is local.
 | carry | both kinds: the whole carry, from the lift to the arrival over the target; a grip already judged at the grasp is not judged again |
 | return | both kinds: the whole return, ending at arrival; time still at home after it is `idle` or `stall` |
 | after a failed close | the fresh final approach can be `exemplary` if it is clean; the failed close keeps its `attempt` span, which wins over the 5 |
+| after an aborted approach | the same: the fresh final approach can be `exemplary` (external 2026-10-08, D18) |
+| garment grasp followed by a drag | no `exemplary` when the garment is dragged over the table right after the close; one lifted as a bundle keeps it (audit 2026-10-07) |
 
 There are no grade-4 stretches: anything that only deserves 4 is left unmarked.
 
@@ -249,7 +256,7 @@ Read a class row as: 5 = what qualifies for an `exemplary` stretch (with clean
 execution), 4 = the default (no stretch), 3 = a `strategy` stretch.
 
 Pilot rows (confirmed by the user 2026-09-29; full files in
-`migration/annotation_v2_2026-09-29/pilot/<class>/strategy/FINAL.md`):
+`lerobot/annotation_data/quality_v2/pilot/<class>/strategy/FINAL.md`):
 
 | class | 5 | 4 | 3 |
 |---|---|---|---|
@@ -334,6 +341,15 @@ the example the policy is asked to copy at inference.
 | `exemplary` | an exceptionally clean action (5.3); grade 5 |
 | `other` | anything else, including human help (grade 1); describe it in the note |
 
+Cause names (external 2026-10-08, D39; class rulings of that pass in
+[external_grading_decisions.md](external_grading_decisions.md)):
+
+- A back-off before a grasp is `search` 3. `aborted_approach` needs the gripper to close on nothing.
+- A wrist that passes park and comes back on a return is `search` 3 (2 where it drags on), not `stall`. A wrist that
+  rotates into the park pose in one motion gets no span.
+- A full stop of over 1 s inside a return that then continues is `stall` 3, not `idle` 1 (re-annotation 2026-10-07).
+- A push that changes nothing visible is `other` 3, 2 past about 4 s (rollouts 2026-10-14, clipper).
+
 ### 5.8 Grades
 
 | grade | meaning | typical |
@@ -374,6 +390,11 @@ The trace measure (arm speed below half its peak) over-reads slow steady approac
 Confirm every hover on the wrist view: the object should sit in about the same place in
 consecutive tiles.
 
+Holds at a peg, socket or fitted slot (external 2026-10-08, D9 / D38; user 2026-09-30 "a near-stop at the face deserves
+a 3"): a flat hold of more than 1 s with the part not descending is `hover` 3 from the frame progress stops, and 2 for
+the whole span once it passes about 8 s (twice the external p90). One hold = one span. A slow continuous descent onto
+the peg gets no span.
+
 ### 5.10 Spans around a mistake
 
 Every mistake gets one `attempt` span that contains it.
@@ -413,6 +434,10 @@ The current `annotation_principles.md` supersedes the 2026-09-29 decision to ret
 Cut confirmed idle and aimless motion before grading, including purposeless tails after the last useful step.
 Keep purposeful searching/hovering at the object and grade it; slow direct travel and task-required holds are
 not idle merely because a trace is small. Historical `idle` spans identify review candidates, not automatic cuts.
+
+A fully still head of 1 s or more that `idle_scan` will not cut (under 3 s) is `idle` 1 over the still run; under 1 s
+gets nothing (external 2026-10-08, D1). The scan misses near-idle stretches where a slow drift breaks its 2 deg test:
+sweep with `motion.idle_runs` at 6 deg / 2.5 s and read each on the frames (external audit 2026-10-08).
 
 For ReBot, the existing candidate detector uses no arm joint moving more than 1 degree in a 5 s window and
 less than 1 % gripper travel; fully still runs over 1 s warrant a look. For diverse, establish the state schema,
@@ -493,6 +518,8 @@ $d$ is how far the fingers still are from where they end up; $\theta$ is how muc
   3 from stills.
 - A steady fall that creeps at the object for a long time is still a `hover` 3 (user, ep8 v2 pass, 8.6): "however
   slow" covers a slow travel to the object, not a long crawl once the fingers are at it.
+- On push, insert, strike, fold and pour units the line points at the unit end, so it is not evidence: read the frames.
+  The frames also win where the line misses an early detour or sits at a threshold edge (external 2026-10-08, D4).
 - Both lines are checked from the farthest point (largest $d$ between the unit start and the commit) to the commit, so
   leaving home is not flagged.
 - Tool: `quality_v2/material.py` (`approach_line`) writes `approach/<uid>.png` per unit, the columns `dist_cm`,
@@ -527,6 +554,16 @@ boundaries follow the completed, visibly settled close or open under `subtask_at
 - Steps with no single commit (wipe, fold, stir, pour): the level applies for the whole
   time the tool or object is over the work area.
 - `return to home`: 1 throughout.
+- Commit frame: the header commit and the measured gripper onset are both accepted when up to about 15 frames apart. On
+  a wrong event, or before the unit start, use the measured onset (external 2026-10-08).
+- Strikes: one window per strike (`precision_2`, ... for the extra ones). Commit = contact; $w_a$ = the puck within
+  about 10 cm of the contact point and at least 1 s before contact; $w_b$ = contact + 15 frames (external 2026-10-08,
+  D16 / D34).
+- A grasp that never closes keeps its window at the class level: commit = the last close, else the unit end (rollouts
+  2026-11-10). No window when the arm never lines up on the target (rollouts 2026-11-11).
+- A failed lid swing gets a window; commit = the lid leaves the fingers (re-annotation 2026-10-07).
+- The same step in the same scene carries one level. Where sibling labels differ, settle the level on the frames and
+  fix the labels; the windows follow (external 2026-10-08, D23 / D40).
 
 | example | level | window |
 |---|---|---|
@@ -615,8 +652,8 @@ Historical verdicts follow; idle-as-grade-1 examples are superseded by retention
 
 Verdicts are mine, from coarse strips and traces. "4" means no stretch (default). Strategy
 stretches are set on the sheets, not here. Cases marked * need the dense strip
-before the verdict is final. File names are in `migration/quality_span_2026-09-29/`
-(`case_strips/`, `strips/`).
+before the verdict is final. File names are in `lerobot/annotation_data/quality_span/`
+(`cases.json`, `picks.json`; the traces are in `case_traces/` and `traces/`, the strips were not kept).
 
 ### 8.1 Waits and hovers, no mistake
 
@@ -626,7 +663,7 @@ before the verdict is final. File names are in `migration/quality_span_2026-09-2
 | `hover_all_ep28` | 4 | sock; steady descent, then about 2.5 s wait at the sock | no span (4) |
 | `hover_all_ep69` | 5 | sock; travel from the bin, about 2 s wait at the sock | no span (4) |
 | `hover_add_ep5` | 4 | sock; arm at the sock, wrist view unchanged for 6 s with the sock at the edge of the view, then a clean close | `hover` grade 2, about 4 s |
-| `q3_ext_ep81` | 3 | ring held over the peg for 5 s, then released onto the stack | no span (4; was `hover` 4 in draft 4); fine step |
+| `q3_ext_ep81` | 3 | ring held over the peg for 5 s, then released onto the stack | `hover` 3 over the flat hold (external 2026-10-08, D9: a hold of more than 1 s with the piece not descending; this case predates 5.13); fine step |
 | `pause_robochallenge_ep000561` | 5 | UR5 motionless over the pen for about 5 s, then a clean close | `idle` grade 1 |
 | `pause_robochallenge_ep001017` | 5 | cup held at the rack, no motion for over 6 s | `idle` grade 1; the fine step does not excuse it |
 | `lowq_molmoact_ep007150` | 3 | mug over the counter, 6 s slow descent, then release | `hover` grade 3; coarse target |
@@ -705,8 +742,7 @@ Draft-4 wording: read "v2 base 5" as an `exemplary` stretch, "4" as no stretch, 
 
 ### 8.6 Rollout pilot 2026-10-06 (user verdicts)
 
-The user watched three annotated policy rollouts (`outputs/rebot_rollouts_2026-10-05-cut-v1` ep 1, 6, 9; videos in
-`migration/rollouts_annotation_2026-10-06/review_videos/`). Frames are episode-local and approximate (read off the
+The user watched three annotated policy rollouts (`outputs/rebot_rollouts_2026-10-05-cut-v1` ep 1, 6, 9, on review videos). Frames are episode-local and approximate (read off the
 video clock). "graded" is what the pilot wrote.
 
 | case | what happens | graded | user |

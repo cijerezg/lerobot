@@ -52,7 +52,8 @@ datasheet, 80 mm). Binary source, so the aperture is 0 or 80 mm.
 
 `uv run python lerobot/scripts/kinematics_roundtrip.py`, 200 recorded frames per source spread over the
 episodes, `q -> fk -> ik(seed = q + noise) -> q'`, noise 5 deg (ReBot) or 0.1 rad (Panda). Output in
-`migration/kinematics_roundtrip_2026-10-09/` (roundtrip.md, roundtrip.json, render\_<source>.png).
+`outputs/kinematics_roundtrip/` (roundtrip.md, roundtrip.json, render\_<source>.png); the 2026-10-09
+output folder is no longer on disk, the table below is its record.
 
 | source | converged | same joints | pose err mm med / max | rot err deg med / max | joint err deg med / max                |
 | ------ | --------- | ----------- | --------------------- | --------------------- | -------------------------------------- |

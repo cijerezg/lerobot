@@ -1,0 +1,478 @@
+[
+  {
+    "episode_idx": 0,
+    "frame_idx": 693,
+    "global_idx": 693,
+    "window": [
+      -5075,
+      -4697
+    ],
+    "offset": "0.5s",
+    "seconds_in": 0.47,
+    "gt_subtask": "grasp the shirt",
+    "present": [
+      "the black sock",
+      "the shirt"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -110.3,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 1399,
+      "gt_subtask": "grasp the pink shirt"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 756,
+    "global_idx": 756,
+    "window": [
+      -5075,
+      -4697
+    ],
+    "offset": "25%",
+    "seconds_in": 2.57,
+    "gt_subtask": "grasp the shirt",
+    "present": [
+      "the black sock",
+      "the shirt"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -112.2,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 1462,
+      "gt_subtask": "grasp the pink shirt"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 834,
+    "global_idx": 834,
+    "window": [
+      -5075,
+      -4697
+    ],
+    "offset": "50%",
+    "seconds_in": 5.17,
+    "gt_subtask": "grasp the shirt",
+    "present": [
+      "the black sock",
+      "the shirt"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -109.1,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 1540,
+      "gt_subtask": "grasp the pink shirt"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 912,
+    "global_idx": 912,
+    "window": [
+      -5075,
+      -4697
+    ],
+    "offset": "75%",
+    "seconds_in": 7.77,
+    "gt_subtask": "grasp the shirt",
+    "present": [
+      "the black sock",
+      "the shirt"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -123.8,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 1618,
+      "gt_subtask": "grasp the pink shirt"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 3585,
+    "global_idx": 3585,
+    "window": [
+      -2183,
+      -1804
+    ],
+    "offset": "0.5s",
+    "seconds_in": 0.47,
+    "gt_subtask": "grasp the black sock",
+    "present": [
+      "the black sock",
+      "the sock"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -163.1,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 4291,
+      "gt_subtask": "grasp the black sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 3648,
+    "global_idx": 3648,
+    "window": [
+      -2183,
+      -1804
+    ],
+    "offset": "25%",
+    "seconds_in": 2.57,
+    "gt_subtask": "grasp the black sock",
+    "present": [
+      "the black sock",
+      "the sock"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -163.8,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 4354,
+      "gt_subtask": "grasp the black sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 3726,
+    "global_idx": 3726,
+    "window": [
+      -2183,
+      -1804
+    ],
+    "offset": "50%",
+    "seconds_in": 5.17,
+    "gt_subtask": "grasp the black sock",
+    "present": [
+      "the black sock",
+      "the sock"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -163.8,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 4432,
+      "gt_subtask": "grasp the black sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 3804,
+    "global_idx": 3804,
+    "window": [
+      -2183,
+      -1804
+    ],
+    "offset": "75%",
+    "seconds_in": 7.77,
+    "gt_subtask": "grasp the black sock",
+    "present": [
+      "the black sock",
+      "the sock"
+    ],
+    "absent": [
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -163.2,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 4510,
+      "gt_subtask": "grasp the black sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 4212,
+    "global_idx": 4212,
+    "window": [
+      -1556,
+      -1118
+    ],
+    "offset": "0.5s",
+    "seconds_in": 0.47,
+    "gt_subtask": "grasp the sock",
+    "present": [
+      "the sock"
+    ],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -269.3,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 4918,
+      "gt_subtask": "grasp the white sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 4260,
+    "global_idx": 4260,
+    "window": [
+      -1556,
+      -1118
+    ],
+    "offset": "25%",
+    "seconds_in": 2.07,
+    "gt_subtask": "grasp the sock",
+    "present": [
+      "the sock"
+    ],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -270.0,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 4966,
+      "gt_subtask": "grasp the white sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 4323,
+    "global_idx": 4323,
+    "window": [
+      -1556,
+      -1118
+    ],
+    "offset": "50%",
+    "seconds_in": 4.17,
+    "gt_subtask": "grasp the sock",
+    "present": [
+      "the sock"
+    ],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -270.0,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 5029,
+      "gt_subtask": "grasp the white sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 4386,
+    "global_idx": 4386,
+    "window": [
+      -1556,
+      -1118
+    ],
+    "offset": "75%",
+    "seconds_in": 6.27,
+    "gt_subtask": "grasp the sock",
+    "present": [
+      "the sock"
+    ],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -270.0,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 5092,
+      "gt_subtask": "grasp the white sock"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 4866,
+    "global_idx": 4866,
+    "window": [
+      -903,
+      -687
+    ],
+    "offset": "0.5s",
+    "seconds_in": 0.5,
+    "gt_subtask": "return to home",
+    "present": [],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -213.1,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 5572,
+      "gt_subtask": "return to home"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 4905,
+    "global_idx": 4905,
+    "window": [
+      -903,
+      -687
+    ],
+    "offset": "25%",
+    "seconds_in": 1.8,
+    "gt_subtask": "return to home",
+    "present": [],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -205.5,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 5611,
+      "gt_subtask": "return to home"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 4959,
+    "global_idx": 4959,
+    "window": [
+      -903,
+      -687
+    ],
+    "offset": "50%",
+    "seconds_in": 3.6,
+    "gt_subtask": "return to home",
+    "present": [],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -174.4,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 5665,
+      "gt_subtask": "return to home"
+    }
+  },
+  {
+    "episode_idx": 0,
+    "frame_idx": 5013,
+    "global_idx": 5013,
+    "window": [
+      -903,
+      -687
+    ],
+    "offset": "75%",
+    "seconds_in": 5.4,
+    "gt_subtask": "return to home",
+    "present": [],
+    "absent": [
+      "the black sock",
+      "the grey shirt",
+      "the shirt",
+      "the red shirt",
+      "the sock"
+    ],
+    "ambiguous": [
+      "the dark shirt"
+    ],
+    "gripper": -172.7,
+    "reviewed_source_frame": {
+      "episode_idx": 0,
+      "global_idx": 5719,
+      "gt_subtask": "return to home"
+    }
+  }
+]

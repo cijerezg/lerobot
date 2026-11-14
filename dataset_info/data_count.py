@@ -175,7 +175,7 @@ def main():
     out = [f"# Data record\n\nGenerated {datetime.now():%Y-%m-%d %H:%M} by `uv run python lerobot/dataset_info/data_count.py` from "
            f"`{args.config}`. Do not edit by hand; rerun after every change to the data or the config.\n"]
     out.append("## Training mix by sampling group\n\nShare = fraction of all training samples. Usable = frames minus the usefulness cuts "
-               f"(`{manifest}`). ReBot hours at 30 fps.\n")
+               f"(`{manifest}`; rule: `lerobot/src/lerobot/annotation/rubrics/usefulness_review_rubric.md`). ReBot hours at 30 fps.\n")
     out.append("| group | share | episodes | frames | usable frames | hours |\n|---|---|---|---|---|---|")
     for g, (n, f, u) in sorted(group.items(), key=lambda kv: -shares.get(kv[0], 0)):
         out.append(f"| {g} | {shares.get(g, 0):.4g} | {n} | {f:,} | {u:,} | {hours(f)} |")

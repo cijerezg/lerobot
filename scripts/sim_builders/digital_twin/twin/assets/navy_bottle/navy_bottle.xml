@@ -1,0 +1,19 @@
+<mujoco>
+  <asset>
+    <mesh name="navy_bottle_body" file="navy_bottle_body.obj"/>
+  </asset>
+  <default>
+    <default class="navy_bottle_col"><geom group="3" condim="4" friction="0.6 0.005 0.0001"/></default>
+    <default class="navy_bottle_vis"><geom group="2" contype="0" conaffinity="0" mass="0"/></default>
+  </default>
+  <worldbody>
+    <body name="navy_bottle" pos="0 0 0">
+      <freejoint/>
+      <geom class="navy_bottle_vis" type="mesh" mesh="navy_bottle_body" rgba="0.10 0.13 0.26 1"/>
+      <geom class="navy_bottle_vis" type="cylinder" size="0.0245 0.014" pos="0 0 0.186" rgba="0.33 0.38 0.55 1"/>
+      <geom class="navy_bottle_col" type="cylinder" size="0.035 0.075" pos="0 0 0.075" mass="0.42"/>
+      <geom class="navy_bottle_col" type="cylinder" size="0.027 0.011" pos="0 0 0.161" mass="0.04"/>
+      <geom class="navy_bottle_col" type="cylinder" size="0.0245 0.014" pos="0 0 0.186" mass="0.04"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -36,7 +36,7 @@ def reference_returns(boundary, mistake_onset, chunk, discount, norm, penalty, v
 
 def load_text_counts(path):
     if not path:
-        raise ValueError("critic_subtask_swap requires critic_text_counts_path; run migration/critic_text_counts.py.")
+        raise ValueError("critic_subtask_swap requires critic_text_counts_path; run lerobot/scripts/probes/critic_text_counts.py.")
     counts = json.loads(Path(path).read_text())
     if not isinstance(counts, dict) or not counts or any(
         not isinstance(k, str) or not k or type(v) is not int or v < 0 for k, v in counts.items()

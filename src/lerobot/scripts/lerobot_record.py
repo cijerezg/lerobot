@@ -118,6 +118,7 @@ from lerobot.datasets import (
     safe_stop_image_writer,
 )
 from lerobot.datasets.depth_writer import write_depth
+from lerobot.datasets.utils import ROBOT_CONTROL_PATH
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -163,6 +164,7 @@ from lerobot.teleoperators.utils import TeleopFeedbackError
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.io_utils import write_json
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     init_logging,
@@ -708,6 +710,8 @@ def record(
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
             )
+            if hasattr(robot, "control_settings"):
+                write_json(robot.control_settings, dataset.root / ROBOT_CONTROL_PATH)
 
         robot.connect()
         if teleop is not None:

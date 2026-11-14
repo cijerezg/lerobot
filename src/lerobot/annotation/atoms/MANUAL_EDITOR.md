@@ -56,7 +56,7 @@ it does not establish visual correctness. Drafts may fail these checks.
 The corpus videos and parent annotations are read-only. Marking reviewed does
 not assemble atoms, recompute speed labels, or launch training. The next pipeline
 step remains collection with `collect_reviews.py`, followed by `assemble.py`.
-See the [review guide](REVIEW_GUIDE.md) for the retained review decisions.
+See the [review guide](../rubrics/subtask_atoms_rubric.md) for the retained review decisions.
 FMB and ReBot are outside this editor's diverse-corpus scope.
 
 For isolated experiments, use `--review-dir /tmp/my-atomic-reviews`; this also reads

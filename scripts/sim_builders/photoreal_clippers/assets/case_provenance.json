@@ -1,0 +1,11 @@
+{
+  "slot_count": 2,
+  "visual_dimensions_m": [
+    0.08800568,
+    0.11855298
+  ],
+  "foam_top_m": 0.0186,
+  "rim_top_m": 0.02055,
+  "slot_floor_m": 0.0098,
+  "source": "Existing scan footprint and material-class slot masks; dimensions regularized for appearance"
+}

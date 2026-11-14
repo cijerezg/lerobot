@@ -55,7 +55,7 @@ sits a few degrees past at "closed" on every chunk and the follower clips at any
 the bound applies that clip early so the recorded action equals the motor command,
 since `RobotEnv.step` records the pre-driver value). The probes must not apply
 these bounds. Values are 8 wide (padding column = 0, pinned) and come from
-`migration/measure_action_bounds.py` over the training roots: $L_j$ = 2.0 x the
+`scripts/measure_action_bounds.py` over the training roots: $L_j$ = 2.0 x the
 anchor-delta q01/q99 envelope at k=0, $D_j$ = 2.0 x that envelope over the horizon,
 workspace = action q0.1/q99.9 -/+ 10 deg capped by the driver's `joint_limits`,
 $r_j$ = 1.5 x the max per-tick delta in the demos.
@@ -140,7 +140,7 @@ pairs at `examples/trace.html`. A pair worth picking is two frames at nearly the
 whose demonstrations go somewhere different — reach starts (every reach leaves the same
 container pose), episode starts across tasks, carries; pre-close frames are the wrong place,
 since the arm is at the object and poses only match when the objects coincide.
-`migration/pick_input_swap_pairs.py` searches a dataset for them. Val pairs in use:
+`scripts/probes/pick_input_swap_pairs.py` searches a dataset for them. Val pairs in use:
 `834:4206` (ep0 white-sock reach, four socks vs one), `7344:6960` (ep1 red-shirt vs
 dark-shirt reach), `8998:9` (ep2 shirt reach vs ep0 socks at the rest pose), `8100:11485`
 (carry to the bin, red vs pink shirt).
@@ -235,7 +235,7 @@ through `rl/online_recorder.OnlineEpisodeRecorder`, in the **lerobot_record form
   vocabulary may be revised.
 - Consumption: add the run's `inference_dataset` as a `dataset.sources` entry; annotation
   is the same separate pass as for recordings. Hardware-free check:
-  `migration/online_recorder_check.py`.
+  `scripts/online_recorder_check.py`.
 - Between-episode cost: the video encode runs in `save_episode` after the arms are at
   rest, so it only delays the next "2". `episode_logging_freq > 0` adds ~12 s per episode
   (192 synchronous PNGs + critic + video) on top; the recorder's mp4s are the durable

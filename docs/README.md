@@ -78,6 +78,8 @@ Each note opens with `> **Status:** ...`. Vocabulary: **idea** Â· **building** Â
 | [`leader_102hd_actuation.md`](notes/leader_102hd_actuation.md)                   | built 2026-09-03              | Driving the 102HD leader: HD driver, policy preview, shadowing                      |
 | [`leader_bus_investigation.md`](notes/leader_bus_investigation.md)               | resolved 2026-09-06           | Leader byte loss and overvoltage: root causes and workarounds                       |
 | [`open_questions.md`](notes/open_questions.md)                                   | living list                   | Unresolved repo-level questions                                                     |
+| [`speed_frame_level_alternatives.md`](notes/speed_frame_level_alternatives.md)   | decided, 2026-10-26           | Frame-level speed label: the smoothing / hysteresis / minimum-run alternatives measured, label shares before and after |
+| [`memory_history_slot.md`](notes/memory_history_slot.md)                         | built, off (parked 2026-11-07) | Short-term memory as its own image slot: design, one internal-only run, parked      |
 | [`ee_mixture_loss/TODO.md`](ee_mixture_loss/TODO.md)                             | building, 2026-10-09          | The EE mixture loss (hand block, FK term, masked FAST): plan, decisions, phases; its folder holds the proposal and the loss notes |
 
 ## `runbooks/`
@@ -90,10 +92,23 @@ Each note opens with `> **Status:** ...`. Vocabulary: **idea** Â· **building** Â
 Saved analyses. The HTML embeds its numbers and opens without a model or server; frame links
 inside point at the original `outputs/probe_runs/...` directory on the training machine.
 
+- [`lid_solvability/`](reports/lid_solvability/README.md): can the gripper close the sim
+  headphone-case lid; scripted grasps, kinematic ceiling per rim, demo case pose (2026-10-28).
+- [`embodiment_stats_recompute/`](reports/embodiment_stats_recompute/README.md): q01/q99 bands
+  over the sampled ReBot selection vs the 2026-10-10 stats file (2026-10-27).
+- [`fast_roundtrip_layouts/`](reports/fast_roundtrip_layouts/README.md): FAST encode/decode
+  error per action layout, end-effector row vs joint rows (2026-09-19).
 - [`critic_gradients_v2_2000/`](reports/critic_gradients_v2_2000/README.md): critic input
   sensitivity with continuous state and depth, checkpoint 2000, plus the comparison with v1.
 - [`critic_gradients_2000/`](reports/critic_gradients_2000/README.md): the original critic,
   checkpoint 2000.
+
+## `research/`
+
+Literature reports. Not design, not status.
+
+- [`awr_flow_vla/`](research/awr_flow_vla/report_v2.md): advantage-weighted regression for flow
+  VLA policies; `report_v2.md` (current), `report_v1.md`, per-paper notes in `papers/`.
 
 ## Rules
 
@@ -107,9 +122,14 @@ inside point at the original `outputs/probe_runs/...` directory on the training 
 3. **`guide/` and `design/` never carry dates.** Anything that would need "as of" belongs
    in `status.md` or in a note.
 4. **The repo cites files outside itself by plain path, not by link.** The live run config
-   (`config_rl.yaml`), the scratch directory (`migration/`) and run outputs (`outputs/`) sit
+   (`config_rl.yaml`) and run outputs (`outputs/`) sit
    at the workspace root next to this clone and are not in git. The in-package
    [`src/lerobot/rl/config_rl.yaml`](../src/lerobot/rl/config_rl.yaml) is the template.
+   Scratch: per-pass annotation work goes under `outputs/_annotation/passes/<pass>_<date>/`,
+   other scratch under `outputs/scratch/<topic>_<date>/`. Anything that code, configs or docs
+   come to depend on is moved into the repo (`lerobot/dataset_info/manifests`,
+   `lerobot/annotation_data`, `lerobot/scripts`, `lerobot/docs`) the same day. `migration/`
+   now holds only frozen inputs of the published reports under `reports/` and gets no new files.
 5. **In-source markdown describes its package only.** Anything about the project, a decision
    or a status goes here.
 

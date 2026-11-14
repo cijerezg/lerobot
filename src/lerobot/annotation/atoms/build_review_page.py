@@ -26,7 +26,7 @@ def main():
 <div id="videos"><video id="external" controls preload="metadata"></video><video id="wrist" controls preload="metadata" muted></video></div>
 <p><button id="previous">Previous atom</button> <button id="replay">Replay atom</button> <button id="next">Next atom</button></p><div id="description"></div><p id="note"></p>
 <table><thead><tr><th>Parent / atom</th><th>Subtask</th><th>Start</th><th>Duration</th><th>Quality</th><th>Speed</th><th>Confidence</th></tr></thead><tbody id="atoms"></tbody></table>
-<p>Machine visual annotations with recorded inspection and corrections. Parent quality and events are preserved under the annotation rules. <a href="../../../migration/subtask_atoms_2026-09-08/COMPLETION.md">Dataset and validation details</a></p>
+<p>Machine visual annotations with recorded inspection and corrections. Parent quality and events are preserved under the annotation rules.</p>
 <script>const data=PAYLOAD;const $=id=>document.getElementById(id);let current=null,index=0;
 for(const source of [...new Set(data.map(e=>e.source))]){let o=new Option(source,source);$('source').add(o)}
 function filter(){let q=$('search').value.toLowerCase();let selected=data.filter(e=>(!$('source').value||e.source===$('source').value)&&(!q||(e.id+' '+e.task).toLowerCase().includes(q))&&(!$('uncertain').checked||e.atoms.some(a=>a.confidence==='unsure')));$('episode').replaceChildren(...selected.map(e=>new Option(e.id,e.id)));load()}

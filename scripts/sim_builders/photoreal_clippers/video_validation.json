@@ -1,0 +1,32 @@
+{
+  "comparison.mp4": {
+    "programs": [],
+    "streams": [
+      {
+        "width": 1280,
+        "height": 580,
+        "r_frame_rate": "30/1",
+        "nb_frames": "630"
+      }
+    ],
+    "format": {
+      "duration": "21.000000",
+      "size": "4159245"
+    }
+  },
+  "camera_replay.mp4": {
+    "programs": [],
+    "streams": [
+      {
+        "width": 1280,
+        "height": 1060,
+        "r_frame_rate": "30/1",
+        "nb_frames": "450"
+      }
+    ],
+    "format": {
+      "duration": "15.000000",
+      "size": "3279515"
+    }
+  }
+}

@@ -7,7 +7,7 @@ from lerobot.annotation.paths import WORKSPACE
 
 # material imports the strip renderers, which read measured approach angles from the results folders at import.
 pytestmark = pytest.mark.skipif(
-    not (WORKSPACE / "migration/grasp_strategy_2026-09-24/grasps.jsonl").exists(),
+    not (WORKSPACE / "lerobot/annotation_data/grasp_strategy/grasps.jsonl").exists(),
     reason="annotation results folders not on this machine",
 )
 

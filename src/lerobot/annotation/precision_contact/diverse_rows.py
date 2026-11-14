@@ -2,7 +2,7 @@
 
 One row per atom of outputs/diverse_robot_dataset_v3/{corpus,fmb}/subtask_atoms.jsonl, in file order.
 move / return are derived (no sheet row). Sheets are drawn by the ReBot renderer
-(precision_contact_annotation_2026-09-25/render_rows.py render_sheet); this file only builds the rows.
+(precision_contact/render_rows.py render_sheet); this file only builds the rows.
 
 Differences from the ReBot rows:
   root        one short name per robot: droid, droid_success, molmoact, rc_arx5, rc_ur5, ur7e, yam, fmb
@@ -16,15 +16,15 @@ Differences from the ReBot rows:
   onset       release: first frame more than 20 % of the range below the held value for 0.17 s
               (5 frames at 30 Hz), held = the more closed of the 0.5 s before and the first 5 frames;
               none found: the steepest 0.17 s opening inside the atom (if > 5 points), else to-0.5 s; flagged
-  angle       approach angle by FK (grasp_strategy_2026-09-24/diverse_angles.py angle_for); ARX5 / YAM nan
+  angle       approach angle by FK (precision_contact/diverse_angles.py angle_for); ARX5 / YAM nan
   layout      contact tiles also for scrub, stir, spread, water, unfold, flatten, straighten, tilt;
               contact / end-layout atoms over 4 s flagged long_segment (the fixed tiles miss the contact)
   FMB grasp   contact_fixed from the FK angle at the commit tile (< 45 top-pinch, >= 45 side-pinch);
               12 atoms spread over the angle range marked fk_check
   move        precision_from_row = the next atom of the episode (parent interval, atom order)
 
-Usage (repo root): uv run python -m migration.precision_contact_diverse_2026-09-25.diverse_rows  (or the file path)
-Output: this dir/rows.jsonl, summary.txt, sheets/<root>/<verb>_<k>.jpg. Arguments: root short names to render
+Usage (workspace root): uv run python -m lerobot.annotation.precision_contact.diverse_rows
+Output: outputs/_annotation/precision_contact_diverse_2026-09-25/rows.jsonl, summary.txt, sheets/<root>/<verb>_<k>.jpg. Arguments: root short names to render
 (default all); --sample N renders only the first N sheets per (root, verb).
 """
 import json, math, os, re, sys
@@ -35,7 +35,7 @@ from pathlib import Path
 from lerobot.annotation.paths import WORKSPACE  # noqa: E402
 
 REPO = WORKSPACE
-HERE = REPO / "migration/precision_contact_diverse_2026-09-25"  # results folder of the 09-25 pass
+HERE = REPO / "outputs/_annotation/precision_contact_diverse_2026-09-25"  # results folder of the 09-25 pass
 _argv = sys.argv; sys.argv = sys.argv[:1]
 from lerobot.annotation.precision_contact import render_rows as rr  # noqa: E402  (chdir to REPO, render_sheet, classify, onset constants)
 sys.argv = _argv

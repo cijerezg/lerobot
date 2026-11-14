@@ -8,7 +8,7 @@ alike, and the quality grades do not survive a look at the frames. The labels we
 the robot what to do. These principles apply to every annotation pass from now on, starting with
 `outputs/rebot_rollouts_2026-10-05-cut-v1`. The per-channel rubrics (`quality_mistake_rubric_v2.md`, `precision_rubric.md`,
 `contact_strategy_rubric.md`) stay in force where they do not contradict this page. Rubrics and annotation scripts live in
-`src/lerobot/annotation/` (see its `README.md`), not in `migration/`.
+`src/lerobot/annotation/` (see its `README.md`), not in the results folders.
 
 ## 1. The one test
 

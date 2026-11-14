@@ -41,7 +41,7 @@ Workspace: `/home/user/Documents/Research/RL/LeRobot` (run every command from th
   `uv run python -m lerobot.annotation.atoms.look --episode E --frames 100 120 140`
   or `--from-s 10 --to-s 13 --stride-s 0.5` (12 frames max per call).
 - Proposal details (gripper events, carries, failed closes, arrival frames):
-  `grep '"episode_id": "E"' migration/subtask_atoms_2026-09-08/proposals.jsonl`.
+  `grep '"episode_id": "E"' lerobot/annotation_data/atoms/proposals.jsonl`.
 - Native rate: 15 Hz for droid/droid_success, 30 Hz for robochallenge and ur7e. Cuts are frame
   indices; seconds = frame / rate.
 

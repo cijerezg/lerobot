@@ -1,0 +1,11 @@
+ACTION ReBot q01/q99 max abs change over all 30 steps x 7 joints:
+  pan      |dq01| max   0.3578   |dq99| max   0.4449
+  lift     |dq01| max   1.3239   |dq99| max   1.5066
+  elbow    |dq01| max   0.9908   |dq99| max   0.9911
+  wflex    |dq01| max   0.8522   |dq99| max   0.8496
+  wyaw     |dq01| max   0.1131   |dq99| max   0.1376
+  wroll    |dq01| max   0.0566   |dq99| max   0.4231
+  grip     |dq01| max   3.9869   |dq99| max   2.7821
+
+hand_block delta_block_scale (step 29): [0.0643, 0.0643, 0.0643, 0.1593, 0.1593, 0.1593, 0.0092] -> [0.0659, 0.0659, 0.0659, 0.1624, 0.1624, 0.1624, 0.0094]
+hand_block state_block_scale: [0.1697, 0.1697, 0.1697, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.0144] -> [0.1699, 0.1699, 0.1699, 0.3969, 0.3969, 0.3969, 0.3969, 0.3969, 0.3969, 0.0147]

@@ -195,7 +195,7 @@ class RobotEnv(gym.Env):
         }
 
         # Motor velocities and torques ({joint}.vel, {joint}.torque, when the robot reports them) ride
-        # along the same way, for the online recorder's label sidecar; nothing downstream reads them.
+        # along the same way, for the online recorder's observation.velocity / observation.effort columns.
         motor = {
             key: val for key, val in obs_dict.items() if isinstance(key, str) and key.endswith((".vel", ".torque"))
         }

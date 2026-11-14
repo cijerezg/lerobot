@@ -14,8 +14,7 @@ storage would round the joint angles.
 
 Per-frame labels the recorded schema has no column for go to ``meta/online_labels.parquet``
 (episode_index, frame_index, index, is_intervention, subtask_index, subtask, policy_index,
-truncated, and per motor ``{joint}.vel`` in deg/s and ``{joint}.torque`` in N*m when the robot
-reports them): a sidecar in the style of the annotation files, invisible to the loaders. The subtask
+truncated): a sidecar in the style of the annotation files, invisible to the loaders. The subtask
 text rides next to its index because the subtask vocabulary may be revised. ``policy_index`` is
 the resident model that produced the frame (console keys o/p; 0 unless a second checkpoint is
 loaded). ``truncated`` marks every
@@ -34,8 +33,10 @@ import torch
 
 from lerobot.datasets.depth_writer import write_depth
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import ROBOT_CONTROL_PATH
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.utils.io_utils import write_json
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,8 @@ class OnlineEpisodeRecorder:
             use_videos=True,
             image_writer_threads=4 * len(self.robot.cameras),
         )
+        if hasattr(self.robot, "control_settings"):
+            write_json(self.robot.control_settings, self.root / ROBOT_CONTROL_PATH)
         logger.info("[RECORDER] Recording online episodes to %s", self.root)
 
     def add_frame(
@@ -104,7 +107,6 @@ class OnlineEpisodeRecorder:
             "subtask_index": int(subtask_index),
             "subtask": subtask,
             "policy_index": int(policy_index),
-            **{k: float(v) for k, v in raw_obs.items() if k.endswith((".vel", ".torque"))},
         })
 
     def save_episode(self, *, truncated: bool = False) -> None:

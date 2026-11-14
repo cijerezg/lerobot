@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Command vs follower: gain 54 vs 216</title>
+<style>
+  html, body { margin: 0; height: 100%; font-family: sans-serif; }
+  .row { display: flex; height: 100%; }
+  .col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .col + .col { border-left: 2px solid #888; }
+  h3 { margin: 0; padding: 6px 10px; font-size: 14px; background: #eee; }
+  iframe { flex: 1; border: 0; width: 100%; }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="col">
+    <h3>Old gain (KP_APR 54): insert-floss-v1_20261111_132721, episode 0</h3>
+    <iframe src="insert-floss-v1_20261111_132721_trace.html"></iframe>
+  </div>
+  <div class="col">
+    <h3>New gain (KP_APR 216 on pan / lift / elbow): gain216-test-v1_20261113_142107, episode 0</h3>
+    <iframe src="gain216-test-v1_20261113_142107_trace.html"></iframe>
+  </div>
+</div>
+</body>
+</html>

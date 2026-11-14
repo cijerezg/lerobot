@@ -1,0 +1,24 @@
+{
+  "headphone_comparison.mp4": {
+    "codec": "h264",
+    "pixel_format": "yuv420p",
+    "width": 1280,
+    "height": 570,
+    "frames": 600,
+    "duration": 20,
+    "full_decode": "passed"
+  },
+  "hinge_motion.mp4": {
+    "codec": "h264",
+    "pixel_format": "yuv420p",
+    "width": 960,
+    "height": 720,
+    "frames": 300,
+    "duration": 10,
+    "full_decode": "passed"
+  },
+  "rerun": {
+    "opened": true,
+    "schema": "Column name: /after/detail:EncodedImage:blob\n\tEntity path: /after/detail\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.Blob\n\tComponent: EncodedImage:blob\nColumn name: /after/detail:EncodedImage:media_type\n\tEntity path: /after/detail\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.MediaType\n\tComponent: EncodedImage:media_type\nColumn name: /after/top:EncodedImage:blob\n\tEntity path: /after/top\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.Blob\n\tComponent: EncodedImage:blob\nColumn name: /after/top:EncodedImage:media_type\n\tEntity path: /after/top\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.MediaType\n\tComponent: EncodedImage:media_type\nColumn name: /before/detail:EncodedImage:blob\n\tEntity path: /before/detail\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.Blob\n\tComponent: EncodedImage:blob\nColumn name: /before/detail:EncodedImage:media_type\n\tEntity path: /before/detail\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.MediaType\n\tComponent: EncodedImage:media_type\nColumn name: /before/top:EncodedImage:blob\n\tEntity path: /before/top\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.Blob\n\tComponent: EncodedImage:blob\nColumn name: /before/top:EncodedImage:media_type\n\tEntity path: /before/top\n\tArchetype: rerun.archetypes.EncodedImage\n\tComponent type: rerun.components.MediaType\n\tComponent: EncodedImage:media_type\nColumn name: /description:TextDocument:text\n\tEntity path: /description\n\tArchetype: rerun.archetypes.TextDocument\n\tComponent type: rerun.components.Text\n\tComponent: TextDocument:text\n\tStatic: true\nColumn name: property:RecordingInfo:start_time\n\tEntity path: /__properties\n\tArchetype: rerun.archetypes.RecordingInfo\n\tComponent type: rerun.components.Timestamp\n\tComponent: RecordingInfo:start_time\n\tStatic: true"
+  }
+}

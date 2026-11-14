@@ -1,12 +1,12 @@
 """Run the judge over recorded episodes and write a per-window timeline.
 
     uv run python -m lerobot.rewards.vlm_judge.score_episode --sim-dir <...>/sim/bottle_basket_v1 --episode 1 \
-        --task bottle_basket --out migration/digital_twin_2026-10-29/judge/runs/bb_v1_ep1.json
+        --task bottle_basket --out lerobot/scripts/sim_builders/digital_twin/judge/runs/bb_v1_ep1.json
     uv run python -m lerobot.rewards.vlm_judge.score_episode --root outputs/rebot_teleop_2026-10-29-cut-v1 --episode 0 \
         --task "basket:pill bottle" --out ... [--t-from 0 --t-to 60]
     # a whole sim run: task = sim:<layout> (sim_spec.py, from tasks.py), compared to the scorer per episode, resumable
     uv run python -m lerobot.rewards.vlm_judge.score_episode --sim-run outputs/twin_eval_res600_2026-10-30/validation/step_00000000/sim \
-        --episodes 0 --out-dir migration/digital_twin_2026-10-29/judge/runs/gemma_res600 --workers 4
+        --episodes 0 --out-dir lerobot/scripts/sim_builders/digital_twin/judge/runs/gemma_res600 --workers 4
 
 Frames are sampled every ``--period`` seconds (1.0); every ``--stride`` samples (default = frames_per_camera, i.e. every 5 s of
 video) one query goes out with the last ``frames_per_camera`` frames of each camera, so the timeline has one row per window: t,

@@ -179,6 +179,10 @@ frames, so nothing clips. Recheck this if either constant, `chunk_size`, or the
 annotation granularity changes — the asymptote is `-1/((1-γ)·N) = -2.78`, so the
 headroom is not large.
 
+Known exception (measured 2026-09-24, bits-box recordings): 10 of 113 bit grasp segments run past
+the 41.8 s floor (median 21 s). `reward_normalization_constant: 16` would move the floor to ~106 s;
+it was proposed for the case where those recordings train the critic and was not applied (still 12).
+
 ### What the critic reads
 
 Since 2026-09-25 `_critic_batches` (rl/molmoact2/rl_molmoact2_trainer.py) hands the critic

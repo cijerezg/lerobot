@@ -97,7 +97,7 @@ images has somewhere else to go: the start of a reach (0.3-2.5 s into a "grasp" 
 every reach leaves the same container pose while the objects sit elsewhere), an episode
 start (the rest pose under two tasks' scenes), or a carry. For the T switch the two frames
 must also carry different subtask texts (another object, another container, another verb).
-``migration/pick_input_swap_pairs.py`` searches a dataset for them.
+``scripts/probes/pick_input_swap_pairs.py`` searches a dataset for them.
 
 Runs inside rl_offline's validation loop when ``probe_parameters.enable_input_swap`` is
 set (``probe_parameters.input_swap_factors`` picks the switches; a history switch on a

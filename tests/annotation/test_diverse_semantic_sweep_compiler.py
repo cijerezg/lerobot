@@ -33,7 +33,7 @@ def test_load_gate_refuses_any_open_report(tmp_path: Path, monkeypatch: pytest.M
 
 def test_all_current_family_adapters_emit_only_typed_edits() -> None:
     workspace = Path(__file__).resolve().parents[3]
-    sweep = workspace / "migration" / "diverse_annotation_audit_2026-10-07" / "sweeps"
+    sweep = workspace / "lerobot" / "annotation_data" / "diverse_audit_sweeps"
     reports = {family: json.loads((sweep / filename).read_text()) for family, filename in compiler.REPORTS.items()}
     edits = compiler.collect_edits(reports)
     assert len(edits) == 3_400

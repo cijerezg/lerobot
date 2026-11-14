@@ -17,8 +17,9 @@ The page keeps the candidates whose prominence passes the slider, merges candida
 extents into one event (several crests of the same peak), and groups events of different joints whose peaks lie
 within the coincidence window. "raw" detection skips the motion model (torque - baseline only), for comparison.
 
-Torque and velocity come from the ``{joint}.torque`` / ``{joint}.vel`` columns of ``meta/online_labels.parquet``
-(lerobot.rl.online_recorder); roots without velocity use the derivative of observation.state instead.
+Torque and velocity come from the dataset columns ``observation.effort`` / ``observation.velocity``. Roots recorded
+2026-11-12 / 13 have them as ``{joint}.torque`` / ``{joint}.vel`` columns of ``meta/online_labels.parquet`` instead;
+of those, roots without velocity use the derivative of observation.state.
 """
 
 import argparse
@@ -49,7 +50,8 @@ names = [n.removesuffix(".pos") for n in info["features"]["action"]["names"]]
 joints = ["gripper"] + [n for n in names if n != "gripper"]
 data = pd.concat(pd.read_parquet(f) for f in sorted(glob.glob(f"{root}/data/*/*.parquet")))
 all_labels = pd.read_parquet(root / "meta/online_labels.parquet")
-assert f"{names[0]}.torque" in all_labels, f"{root} has no torque columns (recorded before torque capture)"
+native = "observation.effort" in info["features"]
+assert native or f"{names[0]}.torque" in all_labels, f"{root} has no torque columns (recorded before torque capture)"
 episodes = pd.concat(pd.read_parquet(f) for f in glob.glob(f"{root}/meta/episodes/*/*.parquet")).set_index("episode_index")
 video_keys = sorted((k for k, ft in info["features"].items() if ft["dtype"] == "video"), key=lambda k: "top" not in k)
 smooth_b, smooth_a = butter(2, args.smooth / (fps / 2))
@@ -536,6 +538,9 @@ for ep in [args.episode] if args.episode is not None else sorted(all_labels.epis
                 "-crf", "23", "-g", "15", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out_dir / f"{name}.mp4")]
     subprocess.run(command, check=True)
 
+    if native:
+        effort, motor_velocity = np.stack(df["observation.effort"].to_numpy()), np.stack(df["observation.velocity"].to_numpy())
+        labels = labels.assign(**{f"{n}.torque": effort[:, i] for i, n in enumerate(names)}, **{f"{n}.vel": motor_velocity[:, i] for i, n in enumerate(names)})
     has_vel = f"{names[0]}.vel" in labels  # roots recorded before velocity capture have torque only
     series = {}
     for joint in joints:

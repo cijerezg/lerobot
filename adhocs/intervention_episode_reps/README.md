@@ -6,6 +6,10 @@ holds the arm, and after it is brought back to a state where it does the right t
 operator went? Method: the stock representations probe and action-trace probe, run on the episode itself with the
 prompt the console actually sent (subtask + precision/contact per step), then a read-out over the user's spans.
 
+Inputs removed (2026-11-13): the 2026-10-20 inference dataset, its probe root and the review folder
+`migration/inference_review_2026-10-20` (probe outputs, run_probes.sh) are no longer on disk; the code keeps
+the original paths as a record.
+
 ## Files
 
 - `build_probe_root.py`: the inference episode as a probe root (`outputs/rebot_rollouts_2026-10-20-probe-v1`),

@@ -33,6 +33,8 @@ from lerobot.annotation.paths import WORKSPACE
 from lerobot.annotation.rebot.episode import kept, layout, records, remap, video_keys
 from lerobot.configs.video import VideoEncoderConfig
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
+from lerobot.datasets.utils import ROBOT_CONTROL_PATH
+from lerobot.utils.constants import OBS_EFFORT, OBS_VELOCITY
 
 
 def plain(v):
@@ -142,9 +144,15 @@ def build(rows, destination, split="train", annotator=None):
     tasks = sorted({r["task"] for r in rows})
     task_index = {v: k for k, v in enumerate(tasks)}
     ep_rows, seg_rows, mistake_rows, prov, online, windows, all_stats, all_data = [], [], [], [], [], {}, [], []
-    video_files, offset, contracts = {}, 0, []
+    video_files, offset, contracts, controls = {}, 0, [], {}
     for ep, row in enumerate(rows):
         src, sep, (a, b), cuts = WORKSPACE / row["source"], row["episode"], row["keep"], row["cuts"]
+        src_features = json.loads((src / "meta/info.json").read_text())["features"]
+        assert all((c in src_features) == (c in features) for c in (OBS_VELOCITY, OBS_EFFORT)), (
+            f"{row['source']}: motor velocity / torque columns differ from {rows[0]['source']}"
+        )
+        if (src / ROBOT_CONTROL_PATH).exists():
+            controls[row["source"]] = json.loads((src / ROBOT_CONTROL_PATH).read_text())
         sdf = pd.concat([pd.read_parquet(p) for p in sorted((src / "data").rglob("*.parquet"))], ignore_index=True)
         df = sdf[sdf.episode_index == sep].sort_values("frame_index").reset_index(drop=True)
         assert (df.frame_index.values == np.arange(len(df))).all() and 0 <= a < b <= len(df), (row["key"], a, b)
@@ -245,7 +253,7 @@ def build(rows, destination, split="train", annotator=None):
             f = int(p.stem.split("-")[1])
             if f in keep_set:
                 link(p, destination / f"depth/{depth}/episode-{ep:06d}" / f"frame-{remap(k, f):06d}.png")
-        numeric = {c: (np.stack(df[c]) if c in ("action", "observation.state") else df[c].to_numpy()) for c in df.columns}
+        numeric = {c: (np.stack(df[c]) if features[c]["shape"] != [1] else df[c].to_numpy()) for c in df.columns}
         stats = compute_episode_stats(numeric, {c: features[c] for c in columns})
         for key in vkeys:
             stats[key] = {
@@ -308,7 +316,7 @@ def build(rows, destination, split="train", annotator=None):
         pd.concat(online, ignore_index=True).to_parquet(meta / "online_labels.parquet", index=False)
     full = pd.concat(all_data, ignore_index=True)
     stats = aggregate_stats(all_stats)
-    whole = {c: (np.stack(full[c]) if c in ("action", "observation.state") else full[c].to_numpy()) for c in full.columns}
+    whole = {c: (np.stack(full[c]) if features[c]["shape"] != [1] else full[c].to_numpy()) for c in full.columns}
     stats.update(compute_episode_stats(whole, {c: features[c] for c in columns}))
     json_write(meta / "stats.json", stats)
     info.update(
@@ -320,6 +328,9 @@ def build(rows, destination, split="train", annotator=None):
     )
     json_write(meta / "info.json", info)
     json_write(meta / "provenance.json", prov)
+    if controls:  # one dict when every source ran the same follower settings, else one per source
+        settings = list(controls.values())
+        json_write(destination / ROBOT_CONTROL_PATH, settings[0] if all(c == settings[0] for c in settings) else controls)
     if contracts:
         assert len(contracts) == len(rows), "every source or none carries meta/cache_ready.json"
         cr = {k: v for k, v in contracts[0][0].items() if k not in ("episode_contracts", "episode_depth", "episode_ranges")}

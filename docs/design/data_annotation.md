@@ -15,9 +15,10 @@
   rollout episodes below plus one teleop demo (ep 11 = the v4-1 socks episode that was `rebot_val-annotated-v3` ep 3, flagged
   `is_intervention` True like every operator frame; 54 % of frames overall); the val set is `rebot_val-annotated-v2` (v1 ep 9,
   v2-1, v3-3 ep 0) plus the 18:55 rollout as ep 3, so it keeps four episodes and now contains mistakes. Built by
-  `migration/consolidate_rollouts_2026-09-07.py` (library merge, videos stream-copied and pixel-checked against the sources,
-  metadata rebased, depth hardlinked, `meta/provenance.json` per episode), sidecars regenerated, checked by
-  `migration/verify_rollouts_2026-09-07.py`. The two sources below stay on disk untouched.
+  a one-off consolidation script (removed with the scratch folder; its successor is `annotation/rebot/merge_roots.py`)
+  (library merge, videos stream-copied and pixel-checked against the sources,
+  metadata rebased, depth hardlinked, `meta/provenance.json` per episode), sidecars regenerated and checked by a
+  one-off verifier (also removed; successor `annotation/rebot/verify_root.py`). The two sources below stay on disk untouched.
 - `outputs/rebot_inference_2026-09-06-v6` (train) + `outputs/rebot_inference_val_2026-09-06-v2` (val) — sources of the above; **policy rollouts +
   DAgger interventions, training-ready**: 11 + 1 episodes, 29,229 + 2,886 frames from the 2026-09-06 online recorder runs
   (no-history MolmoAct2 ckpt). Train episodes 0-4 (11:28, 17:39, 18:45, 19:47, 19:54) are pure policy output; 5-10 (20:43 .. 22:06) carry teleop
@@ -50,6 +51,30 @@
   may fix its close-stop/release-end frames explicitly; a move under 1 s folds into the release.
 
 Episode GT for eval sanity: ep0 white; ep1 white,black; ep2 white×2,black; ep3 +blue-heeled; ep4 +blue-striped, mistake ~162→185 s; ep5 interleaved, mistake ~176→205 s.
+
+## Motor velocity and torque columns (v2 recordings, 2026-11-13)
+
+Roots recorded from 2026-11-13 carry two more per-frame columns next to `observation.state`, in the same joint order:
+
+| Column | Unit | Source |
+|---|---|---|
+| `observation.velocity` (7) | deg/s | `MotorState.vel` |
+| `observation.effort` (7) | N*m | `MotorState.torq`: the motor's phase-current estimate, before the gearbox (friction, gravity and acceleration included) |
+
+- Raw, one sample per frame, from the same Damiao feedback frame as the position. Any smoothing belongs to the
+  consumer (training loader and inference alike), not to the recording.
+- The follower declares `{joint}.vel` and `{joint}.torque` in `observation_features`; `hw_to_dataset_features` routes
+  those suffixes to the two columns, so `lerobot_record` and `rl/online_recorder.py` write the same schema.
+  `observation.state` stays the 7 joint positions.
+- The gripper runs in FORCE_POS with `gripper_torque_ratio`: its torque saturates at that limit while it squeezes.
+- `meta/robot_control.json` holds the follower loop settings of the recording (`position_kp`, `pos_vel_velocity`,
+  `gripper_torque_ratio`). `build_root.py` and `merge_roots.py` carry it.
+- `build_root.py` refuses sources that disagree on having the columns; `merge_roots.py` and `datasets/aggregate.py`
+  already require equal features. Older roots have neither column and are not back-filled.
+- The memmap cache stores both columns as state keys; `buffer_state_keys` names them in the cache lookup when the root
+  has them. No policy reads them yet, and a batch mixed from sources with and without the columns is not defined yet
+  (`concatenate_batch_transitions` takes the first source's keys).
+- Not in the sim robot (`rebot_b601_sim`) yet.
 
 ## Diverse corpus action layouts (`datasets/diverse_actor_selection.py`)
 
@@ -108,14 +133,34 @@ Gemma 4 31B: summaries unusable (counting echo loop); subtasks ~62% (misses rele
 
 annotate → norm stats + `compute_delta_stats.py --encoding anchor --chunk-size 50` → memmap cache `--image-stride 5` (must match config) → verify first steps: `loss_subtask_ce` nonzero, `subtask_index`/`summary_*_index`/`metadata_*` in batch, depth one-shot log fires.
 
+Merging roots (`annotation/rebot/merge_roots.py`): the memmap cache stores image/depth rows on the GLOBAL index
+(`idx % image_stride == 0`) while depth PNGs sit on each episode's local stride grid. An episode whose global frame
+offset is not a multiple of `image_stride` reads the nearest PNG instead: a constant one-frame (33 ms) depth skew for
+that whole episode (`load_depth_png` logs "PNG grid is offset from the global stride grid"). Order the roots so every
+episode starts on a multiple of the stride; a new root whose frame count is a multiple goes first.
+
 
 ## Retained integration decisions (September 2026)
 
 The root diverse-integration plan and speed-progress tracker were retired during
 cleanup on 2026-09-24. Their old corpus counts, launch gates, and run settings are
-historical; use the root training/validation configs and the
-`../../migration/training_mix_2026-09-21/README.md`
-for the later data mixture. No training or validation settings changed in this cleanup.
+historical; use the root training/validation configs and `dataset_info/DATA.md`
+for the current data mixture. No training or validation settings changed in this cleanup.
+
+Facts about the external ReBot pool that still hold (from the 2026-09-21 data-mix preparation,
+whose scratch folder is retired; its 40/20/40 split, cache ids and 8-episode validation set are superseded):
+
+- Source release `outputs/rebot_public_annotated_v1`: 261 episodes, 207,344 native frames; nine rejected episodes
+  and trimmed tails stay excluded.
+- Recordings at 15/60/120 Hz were resampled to 30 Hz: low-dim linearly interpolated on physical time, RGB/depth by
+  nearest timestamp, episode duration not extended, labels on the same timeline. Native 30 Hz trajectories are unchanged.
+- Wrist depth is PNG16 at 0.1 mm per level. The two Namin eraser repos have no source calibration and use the user's own
+  camera intrinsics as an ASSUMED calibration (`diverse.rebot_depth_intrinsics`: fx = fy = 394.9832, cx = 322.5604,
+  cy = 238.6966 at 640x480). Sugar recordings keep their source calibration and depth scale.
+- Views use canonical camera roles at 640x480 with per-episode presence masks; other frame sizes are letterboxed with
+  per-episode valid regions.
+- The three external holdouts chosen then (hanoi-tower-200 ep 91, Namin brown-gray-baskets ep 54, brown_sugar ep 44;
+  source episode numbers) were dropped from validation on 2026-10-14; the current val root has no external episode.
 
 The integration contracts retained from the plan are:
 
@@ -159,5 +204,5 @@ reviews. Three DROID AUTOLab `003210` parents remained visually unsure despite
 passing structural validation. Full-corpus assembly must not treat `--allow-missing`
 as a reviewed-subset export: that option fills missing reviews with proposals.
 Saved reviews, human overrides, labels, and verification evidence remain on disk.
-See the `../../migration/subtask_atoms_2026-09-08/REVIEW_GUIDE.md` and
-`../../migration/subtask_atoms_2026-09-08/MANUAL_EDITOR.md`.
+See the review guide (`../../src/lerobot/annotation/rubrics/subtask_atoms_rubric.md`) and
+`../../src/lerobot/annotation/atoms/MANUAL_EDITOR.md`.

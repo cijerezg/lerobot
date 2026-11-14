@@ -7,7 +7,7 @@ Rows are grouped into sheets by a candidate bucket so the unusual classes (push,
 fold, insert, release modes) can be read side by side.
 
 Usage: uv run python -m lerobot.annotation.precision_contact.sample_contacts [spec_name]
-Output: migration/contact_strategy_2026-09-24/sheets/<group>.jpg + sampled.jsonl
+Output: lerobot/annotation_data/contact_strategy/sheets/<group>.jpg + sampled.jsonl
 """
 import glob, json, random, re, sys
 from pathlib import Path
@@ -16,13 +16,13 @@ import av, cv2, numpy as np, pandas as pd
 
 from lerobot.annotation.precision_contact import sample_grasps as sg  # noqa: E402  (grab, approach_angle, FK)
 
-HERE = Path("migration/contact_strategy_2026-09-24"); SHEETS = HERE / "sheets"; SHEETS.mkdir(parents=True, exist_ok=True)
+HERE = Path("lerobot/annotation_data/contact_strategy"); SHEETS = HERE / "sheets"; SHEETS.mkdir(parents=True, exist_ok=True)
 TILE = (256, 192); SEED = 0
 ANGLES = {}
-for line in open("migration/grasp_strategy_2026-09-24/grasps.jsonl"):
+for line in open("lerobot/annotation_data/grasp_strategy/grasps.jsonl"):
     r = json.loads(line)
     if "approach_deg" in r: ANGLES[(r["root"], r["episode"], r["from_index"])] = r["approach_deg"]
-for line in open("migration/grasp_strategy_2026-09-24/diverse_angles.jsonl"):
+for line in open("lerobot/annotation_data/grasp_strategy/diverse_angles.jsonl"):
     r = json.loads(line)
     if "approach_deg" in r and r["approach_deg"] is not None: ANGLES[(r["root"], r["episode"], r["atom"])] = r["approach_deg"]
 

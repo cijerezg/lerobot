@@ -92,7 +92,6 @@ uv run aim up --repo ./aim
 
 Loads `inference_checkpoint_path` from config_rl.yaml. `inference_send_actions_to_robot: false` = read-only preflight. Subtasks: `n` next, `b` back, `r` home. `f` freezes both arms in place (policy idles, nothing recorded) so you can rearrange the scene; press again to resume.
 
-uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 
 ## Sim eval (MuJoCo nail clippers, no hardware)
 
@@ -111,7 +110,7 @@ uv run python -m lerobot.scripts.compare_sim outputs/<run_a>/checkpoints/<step> 
 
 ## Rollout review (cut recorded inference episodes into a training root)
 
-One command: renders a review video per episode (missing ones only) into `migration/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
+One command: renders a review video per episode (missing ones only) into `outputs/_annotation/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
 
 uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/<root>]
 
@@ -142,7 +141,8 @@ uv run python -m lerobot.probes.action_trace_probe --config config_rl_validate.y
     --policy.pretrained_path outputs/<run>/checkpoints/<step>/pretrained_model \
     --dataset.root outputs/rebot_val_2026-10-14-v1 \
     --probe_parameters.output_dir outputs/probe_runs/<name> \
-    --probe_parameters.trace_frames "$(cat migration/action_trace_sim_2026-10-15/grasp_anchors_6s.txt)"
+    --probe_parameters.trace_frames "<ep:frame,ep:frame,...>"
+# trace_frames = explicit anchors, snapped to the image stride (the 2026-10-15 grasp anchor list is no longer on disk)
 # other flags: --execute, --anchors, --episodes, --out
 uv run python -m lerobot.probes.action_trace_sim --records outputs/probe_runs/<name>/action_trace/action_trace_records.npz --time-scale 2
 # -> outputs/probe_runs/<name>/action_trace_sim/anchor*.mp4, visible in view_probes
@@ -231,7 +231,7 @@ uv run python probe_rebot_motors.py
 
 Leader USB check after any re-plug (must be 200/200; ch341 must be under Bus 003/005 in `lsusb -t`, Bus 001 drops bytes):
 
-.venv/bin/python migration/leader_bus_capture.py burst --trials 200 --spacing 0.033 --window 0.025
+.venv/bin/python lerobot/scripts/leader_bus_capture.py burst --trials 200 --spacing 0.033 --window 0.025
 
 Follower chain order, base first (dead tail = cable upstream of first dead motor; one dead motor = its own board):
 

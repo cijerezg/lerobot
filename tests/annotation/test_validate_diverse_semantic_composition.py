@@ -9,7 +9,7 @@ from lerobot.annotation import validate_diverse_semantic_composition as review
 
 def test_current_reports_have_exact_once_decision_accounting() -> None:
     workspace = Path(__file__).resolve().parents[3]
-    sweep = workspace / "migration" / "diverse_annotation_audit_2026-10-07" / "sweeps"
+    sweep = workspace / "lerobot" / "annotation_data" / "diverse_audit_sweeps"
     reports = {family: json.loads((sweep / name).read_text()) for family, name in compiler.REPORTS.items()}
     edits = compiler.collect_edits(reports)
     accounting, errors = review._decision_accounting(reports, edits)

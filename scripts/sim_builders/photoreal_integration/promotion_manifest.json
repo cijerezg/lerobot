@@ -1,0 +1,1159 @@
+{
+  "scenes": {
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/nail_ep5/scene.xml": "migration/photoreal_headphone_hinge_2026-10-18/nail_ep5.xml",
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/nail_ep1/scene.xml": "migration/photoreal_headphone_hinge_2026-10-18/nail_ep1.xml",
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/nail_ep2/scene.xml": "migration/photoreal_headphone_hinge_2026-10-18/nail_ep2.xml",
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/nail_ep3/scene.xml": "migration/photoreal_headphone_hinge_2026-10-18/nail_ep3.xml"
+  },
+  "assets": {
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/case_surface.png": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/case_surface.png",
+      "sha256": "37e162046f4d6edbeb291be646d20a83d345f62074581057fbb84bbacd33ffe5"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_lever.png": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_lever.png",
+      "sha256": "bef9b01c9820e52bc7f61aeff3e01e50ed7b1180d7e803209fc3c9fbd816bf0a"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_lower.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_lower.obj",
+      "sha256": "feaf7b215d9d5c66210e8315106d96bd1b22294d8cd242d127f3e678a301f505"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_spring.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_spring.obj",
+      "sha256": "532af82d80d844398c389ed874b43342c58413fc2e4c401f9e972475d1313b91"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_lever.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_lever.obj",
+      "sha256": "21cdd83ada6ddfd66ebe2c15f92aca0e80af432fb051f7fcdf284cfd7f51c799"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_fork_left.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_fork_left.obj",
+      "sha256": "b02626409642d49fff5964f98fcb9739509c14e2d271c6342c4ad4d35103dbea"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_fork_right.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_fork_right.obj",
+      "sha256": "0fbac1a9573bfae323ff44f354eff977d924134eee6e15ba0d8ef66fed3960a6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_jaw_lower.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_jaw_lower.obj",
+      "sha256": "5092c028404198e53c42bba3661871fe900871355ada9babba1908bda895b7b4"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_jaw_upper.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_jaw_upper.obj",
+      "sha256": "257886067dfabff4a80539c53416b506d3ed8b87d9f0edeea55f8fa449dbe562"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_pivot.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_pivot.obj",
+      "sha256": "74f47d9b638ee0cd3c31d4c925aa778b4bb5ac368f83149b87a7cd133b4955af"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_large_pin.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_large_pin.obj",
+      "sha256": "130cdec178a359bea0b55e8a1fcce81aa212d09b7fe224038b2ed16a89198634"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_lever.png": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_lever.png",
+      "sha256": "e6fbdde85f685b65be5af359ffd6627f5dd66a4d3817380916af3bbbd3f5d6f7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_lower.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_lower.obj",
+      "sha256": "536a388dfb682b0c96d14e6fbf72a7f39bb0efac5eb91bf3279cdaf912270519"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_spring.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_spring.obj",
+      "sha256": "d7e7913d10d17e454714d3858d7fcb787e3da0b7fc19196a9ca8006d72a526c0"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_lever.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_lever.obj",
+      "sha256": "eeba023bb619f97cf3cc26de1905886ead6bee353e549b74a8196c784cacba14"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_fork_left.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_fork_left.obj",
+      "sha256": "7717226037d9b676c0169964948663e0eace113703eb5a2abdc4bd8184b245f4"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_fork_right.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_fork_right.obj",
+      "sha256": "ba4c737fbeacdf5dfd2344738b889ab2a385af454cc501b61c43d4be9a900025"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_jaw_lower.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_jaw_lower.obj",
+      "sha256": "838c57e6913271a0bf09addeb037bff7e4e63798510fa271e96ac0ad9a5b36b8"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_jaw_upper.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_jaw_upper.obj",
+      "sha256": "2892d97d23e9dc5c2420498e6921e424c8825075e028c23fff3dfebb1dfedcb3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_pivot.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_pivot.obj",
+      "sha256": "55db69200e2713123f1cbea466054ca45e994edf1a4f8bba9d3df75282a92566"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/clipper_small_pin.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/clipper_small_pin.obj",
+      "sha256": "3fe7638268252329f0fa0b8e317c505c76978afaa3af0c9389e6a6e0d41e92fd"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/case_slot_floors.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/case_slot_floors.obj",
+      "sha256": "120092a55c52fe6dec7216ec7bf524b4ea83f75fb067fb95eae2a089fe26231e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/case_foam_top.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/case_foam_top.obj",
+      "sha256": "d6db0d38843bc30432c391be4c0cb773e2f939b9c66add23bf7c7cbdc2c9e446"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/case_foam_sides.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/case_foam_sides.obj",
+      "sha256": "5da829b208b6c71320bf45ad5cdbbc191bb9436349cf7dd65fce72c479c364cc"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/case_tin.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/case_tin.obj",
+      "sha256": "d78a11957db5c5351d4c44aede2b9dc53e148d866273dd6142556597a2239c65"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/case_dark.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/case_dark.obj",
+      "sha256": "cbe00761705b37730a9c2015c5a52d800da719d89b8c4a89ca6e7d38e0dfec7c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/clippers/case_rolled_rim.obj": {
+      "source": "migration/photoreal_clippers_2026-10-17/assets/case_rolled_rim.obj",
+      "sha256": "3c00199c0d68865cebf632ea261a3aa666030ab5940e47e26b046a707879a780"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/yellow_label.png": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/yellow_label.png",
+      "sha256": "067b017db473a3cc45cb5531c0eaa350bc2f95dbe77966ebdeed0ce07015e321"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/orange_label.png": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/orange_label.png",
+      "sha256": "bd315960521385dbc3088d100dc6644cfde63f33b7a6282a8950845bbb994a58"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/spray_label.png": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/spray_label.png",
+      "sha256": "05188bb7a537cfff6e6e6358b629b6ef3bab62078b562549a8817ee7c08cfdae"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/cup_print.png": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/cup_print.png",
+      "sha256": "7225da708f678896b932302a911795169e9cc9ae815b1102148e20a824aa94c9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/fabric.png": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/fabric.png",
+      "sha256": "858a28bc28ad93cfe61eb8a8c305cf5274255f9bc1badf5114c37cb7b6a2c71b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/lining.png": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/lining.png",
+      "sha256": "196919ca1806a2289554d589a91109bc79fa5796e55543ae6b3bce3a00ccec3a"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/pouch.png": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/pouch.png",
+      "sha256": "aa564e0967921ef2a9200bcf27f6446542668f9a7037dab2f6ea7dcf2f2b898c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bottle_yellow_cap_standing_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bottle_yellow_cap_standing_00.obj",
+      "sha256": "1a4d87b991b7c31a14985f988b73c0adb94e7f6cf81f66c2d84fe65b6f2c2778"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bottle_yellow_cap_standing_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bottle_yellow_cap_standing_01.obj",
+      "sha256": "ed6f9866bd69800b20414c24bda6e987db895ad1e9424e4ae7ff21b150f0d097"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bottle_yellow_cap_standing_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bottle_yellow_cap_standing_02.obj",
+      "sha256": "7b645f967d4ff02555511491672a3200880647ab0ace58c62df280e5e778f505"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bottle_white_lying_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bottle_white_lying_00.obj",
+      "sha256": "24e0d14d167bdfe7b57bf1c21cd5a503bea905559f9db0def02f831058f1a7ed"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bottle_white_lying_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bottle_white_lying_01.obj",
+      "sha256": "3c5314734e18bf988dac83a9cc3f2af1af79cab7d183e45bd4aa9a9c9e073980"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bottle_white_lying_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bottle_white_lying_02.obj",
+      "sha256": "aac1bb7d643c8e323b2c65e11b19a94d5dcabd22f0e08defbae5fc1a6d2ef565"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_spray_bottle_lying_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_spray_bottle_lying_00.obj",
+      "sha256": "e44b6a4a5d48444e9047de668aaac940d7be95419a7e1b3d7342b58ebc3f30b6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_spray_bottle_lying_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_spray_bottle_lying_01.obj",
+      "sha256": "95bc051fedf5f2a8f53a0142c7ee4f1d8e0a0eb5bf679437b7443bd1b2fdeeb6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_spray_bottle_lying_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_spray_bottle_lying_02.obj",
+      "sha256": "5d85e5844fa0789674ceaa7f02db25fabf0ec50f58120b5338510e9434f0c6ac"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_spray_bottle_lying_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_spray_bottle_lying_03.obj",
+      "sha256": "ee5243213f7fb4b24c69f11f4adb14f76d30aae1ce714b22a4c81e4e74089c09"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_spray_bottle_lying_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_spray_bottle_lying_04.obj",
+      "sha256": "e379c77b75415c4277d86e869861eb849935cfb57b3424bb26a22002606b3d94"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_spray_bottle_lying_05.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_spray_bottle_lying_05.obj",
+      "sha256": "9479f1365bd2a332d202fb4a9ae72f43e82dd74508e57c3312b2f7fac1dd5269"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_blue_pouch_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_blue_pouch_00.obj",
+      "sha256": "a9d86e34414263dbcf5035e47c69abb1a336beede55dfd3f692bf2bc3a47bf16"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_blue_pouch_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_blue_pouch_01.obj",
+      "sha256": "adde24cc415e0d5b12843430d72e3d39cfa4359543f1c83859a3f79a41390907"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_blue_pouch_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_blue_pouch_02.obj",
+      "sha256": "edf4d66fefbde47362187eca1e971565c8eb4df0d7d6ea498bb29a4abea65173"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_blue_pouch_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_blue_pouch_03.obj",
+      "sha256": "a98c7ed0bd77a22495c80b47c745e050d4ae05e8478e635dea87df3156e3c0b7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_blue_pouch_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_blue_pouch_04.obj",
+      "sha256": "7b69de0a0a57bb0e955a69a04364c1589f02a261ceaa0ef66ea354a9f3fa6a89"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_headphone_case_closed_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_headphone_case_closed_00.obj",
+      "sha256": "02a954530aa3b591a23c26a87f8580c3c054a436b3b0f24627fdc2233194ade3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_headphone_case_closed_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_headphone_case_closed_01.obj",
+      "sha256": "b803e17020f3656a473de971973417451aac2ac2deaa216b42a6420abef5b412"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_headphone_case_closed_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_headphone_case_closed_02.obj",
+      "sha256": "db59aaeb6685d94ef4677b7e990ce364a49d834e5c510cbb3ec81e5bbe35fe85"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_headphone_case_closed_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_headphone_case_closed_03.obj",
+      "sha256": "11f7040f92e41f3373bd52fcb18f05aa68147a4dcab6f319cd10adabc23623ef"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_headphone_case_closed_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_headphone_case_closed_04.obj",
+      "sha256": "3e76ea145c6fc9afdfb80477a5722a550d7fe91730f1f73886bc78b482bbff1b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_00.obj",
+      "sha256": "740e683151ace2186c876deffd64db0d068338fbdc1980d183d9bdd51c342983"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_01.obj",
+      "sha256": "d10654ec0d7be1022284c410a549852f2dad07d659e23f94b5e5e061143e9561"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_02.obj",
+      "sha256": "54f49fc901a4b04fd8fbbc56fcd3317c95194bfe442637f7d4c1db050a74a598"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_03.obj",
+      "sha256": "5ae4751835d72ce3b6a7dd7c74390ce4d78f600349aee58f613e9b7babe31325"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_04.obj",
+      "sha256": "c991b898e1547b66a9bb3ba392e53574bb83428e03f21894f62dde701dae3d7e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_05.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_05.obj",
+      "sha256": "1707882857867fef4bc084cb688b0be5775c0077c0b6215ebd3f80f973eeafd4"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_06.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_06.obj",
+      "sha256": "8d332849c604b4d92a994e398ddfa02709555dbbf7f97632e4d4a4788051844c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_07.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_07.obj",
+      "sha256": "d1be13efce00f1c6f7d36d86b38a2b4044ff9878ec705da6b7216361c4fb7ee6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_08.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_08.obj",
+      "sha256": "a97ad80bd7d47e0ad7a75de950c768a2559cf0ad17566616dfd8f0bda22b06e2"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_09.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_09.obj",
+      "sha256": "64ed905d10a8b67f33e35793c81ee034d13124bc51623eac4a022ef23425e0c9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_10.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_10.obj",
+      "sha256": "e5bf0e936781117640acf61292bb0b49076fda18cb319f4830966b6f52be7da6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_11.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_11.obj",
+      "sha256": "9521948037f22798942ec1b7088d61633364fdb10ec04bff39679914eff7ec77"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_12.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_12.obj",
+      "sha256": "d47660f035dabbae0506b814dc336573b006c1707c6529c03e3a43ba0a464b15"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_13.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_13.obj",
+      "sha256": "5baaf9b9acd4e0b707c010b12efdfd69ec7252de7a25ac22d162a8358d0c8a52"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_14.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_14.obj",
+      "sha256": "c372733bfda9d937789e37e163bf2f4a36669fa898a8097a42b3e7db4ce131d8"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_15.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_15.obj",
+      "sha256": "106a5e981e848686809015f53e78dff875ed1a99079fa393c3bb6bedbb8968d5"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_16.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_16.obj",
+      "sha256": "e1347a43197562be943c6092efd2d1c675ecfc88d7c17dc49cd5e4a1798e95ee"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_17.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_17.obj",
+      "sha256": "3197b1c37c7984792fa6812452bc0d2121646efaf9c1626b82322f916ed5bb6f"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_18.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_18.obj",
+      "sha256": "3b92eeceaf04a2973b571974504b2d52e1f20d7de9b77a2a0dcdc04ae4a2c80c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_bits_box_19.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_bits_box_19.obj",
+      "sha256": "40456503a7abbd9ac09c0d3a92717dbc8e7bcb3bd6fb81acbbde457e04463f04"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_mic_knob_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_mic_knob_00.obj",
+      "sha256": "8da3035c87fc365afc15fdb7505d98f378e9d8e5ed7af7b32777a279e8a7c054"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep5_mic_knob_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep5_mic_knob_01.obj",
+      "sha256": "59c918a05c397192eece903c072f0ee9f9aede35ca2fd3815211ff6db84b1186"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep5_00.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep5_00.obj",
+      "sha256": "2629c06bcbdb06d130dfd53149f324b9fb90a9cf6a7aa332d7cc872589d6eef2"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep5_01.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep5_01.obj",
+      "sha256": "974f563d23e88e952b5b3ccd5031a4c548a2b2c7d59c4e1333d536e147409592"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep5_02.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep5_02.obj",
+      "sha256": "00e34e0360f95aed4536c9f6644d7a33e62c706b2c8a79552a817ed205d8d2b9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep5_03.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep5_03.obj",
+      "sha256": "58ac4589a26ae03c2f363ec9a147c5ad7112f6e2ae0a37baf781c4eb39375a8b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep5_04.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep5_04.obj",
+      "sha256": "137757ffb1b309af32b9d4b564232e1f34d2fd5558b341c02715bebd8381a2da"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep5_05.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep5_05.obj",
+      "sha256": "ee245c380f03f08f729d12287dc88e523a4fb0b505b7cba6217b5258f726b898"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep5_06.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep5_06.obj",
+      "sha256": "08ad111e9cd11a1d7121c95ab000be190291a83dd15953f311a8031dcba8e398"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_paper_cup_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_paper_cup_00.obj",
+      "sha256": "8e8f9b72bab2745580c90078f368ea0a93c97e8c5c6ccc28fe5ee7e8e46aeba1"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_paper_cup_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_paper_cup_01.obj",
+      "sha256": "c9003666f49043e93081faf00ddeb69293736fbf558d16a704875e5282a553ea"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_paper_cup_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_paper_cup_02.obj",
+      "sha256": "e3b053a2799a48906b1eb97497d7f7bdd589a0ec3ee7999a391c3a93d1971fad"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_paper_cup_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_paper_cup_03.obj",
+      "sha256": "59857cc8f489f8cc0cad9b6e1a1b553599e619c80ffeb4649c70ddb46c98456c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_paper_cup_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_paper_cup_04.obj",
+      "sha256": "c3deefec3876fcedfcedc21deeae85c0baa9b2fc5d0a2990bc5e1988f3c6f090"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bottle_orange_lying_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bottle_orange_lying_00.obj",
+      "sha256": "dc8aa11d7366096f1f224de9b63d137ad290e505bb9cdc0a004dc72d47ea1fec"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bottle_orange_lying_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bottle_orange_lying_01.obj",
+      "sha256": "ba5c591b2e701c4579ff507299e9b628b07af44f6ee42170775c40938f73f376"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bottle_orange_lying_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bottle_orange_lying_02.obj",
+      "sha256": "b025a5653cc96f77f0d23377533230f1a6bea95a15141b14cbf55772688510d8"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bottle_yellow_lying_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bottle_yellow_lying_00.obj",
+      "sha256": "8653e41cc0346bf46773d7492e405cd53e148e56fc381534a8fda3f07337d5ed"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bottle_yellow_lying_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bottle_yellow_lying_01.obj",
+      "sha256": "18afd866a609fa4ed0dfbd7cf014c412a2a6fd91411d27b5b71649a23c156dea"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bottle_yellow_lying_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bottle_yellow_lying_02.obj",
+      "sha256": "0543eb9c1236257e7d8fa179ceb667f05854e1283aa2e93be5edaf36280e1c4d"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_00.obj",
+      "sha256": "cc7c35ce04f384c77a93facb33482fec8304f31457054d0c20872dc36d2819e0"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_01.obj",
+      "sha256": "7e20efcfb0e18f46a2b73c8394e0f1b3e36335e617be33d4b76919035be0c2cf"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_02.obj",
+      "sha256": "ac15632b76fbc12eea5ab5077679f1b12bf81604fcc06c53c3888a873145abad"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_03.obj",
+      "sha256": "f35a9c9b7c822e5c19a61a63a0e62e7771e6a69f4cebdc2dfb4a4b723f2231a6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_04.obj",
+      "sha256": "6a8cf7bea671d968f1a084ed4dcba4becfd95737cec874ce829b3cca6352abee"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_05.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_05.obj",
+      "sha256": "33e21cc516f2972a942e30617adaa7e120fcd35f5c7fde6f760dbab9b3bff8bc"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_06.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_06.obj",
+      "sha256": "0aea12e1f8265dc69a4790a511678e0f6f413fc0316eeea1ad83cad525f742c3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_07.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_07.obj",
+      "sha256": "c5840a776f2aea491dcaa6414a269ce73ec2393d7d9c026bb13c6f84601264b3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_08.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_08.obj",
+      "sha256": "acb14981bbcabf557297829ac73aacc300799a1119def0b075211d94d681bd1c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_09.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_09.obj",
+      "sha256": "624853619d72133cf0bc45c8f16787d45682938b10ed689d96de3fcdfb1d8c19"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_headphone_half_a_10.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_headphone_half_a_10.obj",
+      "sha256": "4c45ee3d789bb7a07c8e594b282ee42d735b1d4a3d91552d277afd55b625bde0"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_00.obj",
+      "sha256": "d466100ebc1d06913c1bfa68e75cc8b3d2fca7804357024ba7d0374cba3e5cba"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_01.obj",
+      "sha256": "2183af5f46bb2ef55de1d08d7627e9b3770e36d3065643350af06ce1cc6cf5a6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_02.obj",
+      "sha256": "dd3c0a0b9c80dca001299c268cd1b984ff7c0a64fa316482cb6c3769c7c9a670"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_03.obj",
+      "sha256": "8469fe418abcc8584f6885fcb153468cbd01ada9015d1080f7d6ac66316fe9d9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_04.obj",
+      "sha256": "dbf476849acd013de1ef95e878bd5c40d246727799e14d5cc32b72bd893746f7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_05.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_05.obj",
+      "sha256": "251ee799a2b9e9d0e41c96aeb0c76910b48e373396f43d6808d6777c1662e2d6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_06.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_06.obj",
+      "sha256": "02ae7bb6b7433930e12817cbb66eb6a1b153956a8a4bdd9e53a8cab5dcb8fba5"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_07.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_07.obj",
+      "sha256": "6243c622b956a5e05786959ce47a0f073733efaf18299c90fa30d2e74698eed5"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_08.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_08.obj",
+      "sha256": "aaba8e109bf059bae703ce0105eb0f56a5b53a657ccd258fc55249cc7dd01604"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_09.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_09.obj",
+      "sha256": "3203938e0f40f60f1ace72d7768b4ba53937882f84ae09d4963631ca803f835c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_10.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_10.obj",
+      "sha256": "e5bf0e936781117640acf61292bb0b49076fda18cb319f4830966b6f52be7da6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_11.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_11.obj",
+      "sha256": "5e7d0304856e29471342ba979c2e5edd0aac0efd08f41c5a200449ebaab45186"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_12.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_12.obj",
+      "sha256": "d8435967e56ce1a9cc3c6cd75c0c017e5fc9e24ca8f1f3462e86061d9c114e29"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_13.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_13.obj",
+      "sha256": "5baaf9b9acd4e0b707c010b12efdfd69ec7252de7a25ac22d162a8358d0c8a52"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_14.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_14.obj",
+      "sha256": "5ef8c57d23d5834a41477e7d5a8969d6ad8442983993a77d38a8701bd871d373"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_15.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_15.obj",
+      "sha256": "0ade60942b44c4165e512d7e13bf5c52b55d69e8b8152e565bf0b6f92d2baad2"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_16.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_16.obj",
+      "sha256": "d261869d6bc670cfcfadda47b606878943ff64f35dec0dbbab7b19bbb753377b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_17.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_17.obj",
+      "sha256": "3197b1c37c7984792fa6812452bc0d2121646efaf9c1626b82322f916ed5bb6f"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_18.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_18.obj",
+      "sha256": "d61be409534f84b2e153440c1c0b3f8112136ae7267a76f3f220aa55a4c47a69"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep1_bits_box_19.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep1_bits_box_19.obj",
+      "sha256": "e2f4f7d3c37412016154a0b9eaed4bebf78cba7662b5067af43082d0e76a4f4e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_00.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_00.obj",
+      "sha256": "93684274b2d902089516335e169f84725cd9122571220fb896263c08366127ba"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_01.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_01.obj",
+      "sha256": "e6ec10e9b5e705805ed19e3e9885334744cf4e0389f192c05dec52fd646a3a86"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_02.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_02.obj",
+      "sha256": "d4874d4964679aa7e2c37bc683fe953750fd7d7ab332fcfeeaaa018d74a9262c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_03.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_03.obj",
+      "sha256": "9d76a3f9d997d79eb45535bb83baba53958f8505b61dbac4f7528158f0e86012"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_04.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_04.obj",
+      "sha256": "a2661fead79fdeb85470975d1d45425ab0bf421238fe83a1cc7d99f94be387d6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_05.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_05.obj",
+      "sha256": "8f623aae3ccff05e83a6084bb9ea90a959424f89da8a6637d86801d85ed9aba1"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_06.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_06.obj",
+      "sha256": "d1484ee9c5cea2023276565a16c7d3291f621a94b3fb1fa3eba4c91893b3eacc"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_07.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_07.obj",
+      "sha256": "0730f63ea5fb7e846210ef3de109dabb39bbf7bc518ba4934e3fa48090b7badc"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_08.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_08.obj",
+      "sha256": "0d7ad6f668259f2c6aba9ec61f86a98db33a311934793f80cba48d07afb2e8de"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_09.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_09.obj",
+      "sha256": "99488a4d970f7b70550ef90d3d4d3367c475dc81300a4ac334b436df47a8a6ad"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_10.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_10.obj",
+      "sha256": "f22e7ed34c85ddb2ea12f5d22cf0f76c467b9256d4b5d9cd893a5239070769d1"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_11.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_11.obj",
+      "sha256": "f3db6c054f7be066da849da74c4ae8d706e3d4e347beacd5eedeef764a0d5834"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_12.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_12.obj",
+      "sha256": "4c70fc81150e1667bcfcbdbb23165123f8a564c2706df6923f14f0657c483951"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_13.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_13.obj",
+      "sha256": "64dcc7d84f60f11d1fa77f2faf94c0121b0e0034c6cc6fc9803bcedb6d52d1f8"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_14.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_14.obj",
+      "sha256": "495755a17b5272b7ed96c8803d81ec5cb1e966dc0f11f4bc4a770b44edaf4043"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_15.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_15.obj",
+      "sha256": "a87f0bedc25341f5bc722a3e82c2b133b073e87195f6e75bfae4177cd735a55e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_16.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_16.obj",
+      "sha256": "87e000272de736b1d2d08ca3c31fe7297eaec4e29e2a851e0ebf2b0e78ef4169"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_17.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_17.obj",
+      "sha256": "1abce6defcb9693d084ee07904975e66f9080c9db83274adb5435106826df557"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_18.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_18.obj",
+      "sha256": "08dbd3eadce0571918c7df82a6cf80c8929be83a087c6d75c84011719b05bc29"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_19.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_19.obj",
+      "sha256": "42ad1a6298dc9803b9ac7b5775d1ad03042fa6e77de704d10c25a2015fbd1af6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_20.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_20.obj",
+      "sha256": "d353905218fd75a7a4317cf03029e25726c29b6ef8ccfcaabf8a19b07c1532f9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_21.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_21.obj",
+      "sha256": "6ca1aeb21e7813a20951356d556e87648e0c9e51cfc098ca7c191ce445f4eb80"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_22.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_22.obj",
+      "sha256": "c44c2d7e54704b5da80d39178379391d0571473d69d2adcf7bd1b6ec1f73d886"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_23.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_23.obj",
+      "sha256": "1f3b3f45fe4469a0357f982809615524b444275ea91cc937de43cb22f51e9217"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_24.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_24.obj",
+      "sha256": "4e1c6ed08c3172899a6bbb15230777504a3395d5c7bf3e085d82df4b0675f99c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_25.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_25.obj",
+      "sha256": "8ce2e9ef893a5a8f335f86e33c1dfcdca989e17c1fbfcfa8093e28c7737f1512"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_26.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_26.obj",
+      "sha256": "501d24bf449d11af0992937fa525afa96e8ecd48fc7bc4357d07008c1994c1c7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_27.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_27.obj",
+      "sha256": "e7786609fa3e14966f7ef51520dadcfa1499f9f084777864576a6ceb2dc9ab79"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_28.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_28.obj",
+      "sha256": "ccaf267649a847d058c910a999ef09502cd3dfdc0a378715d836c3e715122af7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_29.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_29.obj",
+      "sha256": "f10707503a639792b0a1032f50622bef1a8d9adc477ede2915dca4adcfc6d7cb"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_30.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_30.obj",
+      "sha256": "c85aad537c0c7237a2a919b7361f0264ed62d768e3a438b818e110117c66edf0"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_31.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_31.obj",
+      "sha256": "bebfcec64d83d946277c99e08cd04cd2dc160756e389e779a0007c5340b0186d"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep1_32.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep1_32.obj",
+      "sha256": "650ac2f8738643c4223b7f4287a75877dc4352847b0f2c70ad5dcc42c2dfcc4f"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_00.obj",
+      "sha256": "89a9c04fc4d8c3c878fc82014461467a14b8914e4461e381832afcfde8645855"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_01.obj",
+      "sha256": "e6a6508fe903d7071cf9ad7f1fe8b5a01f770600493b5e52958c1ffa52b0f60e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_02.obj",
+      "sha256": "528c9fbed3eadc7265edeaaf5734b0b265fe2230ca6c225c1e0ea4260069b8ad"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_03.obj",
+      "sha256": "61056bac05edf7860d82f4a1091f44d569adf22e48af940f43d67e3b9ff721fc"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_04.obj",
+      "sha256": "4b035c2af13321aab06634261a08f24806fac4aac75b020786939ddbcdd7720f"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_05.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_05.obj",
+      "sha256": "2a5dc9239dfdf53e40438910c3a423e8aeef4fda800dd1249725102b328bee93"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_06.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_06.obj",
+      "sha256": "f18f5113a8db2fa114978ad428a53b8288ad91b43a8f2e7e77974dbdea47423f"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_07.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_07.obj",
+      "sha256": "a815bb5995b0ba02a49ea11166eb97dcb76e1eef65bf4f9a6ad400c233acef47"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_08.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_08.obj",
+      "sha256": "6849e373ec8278d811cb6e6d8d8f0e926cd6a248c6e3dd532339d74faebf3d4a"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_09.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_09.obj",
+      "sha256": "4c3ab1791b1e9c08b16cfb36c2412636c96543ce0f70170e79a63171bf63eb91"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_headphone_half_a_10.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_headphone_half_a_10.obj",
+      "sha256": "5907dfac168b7bc1bc321fcc1da0d4cd59e3dba89db4c13d111b969363739867"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bottle_orange_lying_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bottle_orange_lying_00.obj",
+      "sha256": "35b40240b449f23d304f7302aea9d6823598498ad6ad966d2b7f72f711f8d420"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bottle_orange_lying_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bottle_orange_lying_01.obj",
+      "sha256": "6b97c222ac34308435c6bc6bc7a86ea207a41030e5710d3c58706a1715e9c43a"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bottle_orange_lying_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bottle_orange_lying_02.obj",
+      "sha256": "325a662ed8315dc1fe7e400f3a27799c7da04d840f0695abe7357ff8860f4277"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_00.obj",
+      "sha256": "d466100ebc1d06913c1bfa68e75cc8b3d2fca7804357024ba7d0374cba3e5cba"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_01.obj",
+      "sha256": "2183af5f46bb2ef55de1d08d7627e9b3770e36d3065643350af06ce1cc6cf5a6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_02.obj",
+      "sha256": "dd3c0a0b9c80dca001299c268cd1b984ff7c0a64fa316482cb6c3769c7c9a670"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_03.obj",
+      "sha256": "8469fe418abcc8584f6885fcb153468cbd01ada9015d1080f7d6ac66316fe9d9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_04.obj",
+      "sha256": "dbf476849acd013de1ef95e878bd5c40d246727799e14d5cc32b72bd893746f7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_05.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_05.obj",
+      "sha256": "251ee799a2b9e9d0e41c96aeb0c76910b48e373396f43d6808d6777c1662e2d6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_06.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_06.obj",
+      "sha256": "02ae7bb6b7433930e12817cbb66eb6a1b153956a8a4bdd9e53a8cab5dcb8fba5"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_07.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_07.obj",
+      "sha256": "6243c622b956a5e05786959ce47a0f073733efaf18299c90fa30d2e74698eed5"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_08.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_08.obj",
+      "sha256": "aaba8e109bf059bae703ce0105eb0f56a5b53a657ccd258fc55249cc7dd01604"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_09.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_09.obj",
+      "sha256": "3203938e0f40f60f1ace72d7768b4ba53937882f84ae09d4963631ca803f835c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_10.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_10.obj",
+      "sha256": "e5bf0e936781117640acf61292bb0b49076fda18cb319f4830966b6f52be7da6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_11.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_11.obj",
+      "sha256": "5e7d0304856e29471342ba979c2e5edd0aac0efd08f41c5a200449ebaab45186"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_12.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_12.obj",
+      "sha256": "d8435967e56ce1a9cc3c6cd75c0c017e5fc9e24ca8f1f3462e86061d9c114e29"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_13.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_13.obj",
+      "sha256": "5baaf9b9acd4e0b707c010b12efdfd69ec7252de7a25ac22d162a8358d0c8a52"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_14.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_14.obj",
+      "sha256": "5ef8c57d23d5834a41477e7d5a8969d6ad8442983993a77d38a8701bd871d373"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_15.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_15.obj",
+      "sha256": "0ade60942b44c4165e512d7e13bf5c52b55d69e8b8152e565bf0b6f92d2baad2"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_16.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_16.obj",
+      "sha256": "d261869d6bc670cfcfadda47b606878943ff64f35dec0dbbab7b19bbb753377b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_17.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_17.obj",
+      "sha256": "3197b1c37c7984792fa6812452bc0d2121646efaf9c1626b82322f916ed5bb6f"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_18.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_18.obj",
+      "sha256": "d61be409534f84b2e153440c1c0b3f8112136ae7267a76f3f220aa55a4c47a69"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep2_bits_box_19.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep2_bits_box_19.obj",
+      "sha256": "e2f4f7d3c37412016154a0b9eaed4bebf78cba7662b5067af43082d0e76a4f4e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_00.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_00.obj",
+      "sha256": "958f39be7f7c68d5080efa550a831b3c43b871a2c34ff0e2bbd72a79f50fa3dd"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_01.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_01.obj",
+      "sha256": "4dd2812a7086a78b25bc464096ddf6a38c28d0ce3ede1ac09e95beb60b0a93c1"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_02.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_02.obj",
+      "sha256": "ffcbc9733b0ead1afb613f61771c120c4cad6564c1c97050c5e98bff8c679dcf"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_03.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_03.obj",
+      "sha256": "02c8f5307d79e9b364fb43da45d8817cd4b64900595348e84bde125da94c01b8"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_04.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_04.obj",
+      "sha256": "448098e2295bbac614f96d4c666273c0e377f32a0832c32bd49f0bf99d31f8c3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_05.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_05.obj",
+      "sha256": "726f85f2275bbca4b088da01807aab47b509904d24e452432ea03f9f4855c96a"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_06.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_06.obj",
+      "sha256": "582f57b1a584e623894be4067bbfb3c0dc0ca98a9c011a27688b42c2b48233f3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_07.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_07.obj",
+      "sha256": "cbe3268651546e8841b0038b4864715bb38167ea73357bcfb95b94baff48cc57"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_08.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_08.obj",
+      "sha256": "84f633390a668bcbe1f808675e731c4867acef9be9347199258d67ccdef5b882"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_09.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_09.obj",
+      "sha256": "936212149c9f307ac6dc0888ccfb6bfc3e94c62bd082771cdae85c993bac6ca8"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_10.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_10.obj",
+      "sha256": "af5030c5f9bd337f0f0a8256d1cc39db1111d8b51a37d3165a5c2de7ff94efb6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_11.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_11.obj",
+      "sha256": "e95c717b713d1a1c8dfab47a0a8a8bb9923e884ca1d14a69d294050442b39dca"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_12.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_12.obj",
+      "sha256": "8b92d0adfcb6bb63222543e92898aa77580bd2bf87b537b85a4b48034bd36d46"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_13.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_13.obj",
+      "sha256": "90c5c2be1f938b1a3c633b86466e50e64b7e1e352e74725a4bed3bad035b7017"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_14.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_14.obj",
+      "sha256": "33fa6df6b6dfc140486d5b8102a9caa40a3b20bb5a8c36a4ebb5455c11f71692"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_15.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_15.obj",
+      "sha256": "85c08a0b1125ac3de733f97b52b24edba4ba7f2aef994be4c1a60457caf5c2f3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_16.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_16.obj",
+      "sha256": "5fbbf3e5ad6ea925b52d90e6643881d569c625aefe90ea25b9c5dcb6a9fe7335"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_17.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_17.obj",
+      "sha256": "e68920220932aef45803beeb1555c08866b72295b48885ef2ea54729539594fa"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_18.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_18.obj",
+      "sha256": "c277071cae5d5df88a187ddba5486b2ba1709037daf08a8ba7f304b123c998a3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_19.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_19.obj",
+      "sha256": "6cf1614291e6ea70bbf8a8e2575dd97a226b280d17f0b88765176c2ea9ad51e4"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_20.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_20.obj",
+      "sha256": "34e1c5ab9c3d44ba08451ce9799e1e86d27d3bdda396603f2400a2b73898a893"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_21.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_21.obj",
+      "sha256": "5aa8e33b9c8d7562b05633a95bacbd1b8b85c493a27dc383b5cdb932122c68a7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_22.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_22.obj",
+      "sha256": "0129953494889cb323baf1948884dff71939e08c8d7935029904f7ca2ef89aa3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_23.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_23.obj",
+      "sha256": "a00dac95e0b2307452b5a6985218d09213470a80ef81baaa3ebe27033f0c04cc"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_24.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_24.obj",
+      "sha256": "826aff37c542d8d98e8a43e65b4004cd972b984ef6a6be7bf519d012b828baab"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_25.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_25.obj",
+      "sha256": "1277694fe196d5defd9a6f009735d02164e7e2675339526d049d727e11ecb252"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_26.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_26.obj",
+      "sha256": "307833a61fd0cf741cba33ec6e612f88571676a80413f9994841696fb7e0a0c9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_27.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_27.obj",
+      "sha256": "994f1aad8b5caf295d2811a4af0d8fc3a42101c802afac35706862fe8f8b2e0d"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_28.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_28.obj",
+      "sha256": "573138f94f4330ab1723eab286b292e900fc5542a89d6d232ca09523275764b3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_29.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_29.obj",
+      "sha256": "9a8463d77267c28c9fcd9470bb58b9d68105f208d3d382bfeba8d0a4c69d2a06"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_30.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_30.obj",
+      "sha256": "7dffa289aec94d126b3e8ef115edee4f4b1a5e65b0308876943edcf52d9fd818"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_31.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_31.obj",
+      "sha256": "596a333676225465798950587b3e0d617452d8863613266ac2e5d6286f6de36a"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep2_32.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep2_32.obj",
+      "sha256": "e45a41277d65512c0d65e74f378ac9fac3ad2d0a6faf86587bfbbf4ad052c1e6"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_00.obj",
+      "sha256": "1945507272058d0e4ccb67ee1815ca26ee47bd5a956c6f161f127264d0839b70"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_01.obj",
+      "sha256": "1ddd708927bc5e528c7a2ac6fe853ab4f9f725a8066abbb6e7c97825afe4a6f7"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_02.obj",
+      "sha256": "d5836aa15398590e73a5e77a755190579af99663d566481b9e2a4fee53129104"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_03.obj",
+      "sha256": "54a0e3f38f3567c37ce2d7d5eb4c0f1332fb58ddfac10f06e5fd32d35c646a9e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_04.obj",
+      "sha256": "b32ba17182ee4c8b96ef03b5e5697557dab16c4348a8a96fe2f05a5bab84f9ce"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_05.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_05.obj",
+      "sha256": "520994156cbc48b3c4b75617efe9acfff7e3adafc7914c7b19a5e9547b65fa1c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_06.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_06.obj",
+      "sha256": "c150425191eb8f2fa075c2a369456736ec3956dcbda0bc9d8c45957cd228d886"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_07.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_07.obj",
+      "sha256": "8d01690ff1ecdb5bc9702594598ffdb02584773d4843ef8e1580ba4b64bf98c9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_08.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_08.obj",
+      "sha256": "52fe73064a160c4d3636992af676a95a0bd5fdfbc543b8b1b27f896cdedb62b0"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_09.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_09.obj",
+      "sha256": "c19bfc480a0b908b5c2aeaada9112eb67ec94d8c13f5012857fbbe79caa2160f"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_tape_roll_10.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_tape_roll_10.obj",
+      "sha256": "d7e28490c6d87ee6885421a9e302bf96cf6deea7f89220eb954000acd20c645c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_paper_cup_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_paper_cup_00.obj",
+      "sha256": "a34b8082a4b161653b227c9085f55ff36b54143041f3aab21aba3c57c9bab23b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_paper_cup_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_paper_cup_01.obj",
+      "sha256": "c9003666f49043e93081faf00ddeb69293736fbf558d16a704875e5282a553ea"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_paper_cup_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_paper_cup_02.obj",
+      "sha256": "e3b053a2799a48906b1eb97497d7f7bdd589a0ec3ee7999a391c3a93d1971fad"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_paper_cup_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_paper_cup_03.obj",
+      "sha256": "59857cc8f489f8cc0cad9b6e1a1b553599e619c80ffeb4649c70ddb46c98456c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_paper_cup_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_paper_cup_04.obj",
+      "sha256": "c3deefec3876fcedfcedc21deeae85c0baa9b2fc5d0a2990bc5e1988f3c6f090"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_headphone_half_b_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_headphone_half_b_00.obj",
+      "sha256": "9fb51a2a94033d53589793aaf2eeae19311f48c37b8d48f5a3cc4b79a7e23d47"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_headphone_half_b_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_headphone_half_b_01.obj",
+      "sha256": "fdf211fa2631b1b14f798034d4ed06f22354fe1ca08c670cd4754a5667f266a3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_headphone_half_b_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_headphone_half_b_02.obj",
+      "sha256": "a9e608ee8387fb6ceee5feb5ed3ef2aa99a8a80de00d37c45597a917c317351c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_headphone_half_b_03.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_headphone_half_b_03.obj",
+      "sha256": "2cb838b96ca6330125b319da5ed83ca6bcd8afbb58a39fcf32a309ec66407076"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_headphone_half_b_04.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_headphone_half_b_04.obj",
+      "sha256": "ffc0eb6d96e4082b87918d064867160afd3b31eee3ef23dd21edff5250cf7c64"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_bottle_white_lying_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_bottle_white_lying_00.obj",
+      "sha256": "e11a0989e2933237b9514d504312bb9094bc34c61e21d3bf692485f5c06c0d65"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_bottle_white_lying_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_bottle_white_lying_01.obj",
+      "sha256": "40683a8996d1147417be1fe49e804d602b6096a00cfd0d19c5eea6ec79f8eec1"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_bottle_white_lying_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_bottle_white_lying_02.obj",
+      "sha256": "e187f4f0bea7541880a693254100af08fb6009478bbae08f400e9719433bc583"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_bottle_yellow_cap_standing_00.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_bottle_yellow_cap_standing_00.obj",
+      "sha256": "1a4d87b991b7c31a14985f988b73c0adb94e7f6cf81f66c2d84fe65b6f2c2778"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_bottle_yellow_cap_standing_01.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_bottle_yellow_cap_standing_01.obj",
+      "sha256": "ed6f9866bd69800b20414c24bda6e987db895ad1e9424e4ae7ff21b150f0d097"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/objects/nail_ep3_bottle_yellow_cap_standing_02.obj": {
+      "source": "migration/photoreal_objects_2026-10-18/assets/nail_ep3_bottle_yellow_cap_standing_02.obj",
+      "sha256": "2f3a438a441f50d4653a30374402f72bf2d88e46a6bf385ac6cdde0f85398f6c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_00.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_00.obj",
+      "sha256": "c0b5fd9768d51a0b1c7e32af1ff490c48eadda0d699b8720dad7661096c18376"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_01.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_01.obj",
+      "sha256": "f39f852405be64c91e04d11d0ba21af7219f42367c9b6e3ba94b0c49e9f197ce"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_02.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_02.obj",
+      "sha256": "44d4ae9a90eed4525094b53eefebed526c0c26a8ca27189554075f70fa9ad388"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_03.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_03.obj",
+      "sha256": "520f00fca8a11efb4a8099f570437400a85c0fbde3807171b937d0ffc34fb28b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_04.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_04.obj",
+      "sha256": "6973ea5a46b00d76214065c3087c390df3753b5df4d8accf1d701acb2a4b7c00"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_05.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_05.obj",
+      "sha256": "eaa133fe60bd470632dec58a73c8cfc227de136b1ca5b669b900e810eaadb6b2"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_06.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_06.obj",
+      "sha256": "73da9e858e392d56305d6c985dddcefa38fe2dd4f39add0657cafa5cd4f76067"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_07.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_07.obj",
+      "sha256": "9b897fab186d3045ed997112b476f327b656d2d7bfd96b94e5a13bb917cf9a2c"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_08.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_08.obj",
+      "sha256": "d549d94c2cdc0fa8247806136358355729850c5d89d5e6081a9ed9a4a07aa45b"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_09.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_09.obj",
+      "sha256": "77d808f9c1bf0b93a150fd9a4bb021d258df4a0e9324e114d78d06ced99a98a5"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_10.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_10.obj",
+      "sha256": "e966b21e1c0a78e52a4a1a4524794bc768a1a1fabb5eb3afb2e3d4da3fde72ec"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_11.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_11.obj",
+      "sha256": "54c05803e25649b777af7933414d00e3c3437246c483a35ae4050df8afd93895"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_12.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_12.obj",
+      "sha256": "32afcaa5591176fd33799a9ab82aeeb24da600a2649efd0c608128c801517b32"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_13.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_13.obj",
+      "sha256": "1cb455d23a3b3a1baddb84190c664e93d13b50a22c98041cc08cfc8ad468836d"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_14.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_14.obj",
+      "sha256": "8a50a0726a02b06dfca3d2df18cd957299a59cbf7585fa7ac73de93b46597165"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_15.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_15.obj",
+      "sha256": "8f879319c4b95073cc22fe89a2bab863124547b8352c82b0336acd12d6c9c68e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_16.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_16.obj",
+      "sha256": "b96bf4dfd5e431fe206ea4c5528377f5915c80a8d7254eb6f133505277a29579"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_17.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_17.obj",
+      "sha256": "2ad4f93c55380e8d10c8675db761f636f608b59d189e4cc7cd326489f62a5652"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_18.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_18.obj",
+      "sha256": "a543f8310817cf8359321992052ffd006976c4c9ecaf456ce8ee013731cc1131"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_19.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_19.obj",
+      "sha256": "fe5bb466b346297fd6e47234c308052a3af073bbd0f1cfd8c9067b5dbda8b806"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_20.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_20.obj",
+      "sha256": "f84b101da9c560120f050a3545966e7d7af9ab45de824f8d257f6a66d92f6a01"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_21.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_21.obj",
+      "sha256": "2c7755c50931c6d811f71d056e6c1b71b8b9c275a537df3dbab5285fffe62ea2"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_22.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_22.obj",
+      "sha256": "40a90d283abfe0005d9e4d4320d15ebe0797aaa4c4f15a9c7362899890b94892"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_23.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_23.obj",
+      "sha256": "fb76f02dc0dd26bffa6fbbd0788226750f5433b2e0da49e7f2f481fe6aff024e"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_24.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_24.obj",
+      "sha256": "9b4ef2563c3915b099080108c10d349d6443951a015be44135db637ca1a9c521"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_25.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_25.obj",
+      "sha256": "fe8b3dce1b4f581d476553be307ca835dd9b220ca2cc5e1b586761c1064dfd67"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_26.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_26.obj",
+      "sha256": "4af6a09599b2193b083c304e88ee631885e2675b1d41ca1e6f43cf71922ee897"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_27.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_27.obj",
+      "sha256": "ab2e3a9ff64fc95510c1603cae5454fafacfffa3e3183cc993a0aa3ed31fbb07"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_28.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_28.obj",
+      "sha256": "bd651009d401b3236555f6239a630e29c76681ee7dda5a01c9e0b4ed04374ca3"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_29.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_29.obj",
+      "sha256": "c19781809163045f30d43f5b889ecdefc794558bd5847a66557d0fe595e2d751"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_30.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_30.obj",
+      "sha256": "25ee52857d0f8956b3c26243fd30e6b8d527663433d689aeab4b4742dc526a99"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_31.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_31.obj",
+      "sha256": "c8f4417eeb36af95191e570c464ba4c20c3043e2afc933311b59f7576babc2f9"
+    },
+    "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/assets/photoreal/headphones/hinged_nail_ep3_32.obj": {
+      "source": "migration/photoreal_headphone_hinge_2026-10-18/assets/hinged_nail_ep3_32.obj",
+      "sha256": "64d5f90f24ec064b8e5b189d2203e1b33727b5b2f7e50090875a40fc6184d58e"
+    }
+  },
+  "backup": "migration/photoreal_integration_2026-10-18/before"
+}

@@ -4,7 +4,7 @@ Run from the workspace root::
 
     uv run python -m lerobot.annotation.validate_diverse_audit \
         --root outputs/diverse_robot_dataset_v3 \
-        --output migration/diverse_annotation_audit_2026-10-07/validation/structural.json
+        --output outputs/_annotation/passes/diverse_annotation_audit_<date>/validation/structural.json
 
 The validator is deliberately read-only with respect to the corpus.  It validates the
 two federated stores, writes one JSON report, and writes a JSONL repair-candidate file

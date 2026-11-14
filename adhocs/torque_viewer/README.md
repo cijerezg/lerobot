@@ -2,7 +2,8 @@
 
 Question (2026-11-12): does the follower's motor torque show contact events (grasp, pushing on the table, collision)?
 Approach: run a peak detector on the torque, then look at the video at each event. See
-`docs/notes/torque_capture.md` for how the torque is captured.
+`docs/design/data_annotation.md` (motor velocity and torque columns) for how the torque is captured; roots of
+2026-11-12 / 13 have it in `meta/online_labels.parquet` instead (`docs/archive/torque_capture.md`).
 
 ```bash
 uv run python lerobot/adhocs/torque_viewer/view.py outputs/train/<date>/<run>/inference_dataset [--episode 0]

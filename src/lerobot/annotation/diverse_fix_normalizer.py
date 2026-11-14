@@ -9,8 +9,8 @@ Usage::
 
     uv run python -m lerobot.annotation.diverse_fix_normalizer \
       --source-root outputs/diverse_robot_dataset_v3 \
-      --fix-dir migration/diverse_annotation_audit_2026-10-07/fixes/round1 \
-      --out-dir migration/diverse_annotation_audit_2026-10-07/fixes/round1_normalized \
+      --fix-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes/round1 \
+      --out-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes/round1_normalized \
       --dry-run
 """
 

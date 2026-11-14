@@ -47,6 +47,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
+from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.processor import (
@@ -111,18 +112,32 @@ def replay(cfg: ReplayConfig):
     actions = dataset.select_columns(ACTION)
 
     robot.connect()
+    # F freezes the replay (the robot holds the position it has at the key press) and F resumes it
+    # at the same frame; Esc stops the replay.
+    listener, events = init_keyboard_listener(enable_freeze=True)
+    action_names = dataset.features[ACTION]["names"]
 
     try:
         log_say("Replaying episode", cfg.play_sounds, blocking=True)
-        for idx in range(dataset.num_frames):
+        idx = 0
+        hold = None
+        while idx < dataset.num_frames and not events["stop_recording"]:
             start_episode_t = time.perf_counter()
 
-            action_array = actions[idx][ACTION]
-            action = {}
-            for i, name in enumerate(dataset.features[ACTION]["names"]):
-                action[name] = action_array[i]
-
             robot_obs = robot.get_observation()
+
+            if events["frozen"]:
+                if hold is None:
+                    hold = {name: robot_obs[name] for name in action_names}
+                    logging.info(f"Frozen at frame {idx}. Press F to resume, Esc to stop.")
+                action = hold
+            else:
+                hold = None
+                action_array = actions[idx][ACTION]
+                action = {}
+                for i, name in enumerate(action_names):
+                    action[name] = action_array[i]
+                idx += 1
 
             processed_action = robot_action_processor((action, robot_obs))
 
@@ -131,6 +146,8 @@ def replay(cfg: ReplayConfig):
             dt_s = time.perf_counter() - start_episode_t
             precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
     finally:
+        if listener is not None:
+            listener.stop()
         robot.disconnect()
 
 

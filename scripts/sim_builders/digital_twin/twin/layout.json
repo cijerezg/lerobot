@@ -1,0 +1,628 @@
+{
+ "source_frame": "outputs/rebot_teleop_2026-10-29-cut-v1 ep0 frame 0, observation.images.top (640x480)",
+ "camera_used_for_unprojection": {
+  "scene": "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/clippers_only/scene.xml",
+  "pos": [
+   0.609,
+   -0.01395,
+   0.84855
+  ],
+  "fovy": 60.73,
+  "note": "calibrated webcam pose; the room scene's aligned ext camera is for rendering only"
+ },
+ "pixel_offset_real_minus_calibrated": [
+  9.0,
+  50.0
+ ],
+ "table_frame": "robot base at the origin, z = 0 desk top, x toward the far edge / top camera, y to the image right",
+ "objects": {
+  "bits_kit": {
+   "pick_px": [
+    315,
+    238
+   ],
+   "pick_height_m": 0.02,
+   "axis_px": [
+    [
+     245,
+     159
+    ],
+    [
+     435,
+     230
+    ]
+   ],
+   "table_xy": [
+    0.3221,
+    -0.0551
+   ],
+   "axis_angle_deg": 65.6,
+   "note": "open bit organizer, centre of the blue tray; axis = long side"
+  },
+  "headphone_case": {
+   "pick_px": [
+    200,
+    370
+   ],
+   "pick_height_m": 0.03,
+   "axis_px": [
+    [
+     200,
+     370
+    ],
+    [
+     155,
+     300
+    ]
+   ],
+   "table_xy": [
+    0.5896,
+    -0.2895
+   ],
+   "axis_angle_deg": -146.0,
+   "note": "base half (with the headphones) centre; axis = base -> lid half centre"
+  },
+  "roar_bottle": {
+   "pick_px": [
+    105,
+    218
+   ],
+   "pick_height_m": 0.0,
+   "axis_px": null,
+   "table_xy": [
+    0.2484,
+    -0.5233
+   ],
+   "axis_angle_deg": null,
+   "note": "ROAR drink bottle, base ellipse centre (standing)"
+  },
+  "pill_bottle": {
+   "pick_px": [
+    98,
+    256
+   ],
+   "pick_height_m": 0.0,
+   "axis_px": null,
+   "table_xy": [
+    0.3362,
+    -0.5318
+   ],
+   "axis_angle_deg": null,
+   "note": "small white pill bottle, base centre"
+  },
+  "navy_bottle": {
+   "pick_px": [
+    116,
+    140
+   ],
+   "pick_height_m": 0.0,
+   "axis_px": null,
+   "table_xy": [
+    0.0565,
+    -0.5125
+   ],
+   "axis_angle_deg": null,
+   "note": "dark navy bottle with a blue screw cap at the far-left corner, base centre (v2: built navy cylinder 70 x 200)"
+  },
+  "bit_1": {
+   "pick_px": [
+    475,
+    126
+   ],
+   "pick_height_m": 0.003,
+   "axis_px": [
+    [
+     470,
+     121
+    ],
+    [
+     481,
+     131
+    ]
+   ],
+   "table_xy": [
+    0.0643,
+    0.3158
+   ],
+   "axis_angle_deg": 39.8,
+   "note": "loose bit, blue-grey (rendered grey)"
+  },
+  "bit_2": {
+   "pick_px": [
+    502,
+    122
+   ],
+   "pick_height_m": 0.003,
+   "axis_px": [
+    [
+     495,
+     120
+    ],
+    [
+     509,
+     124
+    ]
+   ],
+   "table_xy": [
+    0.0573,
+    0.3777
+   ],
+   "axis_angle_deg": 68.8,
+   "note": "loose bit, black (rendered grey)"
+  },
+  "bit_3": {
+   "pick_px": [
+    489,
+    141
+   ],
+   "pick_height_m": 0.003,
+   "axis_px": [
+    [
+     483,
+     144
+    ],
+    [
+     496,
+     138
+    ]
+   ],
+   "table_xy": [
+    0.1035,
+    0.343
+   ],
+   "axis_angle_deg": 113.7,
+   "note": "loose bit, red"
+  },
+  "bit_4": {
+   "pick_px": [
+    521,
+    135
+   ],
+   "pick_height_m": 0.003,
+   "axis_px": [
+    [
+     518,
+     129
+    ],
+    [
+     524,
+     141
+    ]
+   ],
+   "table_xy": [
+    0.0921,
+    0.4162
+   ],
+   "axis_angle_deg": 17.3,
+   "note": "loose bit, cream (rendered yellow)"
+  },
+  "bit_5": {
+   "pick_px": [
+    462,
+    136
+   ],
+   "pick_height_m": 0.003,
+   "axis_px": [
+    [
+     457,
+     133
+    ],
+    [
+     467,
+     139
+    ]
+   ],
+   "table_xy": [
+    0.088,
+    0.2839
+   ],
+   "axis_angle_deg": 52.4,
+   "note": "added grey bit (not in the frame)"
+  },
+  "bit_6": {
+   "pick_px": [
+    512,
+    112
+   ],
+   "pick_height_m": 0.003,
+   "axis_px": [
+    [
+     507,
+     108
+    ],
+    [
+     517,
+     116
+    ]
+   ],
+   "table_xy": [
+    0.0331,
+    0.4033
+   ],
+   "axis_angle_deg": 42.8,
+   "note": "added grey bit (not in the frame)"
+  },
+  "bits_box": {
+   "pick_px": [
+    548,
+    178
+   ],
+   "pick_height_m": 0.0125,
+   "axis_px": [
+    [
+     520,
+     174
+    ],
+    [
+     580,
+     182
+    ]
+   ],
+   "table_xy": [
+    0.2042,
+    0.456
+   ],
+   "axis_angle_deg": 78.9,
+   "note": "small clear bits box right of the robot base, lid centre; axis = long side"
+  },
+  "bit_holder": {
+   "pick_px": [
+    322,
+    350
+   ],
+   "pick_height_m": 0.0075,
+   "axis_px": [
+    [
+     335,
+     333
+    ],
+    [
+     308,
+     368
+    ]
+   ],
+   "table_xy": [
+    0.5576,
+    -0.0479
+   ],
+   "axis_angle_deg": -39.8,
+   "note": "silver bit holder between the large clipper and the case; axis = long side"
+  },
+  "basket": {
+   "pick_px": [
+    577,
+    311
+   ],
+   "pick_height_m": 0.0,
+   "axis_px": [
+    [
+     527,
+     250
+    ],
+    [
+     548,
+     385
+    ]
+   ],
+   "table_xy": [
+    0.4962,
+    0.48
+   ],
+   "axis_angle_deg": 0.9,
+   "note": "footprint centre estimated from the rim (0.21 m tall, real nadir (340,326)); axis = bottom edge of the left wall"
+  },
+  "clipper_case": {
+   "pick_px": [
+    411,
+    365
+   ],
+   "pick_height_m": 0.015,
+   "axis_px": [
+    [
+     372,
+     345
+    ],
+    [
+     436,
+     338
+    ]
+   ],
+   "table_xy": [
+    0.594,
+    0.1288
+   ],
+   "axis_angle_deg": 94.2,
+   "note": "white tin centre; axis = long side"
+  },
+  "clipper_large": {
+   "pick_px": [
+    288,
+    367
+   ],
+   "pick_height_m": 0.005,
+   "axis_px": [
+    [
+     276,
+     380
+    ],
+    [
+     300,
+     357
+    ]
+   ],
+   "table_xy": [
+    0.5892,
+    -0.1181
+   ],
+   "axis_angle_deg": 131.8,
+   "note": "clipper lying left of the case"
+  },
+  "tape_roll": {
+   "pick_px": null,
+   "pick_height_m": null,
+   "axis_px": null,
+   "table_xy": [
+    0.16,
+    -0.39
+   ],
+   "axis_angle_deg": null,
+   "note": "added, not in the real frame: package ep3 tape roll, flat, between the kit's far end and the bottles"
+  },
+  "paper_cup": {
+   "pick_px": null,
+   "pick_height_m": null,
+   "axis_px": null,
+   "table_xy": [
+    0.2,
+    0.25
+   ],
+   "axis_angle_deg": null,
+   "note": "added, not in the real frame: package ep3 paper cup, between the kit and the loose bits"
+  }
+ },
+ "desk_edge_check": {
+  "back_left": [
+   -0.049,
+   -0.515
+  ],
+  "back_right": [
+   -0.06,
+   0.615
+  ],
+  "front_left": [
+   0.7,
+   -0.624
+  ],
+  "front_mid": [
+   0.691,
+   -0.056
+  ],
+  "left_mid": [
+   0.319,
+   -0.618
+  ]
+ },
+ "poses": {
+  "bits_kit": {
+   "pos": [
+    0.3221,
+    -0.0551,
+    0.003
+   ],
+   "yaw_deg": 245.6
+  },
+  "headphone_case": {
+   "pos": [
+    0.5896,
+    -0.2895,
+    0.022
+   ],
+   "yaw_deg": 276.2
+  },
+  "roar_bottle": {
+   "pos": [
+    0.2484,
+    -0.5233,
+    0.002
+   ],
+   "yaw_deg": 290.0
+  },
+  "pill_bottle": {
+   "pos": [
+    0.3362,
+    -0.5318,
+    0.002
+   ],
+   "yaw_deg": 110.0
+  },
+  "navy_bottle": {
+   "pos": [
+    0.0565,
+    -0.5125,
+    0.002
+   ],
+   "yaw_deg": 0.0
+  },
+  "bit_1": {
+   "pos": [
+    0.0643,
+    0.3158,
+    0.004
+   ],
+   "yaw_deg": 39.8
+  },
+  "bit_2": {
+   "pos": [
+    0.0573,
+    0.3777,
+    0.004
+   ],
+   "yaw_deg": 68.8
+  },
+  "bit_3": {
+   "pos": [
+    0.1035,
+    0.343,
+    0.004
+   ],
+   "yaw_deg": 113.7
+  },
+  "bit_4": {
+   "pos": [
+    0.0921,
+    0.4162,
+    0.004
+   ],
+   "yaw_deg": 17.3
+  },
+  "bit_5": {
+   "pos": [
+    0.088,
+    0.2839,
+    0.004
+   ],
+   "yaw_deg": 52.4
+  },
+  "bit_6": {
+   "pos": [
+    0.0331,
+    0.4033,
+    0.004
+   ],
+   "yaw_deg": 42.8
+  },
+  "bits_box": {
+   "pos": [
+    0.2042,
+    0.456,
+    0.0145
+   ],
+   "yaw_deg": 78.9
+  },
+  "bit_holder": {
+   "pos": [
+    0.5576,
+    -0.0479,
+    0.0095
+   ],
+   "yaw_deg": 320.2
+  },
+  "basket": {
+   "pos": [
+    0.4962,
+    0.48,
+    0.002
+   ],
+   "yaw_deg": 0.9
+  },
+  "clipper_case": {
+   "pos": [
+    0.594,
+    0.1288,
+    0.002
+   ],
+   "yaw_deg": 184.2
+  },
+  "clipper_large": {
+   "pos": [
+    0.5892,
+    -0.1181,
+    0.0071
+   ],
+   "yaw_deg": 131.8
+  },
+  "clipper_small": {
+   "pos": [
+    0.5925,
+    0.1487,
+    0.017
+   ],
+   "yaw_deg": 94.2,
+   "start_pose_from_rest_override": [
+    0.5937,
+    0.1489,
+    0.0106
+   ]
+  },
+  "basket_bottle": {
+   "pos": [
+    0.5553,
+    0.5409,
+    0.014
+   ],
+   "yaw_deg": 0.9
+  },
+  "basket_can": {
+   "pos": [
+    0.4159,
+    0.4987,
+    0.044
+   ],
+   "yaw_deg": 0.9
+  },
+  "basket_card": {
+   "pos": [
+    0.4971,
+    0.425,
+    0.017
+   ],
+   "yaw_deg": 30.9
+  },
+  "basket_card_white": {
+   "pos": [
+    0.4971,
+    0.425,
+    0.022
+   ],
+   "yaw_deg": 10.9
+  },
+  "tape_roll": {
+   "pos": [
+    0.16,
+    -0.39,
+    0.017
+   ],
+   "yaw_deg": 0.0
+  },
+  "paper_cup": {
+   "pos": [
+    0.2,
+    0.25,
+    0.057
+   ],
+   "yaw_deg": 0.0
+  }
+ },
+ "rest_overrides": {
+  "clipper_small": {
+   "pos": [
+    0.5937,
+    0.1489,
+    0.0106
+   ],
+   "quat": [
+    0.68603,
+    -0.02027,
+    -0.02582,
+    0.72683
+   ],
+   "note": "settled pose after 1 s, used as the start pose"
+  }
+ },
+ "assets": {
+  "bits_kit": "assets/bits_kit_fold (tri-fold scan + visual bit rows), texture twin/assets/bits_kit_fold/bits_kit_fold_colors_gain.png: x(4.0, 2.9, 3.2) BGR on blue texels, x1.2 on neutral, bit columns painted cloth",
+  "pill_bottle": "assets_dl/pill_bottle_real (50 x 100 mm, Trader Joe's Vitamin D label)",
+  "roar_bottle": "twin/assets/roar_bottle (generated, label from wrist f300)",
+  "navy_bottle": "twin/assets/navy_bottle (generated navy cylinder 70 x 200, blue cap; pump bottle rejected)",
+  "bit_1..6": "twin/assets/bits/bit_hex.obj 25 x 6 mm, 6 g",
+  "bits_box": "box 120 x 80 x 25 mm clear + grey tray + coloured bits (visual), 80 g",
+  "bit_holder": "box 60 x 25 x 15 mm light grey, 40 g",
+  "basket_bottle": "cylinder 64 x 200 mm navy + white/green label band, 0.5 kg",
+  "basket_can": "cylinder 60 x 130 mm silver lying along basket y (capsule collider), 0.35 kg",
+  "basket_card": "box 90 x 60 x 6 mm navy, 30 g",
+  "basket_card_white": "box 80 x 56 x 2 mm white on the navy card, 10 g",
+  "basket, clipper_case, clipper_large, clipper_small, headphone_case": "package scenes, as v1",
+  "tape_roll": "package ep3 tape_roll (photoreal: beige tape ring 75 x 30 mm lying flat, hollow core), 0.03 kg, added v4 (not in the real frame)",
+  "paper_cup": "package ep3 paper_cup (photoreal: tapered cup 80 x 110 mm, cup_print.png), 0.30 kg, added v4 (not in the real frame)"
+ }
+}

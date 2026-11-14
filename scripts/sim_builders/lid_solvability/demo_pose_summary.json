@@ -1,0 +1,10 @@
+{
+ "frame": "sim table coordinates (robot base at the origin, +x away from the robot, +y the robot's left), through the calibrated top camera `ext` of scenes/close_lid/scene.xml",
+ "primary": "T071 ep 0 frame 0",
+ "t071_ep0": {"base_xy": [0.497, 0.211], "lid_xy": [0.317, 0.342], "hinge_xy": [0.407, 0.276], "base_to_lid_deg": 143.9, "body_yaw_deg_sim_convention": 206.1},
+ "t071_ep2": {"base_xy": [0.423, 0.257], "lid_xy": [0.226, 0.368], "hinge_xy": [0.324, 0.313], "base_to_lid_deg": 150.7, "body_yaw_deg_sim_convention": 212.9},
+ "t071_ep3": {"base_xy": [0.467, 0.048], "lid_xy": [0.403, -0.078], "hinge_xy": [0.435, -0.015], "base_to_lid_deg": -116.7, "body_yaw_deg_sim_convention": 305.5},
+ "sim_today": {"base_xy": [0.4189, 0.0174], "lid_xy": [0.2611, 0.0174], "base_to_lid_deg": 180.0, "body_yaw_deg": 242.18},
+ "real_case_size": "shells ~0.22 x 0.20 m, centre distance 0.22 m (sim 0.186 x 0.151, 0.158): the T071 case is a larger case than the ep2 one in sim",
+ "details": "demo_pose.json (pixel centroids, rect angles, camera check)"
+}

@@ -1,0 +1,679 @@
+# BC dataset mix 40/20/40 (2026-10-26, as 2026-10-18): internal ReBot 0.40, external ReBot 0.20, diverse 0.40; iid starts inside each group.
+# Roots ending in -tasks1 / _tasks1 carry the 2026-10-14 task renames (migration/task_review_2026-10-14);
+# -tasks2 / _tasks2 = the same plus three task strings shortened for the prompt token budget (migration/task_length_2026-10-14).
+# Internal task shares use whole-episode groups; training-time validation stays off (Spark).
+offline_output_dir: outputs/rebot-mix40_20_40-20261026
+batch_size: 64
+dataset:
+  repo_id: cijerezg/rebot-all-v1
+  use_imagenet_stats: false
+  max_episodes: null
+  # Whole roots stay cached once. episode_groups assigns each internal episode exactly once.
+  sources:
+  - name: internal_main
+    root: outputs/rebot_all-annotated-v14-tasks2
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: true
+    episode_groups:
+      clothing: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+        28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+        54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 82, 83, 84, 85, 86, 87, 88, 89]
+      rigid: [15, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81]
+  - name: internal_additions
+    root: outputs/rebot_main_additions-annotated-v3
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    episode_groups:
+      clothing: [5]
+      rigid: [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+  - name: internal_bits_kit
+    root: outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    episode_groups:
+      bits_clippers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+      cases_kit_box_push: [13, 14, 15, 16, 17]
+  - name: internal_oct04
+    root: outputs/rebot_additions_2026-10-04-annotated-v12-tasks1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    episode_groups:
+      rigid: [5, 18, 24, 25]
+      pills_caps: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+      cases_kit_box_push: [0, 1, 2, 3, 4, 19, 20, 21, 22, 23]
+  - name: internal_oct07
+    root: outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    # excluded = misaligned clipper releases (clipper audit 2026-10-14), weight 0 below
+    episode_groups:
+      bits_clippers: [0, 1, 2]
+      excluded: [3, 4]
+  - name: internal_oct08
+    root: outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    episode_groups:
+      bottles_lids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12]
+      excluded: [9]
+  - name: internal_oldval
+    root: outputs/rebot_oldval_train-2026-10-14-v1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    # the two high-quality episodes of the old validation set (user 2026-10-14); the rest went to val or were dropped
+    episode_groups:
+      clothing: [0]
+      rigid: [1]
+  - name: internal_oct14
+    root: outputs/rebot_2026-10-14-annotated-v4
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    # nail clippers in a cluttered scene + rollouts of 2026-10-14; the 8 val pieces were carved out (rebot_val_2026-10-14-v1)
+    episode_groups:
+      bits_clippers: [0, 1, 2, 3, 4, 10]
+      bottles_lids: [5, 6, 7, 8, 11]
+      cases_kit_box_push: [9, 12]
+  - name: internal_oct16
+    root: outputs/rebot_2026-10-16-annotated-v1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    # 4 tidy-up-the-table teleop eps (0-3) + 3 rollout eps of 2026-10-15 (4-6), mixed objects (migration/annotation_2026-10-16)
+    episode_groups:
+      bits_clippers: [0, 1, 2, 3, 4, 5, 6]
+  - name: internal_oct17
+    root: outputs/rebot_2026-10-17-merged-v1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    # clipper rollout of 2026-10-17 (ep0, migration/annotation_2026-10-17) + tidy-up-the-table teleop (ep1, migration/annotation_2026-10-17b)
+    episode_groups:
+      bits_clippers: [0, 1]
+  - name: internal_oct21
+    root: outputs/rebot_2026-10-21-annotated-v1
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    # 3 tidy-up-the-table teleop eps (0-2) + 7 rescued mix40 rollout spans of 2026-10-20/21 (3-9, clippers / lid / bit / cup), migration/annotation_2026-10-21
+    episode_groups:
+      bits_clippers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  - name: internal_oct26
+    root: outputs/rebot_2026-10-26-merged-v2
+    weight: 1.0
+    sampling_group: internal
+    normalization_source: false
+    # merge of the 10-23 (0-6), 10-24 (7) and 10-26 (8-13) rollout roots and the 10-26 teleop roots (14-16 afternoon, 17-18 evening);
+    # -v2 = the seven "Tidy up the table" episodes retasked (migration/data_add_2026-10-26). Basket tasks rigid, clippers/bits bits_clippers.
+    episode_groups:
+      rigid: [0, 1, 2, 3, 7, 8, 9, 10, 11, 13]
+      bits_clippers: [4, 5, 6, 14, 15, 16, 17, 18]
+      cases_kit_box_push: [12]
+  - name: external_rebot_train
+    root: outputs/external_rebot_train-annotated-v9-tasks1
+    weight: 1.0
+    sampling_group: external_rebot
+    normalization_source: false
+    # excluded = the shake-hand episodes (weight 0 below): kept in the cache, never sampled.
+    episode_groups:
+      external_rebot: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+        29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+        54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+        79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102,
+        103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+        123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142,
+        143, 144, 145, 146, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172,
+        173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192,
+        193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212,
+        213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232,
+        233, 234, 235, 236, 237, 238, 239, 240]
+      excluded: [147, 148, 149, 150, 151, 152, 153, 154, 155, 156]
+  video_backend: pyav
+buffer_cache_dir: outputs/buffer_cache-rebot-20261010
+cache_policy: require
+diverse:
+  enabled: true
+  # Approved usefulness cleanup; excludes action targets while preserving recovery history.
+  # Internal (2026-10-16) + external ReBot and diverse (2026-10-18, migration/usefulness_review_ext_diverse_2026-10-18).
+  rebot_exclusions_manifest: migration/usefulness_review_ext_diverse_2026-10-18/cleanup/rebot_exclusions.json
+  diverse_exclusions_manifest: migration/usefulness_review_ext_diverse_2026-10-18/cleanup/diverse_exclusions.json
+  root: outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2
+  cache_dir: outputs/buffer_cache-diverse-20261010
+  # Mix 2026-10-26: back to 40/20/40 (as 2026-10-18): diverse 0.40, external ReBot 0.20, internal ReBot 0.40 (the group weights below). Starts inside a group are drawn iid.
+  rebot_weight: 0.6
+  weight: 0.4
+  group_weight: sqrt_episodes
+  group_weight_overrides: {}
+  render_automatic_quality: false
+  rebot_layout: rebot_b601_joint7_commanded
+  rebot_depth_intrinsics:
+  - 394.9832
+  - 394.9832
+  - 322.5604
+  - 238.6966
+  probe_rebot_caches: true
+  # Shares are normalized by their sum: internal groups 0.40 + external 0.20 = rebot_weight 0.6, diverse 0.4.
+  # 2026-10-21: bits 0.1232 -> 0.1366 for the internal_oct21 eps (usable bits frames 168,721 -> 187,006, old bits frames
+  # keep their draw rate), other internal groups scaled by 0.9516 so the internal total stays 0.40 (external 0.20 cached, weight 0).
+  # 2026-10-26: internal_oct26 adds usable frames rigid +25,620, bits_clippers +52,869, cases_kit_box_push +1,680. Each group weight
+  # times (usable + new) / usable, then all six times 0.8464 so the internal total stays 0.40: every old frame keeps its draw rate
+  # relative to every other frame (before-copy migration/data_add_2026-10-26/config_rl.before.yaml).
+  # Internal percentages: clothing 8.8, bits/clippers 37.1, rigid 23.2, bottles/lids 10.5, pills/caps 9.0, cases/kit/box/pushing 11.4.
+  rebot_group_weights:
+    clothing: 0.03531
+    bits_clippers: 0.1483
+    rigid: 0.09298
+    bottles_lids: 0.04188
+    pills_caps: 0.03589
+    cases_kit_box_push: 0.04564
+    external_rebot: 0.2
+    excluded: 0
+skip_critic: true
+val_dataset_path: outputs/rebot_val_2026-10-14-v1
+val_split: 0.0
+val_freq: 0
+val_on_start: false
+val_loss_frames: 128
+policy:
+  type: molmoact2_rl
+  task: Tidy up the table
+  pretrained_path: null  # training init only; hardware checkpoints are inference_checkpoint_path / inference_alt_checkpoint_path below
+  base_path: outputs/MolmoAct2
+  action_mode: both
+  hand_block: false
+  #hand:
+  #  joint_weight: 1.5
+  #  fk_weight: 1.0
+  #  fast_layout: masked
+  #  hand_state: true
+  inference_action_mode: continuous
+  discrete_action_tokenizer: outputs/MolmoAct-FAST-tokenizer
+  knowledge_insulation: true
+  train_action_expert_only: false
+  freeze_embedding: true
+  gradient_checkpointing: true
+  trainable_params:
+    vision_from_layer: 2
+    language_from_layer: 2
+    critic_vision_from_layer: 2
+    critic_language_from_layer: 2
+    depth_warmup: false
+  lora_dropout: 0.0
+  optimizer_lr: 5.0e-05
+  depth_lr: null
+  optimizer_grad_clip_norm: 1.0
+  optimizer_weight_decay: 0.0
+  optimizer_stochastic_rounding: true
+  scheduler_groups:
+  - policy
+  - critic
+  - depth
+  scheduler_warmup_steps: 100
+  scheduler_decay_steps: null
+  scheduler_decay_lr: 5.0e-05
+  reward_normalization_constant: 12.0
+  terminal_failure_reward: -10.0
+  critic_reward_mode: subtask
+  critic_mistake_penalty: 5.0
+  pretrained_merge_alpha: 0.2
+  pretrained_merge_every_n_steps: 8000
+  pretrained_merge_targets:
+  - policy
+  critic_llm_depth: 12
+  num_value_bins: 201
+  value_support_min: -2.0
+  value_support_max: 0.0
+  hl_gauss_sigma_ratio: 8.0
+  critic_lr: 0.0001
+  critic_target_update_weight: 0.05
+  critic_target_update_every: 4
+  discount: 0.97
+  offline_buffer_capacity: 100000
+  online_buffer_capacity: 5000
+  online_step_before_learning: 10
+  online_steps: 20000
+  offline_steps: 2000
+  policy_update_freq: 1
+  critic_warmup_steps: 0
+  critic_pretrained_path: null
+  utd_ratio: 1
+  advantage_weighting: false
+  advantage_beta: 1.0
+  advantage_bootstrap_subtasks: false
+  advantage_clip: 3.0
+  advantage_lambda: 1.0
+  advantage_normalization: subtask
+  advantage_calibration_path: null
+  advantage_calibration_batches: 2048
+  advantage_calibration_only: false
+  async_prefetch: false
+  storage_device: cpu
+  image_stride: 3
+  image_keys:
+  - observation.images.external_0
+  - observation.images.external_1
+  - observation.images.wrist_0
+  torch_compile: false
+  action_lag_limits:
+  - 30.1
+  - 37.1
+  - 49.1
+  - 10.6
+  - 5.9
+  - 6.3
+  - 123.1
+  - 0.0
+  action_delta_limits:
+  - 66.5
+  - 82.3
+  - 108.2
+  - 50.2
+  - 25.2
+  - 27.0
+  - 344.4
+  - 0.0
+  action_clamp_limits:
+  - - -86.9
+    - 92.2
+  - - -170.0
+    - 1.0
+  - - -200.0
+    - 1.0
+  - - -35.5
+    - 90.0
+  - - -47.3
+    - 64.4
+  - - -68.3
+    - 55.8
+  - - -270.0
+    - 0.0
+  - - 0.0
+    - 0.0
+  action_step_limits:
+  - 4.05
+  - 5.7
+  - 8.25
+  - 5.1
+  - 3.6
+  - 9.15
+  - 52.2
+  - 0.0
+  subtask_regeneration_interval: 4.0
+  subtask_max_new_tokens: 64
+  subtask_loss_weight: 0.0
+  subtask_dropout: 0.0
+  metadata_dropout: 0.0
+  # 2026-10-24 hardware run (b), internal-only ckpt 1200 (alt mix40 1200): "Tidy up the table" umbrella, script in the order
+  # close the bit kit (bits flap, then white-card flap) -> large nail clipper -> nail clipper -> close the headphone case lid.
+  # Labels: flap grasp 3 cloth-pinch, fold 2 set-down (T067/T109); clipper grasp 4 top-pinch, move 4 na, slot insert 5
+  # (as in the 10-22 run); lid grasp 3 / close 2 rim-pinch (T071). `r` latches "return to home" (1, na).
+  eval_subtasks:
+  - grasp the orange pill bottle
+  - move the orange pill bottle to the basket
+  - release the orange pill bottle in the basket
+  - grasp the tape roll
+  - move the tape roll to the basket
+  - release the tape roll in the basket
+  - grasp the cup
+  - move the cup to the basket
+  - release the cup in the basket
+  - grasp the outer edge of the flap with the bits
+  - fold the flap with the bits over the middle of the kit
+  - grasp the outer edge of the flap with the white card
+  - fold the flap with the white card over the folded flap
+  #- grasp the large nail clipper
+  #- move the large nail clipper to the clipper case
+  #- release the large nail clipper in the large slot
+  #- grasp the nail clipper
+  #- move the nail clipper to the clipper case
+  #- release the nail clipper in the small slot
+  - grasp the headphone case lid
+  - close the headphone case lid
+  eval_subtask_precisions: [3, 2, 1, 4, 2, 1, 3, 2, 1, 2, 2, 2, 2, 2, 2]
+  eval_subtask_contacts: [rim-pinch, na, drop, side-pinch, na, drop, rim-pinch, na, drop, cloth-pinch, cloth-pinch, cloth-pinch, set-down, rim-pinch, rim-pinch]
+  memory:
+    metadata_enabled: true
+    history_dropout: 0.0
+    history_offsets_seconds:
+    - -6.0
+    - -4.0
+    - -2.0
+    history_keys: []
+  rtc_config:
+    enabled: true
+    execution_horizon: 5
+    prefix_attention_schedule: LINEAR
+    max_guidance_weight: 10.0
+    debug: false
+    debug_maxlen: 100
+  chunk_size: 30
+  n_action_steps: 30
+  num_inference_steps: 5
+  gradient_accumulation_steps: 2
+  dtype: bfloat16
+  pointmap_config:
+    depth_key: wrist_0
+    depth_units_mm: 0.1
+    intrinsics:
+    - 394.9832
+    - 394.9832
+    - 322.5604
+    - 238.6966
+    image_size:
+    - 480
+    - 640
+    patch_size: 20
+    pooling_size:
+    - 2
+    - 2
+    z_min_mm: 70.0
+    z_max_mm: 800.0
+    token_width: 1152
+    visual_num_blocks: 7
+    visual_feature_taps:
+    - 3
+    - 7
+    visual_source_indices:
+    - 0
+    - 4
+    - 8
+    - 12
+    - 16
+    - 20
+    - 24
+    output_bound: 128.0
+    dropout_prob: 0.0
+    rgb_dropout_prob: 0.0
+  depth_gripper_event_loss:
+    enabled: true
+    weight: 0.4
+    hidden_dim: null
+  future_visual_loss:
+    enabled: false
+    weight: 0.1
+    horizon_seconds: 4.0
+    target_update_steps: 100
+    latent_dim: 128
+    predictor_width: 256
+    predictor_layers: 2
+    predictor_heads: 4
+    mistake_weight: 1.5
+    calibration_pairs: 16
+    calibration_patches_per_camera: 64
+    target_encode_batch_size: 2
+  norm_tag: null
+  normalize_gripper: true
+  action_encoding: anchor
+  action_encoding_stats_path: null
+  embodiment_stats_path: outputs/stats/action_stats_anchor_diverse-rebot-hand-20261010.pt
+  action_auxiliary_loss:
+    enabled: false
+    weight: 0.2
+    gamma: 0.25
+    band_spec: dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20
+    band_powers:
+    - 1.0086008381
+    - 0.0411540009
+    - 0.0067903467
+    - 0.0012663327
+    - 0.0001327078
+    - 6.6883e-06
+  discrete_action_auxiliary_loss:
+    enabled: false
+    ordinal_weight: 0.2
+    band_spec: dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20
+  normalization_mapping:
+    VISUAL: IDENTITY
+    STATE: QUANTILES
+    ACTION: QUANTILES
+  input_features:
+    observation.images.external_0:
+      type: VISUAL
+      shape:
+      - 3
+      - 480
+      - 640
+    observation.images.external_1:
+      type: VISUAL
+      shape:
+      - 3
+      - 480
+      - 640
+    observation.images.wrist_0:
+      type: VISUAL
+      shape:
+      - 3
+      - 480
+      - 640
+    observation.state:
+      type: STATE
+      shape:
+      - 8
+  output_features:
+    action:
+      type: ACTION
+      shape:
+      - 8
+  device: cuda
+  actor_device: cuda:0
+  learner_device: cuda:0
+  actor_learner_config:
+    learner_host: 0.0.0.0
+    learner_port: 50051
+    policy_parameters_push_frequency: 180
+  concurrency:
+    actor: threads
+    learner: threads
+  repo_id: cijerezg/rebot-all-v1
+  image_storage_dtype: uint8
+  image_storage_size: null
+output_dir: null
+job_name: rebot-mix40_20_40-20261026
+resume: false  # Load pretrained weights; offline checkpoints do not save optimizer state.
+seed: 42
+log_freq: 40
+save_checkpoint: true
+save_freq: 200
+offline_save_freq: 200
+use_rerun: true
+episode_logging_freq: 0
+episode_save_freq: 2
+video_logging_cameras:
+- external_0
+- wrist_0
+inference_send_actions_to_robot: true
+inference_alt_checkpoint_path: outputs/rebot-internal-only-20261021/checkpoints/001200/pretrained_model  # model 0 (console key o, default); wins over policy.pretrained_path at inference
+inference_checkpoint_path: outputs/rebot-mix40_20_40-20261018/checkpoints/001200/pretrained_model  # model 1 (console key p); swap while frozen (f), null = single model
+num_workers: 4
+aim:
+  enable: true
+  repo: ./aim
+  experiment: rebot_online-v1
+  offline_experiment: rebot_offline-v1
+  notes: 'BC; mix 40/20/40 (internal ReBot / external ReBot / diverse) + internal_oct26 (80k fr); frame-level speed runs; whole-episode groups, iid starts; usefulness exclusions internal + external + diverse.'
+  histogram_bins: 64
+probe_parameters:
+  conditions_frames_per_episode_cell: 1
+  conditions_frames_per_robot: 250
+  conditions_max_frames: 600
+  conditions_headline_layer: 28
+  # Key geometry probe; shares the conditions-matrix capture and frame budget.
+  subspace_text: real
+  subspace_tolerances: 0.3,0.1,0.05
+  subspace_layers: 14,15,16,28,32
+  subspace_n_null: 100
+  subspace_n_pivots: 12
+  subspace_pivot_group: img_external_0
+  embodiment_swap_n_frames: 6
+  embodiment_swap_n_seeds: 3
+  embodiment_swap_max_frames: 96
+  enable_objective: true
+  enable_hand_terms: true
+  enable_actions: false
+  enable_representations: true
+  enable_attention: false
+  enable_spatial_memorization: false
+  enable_action_drift_jacobian: false
+  enable_spatial_memorization_jacobian: false
+  enable_critic_values_distribution: false
+  enable_mem_history_influence: false
+  enable_mem_history_regime: false
+  enable_mem_temporal_attention: false
+  enable_action_trace: false
+  enable_metadata_steering: false
+  enable_embodiment_swap: false
+  enable_conditions_matrix: false
+  enable_subspace_spans: false
+  enable_depth_modality: false
+  enable_depth_event: false
+  enable_attention_budget: false
+  enable_subtask_sweep: false
+  enable_subtask_scene_sweep: false
+  enable_precision_contact_sweep: false
+  enable_task_sweep: false
+  enable_input_swap: false
+  enable_future_visual_cases: false
+  future_visual_case_episode: 3
+  mem_temporal_positional_control: false
+  depth_stale_seconds: 2.0
+  depth_event_leads_s: 0.5,1,2,3
+  depth_event_shift_s: '1.0'
+  depth_event_z_offset_mm: 30.0
+  output_dir: outputs/probe
+  mode: all
+  max_episodes: 9
+  n_frames_per_episode: 32
+  random_seed: 42
+  timestep: 0.5
+  n_seeds: 4
+  max_labels: 8
+  subtask_sweep_labels:
+  - grasp the black sock
+  - grasp the white sock
+  - grasp the red shirt
+  - move the black sock to the basket
+  - move the red shirt to the bin
+  - release the black sock in the basket
+  - release the red shirt in the bin
+  - return to home
+  subtask_scene_sweep_frames: migration/training_mix_2026-10-04/scene_sweep_frames_2026-10-04.json
+  precision_contact_sweep_frames: migration/precision_contact_sweep_frames/frames.json
+  action_sensitivity_frames_per_subtask: 4
+  action_sensitivity_projections: 1
+  ref_max_episodes: 40
+  ref_n_frames_per_episode: 256
+  action_pca_dims: 50
+  action_nn_state_k: 256
+  # Temporal representation probe: PCA only, 3D; native attention input.
+  repr_view: attention_input
+  repr_layers: 14,28,32
+  repr_groups: action,img_external_0,img_wrist_0,state
+  repr_constant_text: true
+  # Denser than the common 32-frame budget to support local temporal comparisons.
+  repr_n_frames_per_episode: 128
+  # 2026-10-14: the whole val set (9 eps, ~280 frames at 2 s) goes in first; training episodes
+  # still capped by max_episodes per robot. Budget raised 1200 -> 1600 to keep room for them.
+  repr_max_frames: 1600
+  repr_holdout_episodes: null
+  repr_local_window_s: 2.0
+  umap_n_neighbors: 15
+  spatial_layers: 0,14,28
+  attn_eval_subsample: 3
+  spatial_n_frames: 128
+  critic_adv_frames: 256
+  critic_grad_frames: 192
+  critic_grad_frames_per_subtask: 32
+  critic_subtask_swap: true
+  critic_text_counts_path: migration/critic_text_counts.json
+  critic_diverse_frames: 96
+  critic_trace_stride_frames: 30
+  critic_trace_video: false
+  critic_trace_video_frame_stride: 5
+  budget_fd_sensitivity: false
+  budget_n_frames_per_episode: 12
+  trace_episodes: null
+  trace_anchor_stride_s: 8.0
+  trace_max_anchors_per_episode: 16
+  trace_n_samples: 3
+  trace_table_z: 0.0
+  trace_clearance_warn_m: 0.01
+env:
+  type: gym_manipulator
+  name: real_robot
+  fps: 30
+  robot:
+    type: rebot_b601_follower
+    port: /dev/ttyACM0
+    id: rebot_follower_v1
+    pos_vel_velocity: [40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 180.0]
+    cameras:
+      wrist:
+        type: intelrealsense
+        serial_number_or_name: '427622270837'
+        use_depth: true
+        depth_filters: true
+        log_path: outputs/logs/realsense_wrist.log
+        log_severity: info
+        height: 480
+        width: 640
+        fps: 30
+      top:
+        type: opencv
+        index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0
+        height: 480
+        width: 640
+        fps: 30
+  teleop:
+    type: rebot_102_leader
+    variant: 102HD
+    port: /dev/ttyUSB0
+    id: rebot_leader_hd_v1
+  processor:
+    control_mode: leader
+    observation:
+      display_cameras: false
+      add_joint_velocity_to_observation: false
+      add_current_to_observation: false
+    image_preprocessing:
+      resize_size: null
+    gripper:
+      use_gripper: true
+      gripper_penalty: 0.0
+    reset:
+      fixed_reset_joint_positions: null
+      reset_time_s: 10
+      control_time_s: 6000.0
+      terminate_on_success: true
+  features:
+    observation.images.wrist:
+      type: VISUAL
+      shape:
+      - 3
+      - 480
+      - 640
+    observation.images.top:
+      type: VISUAL
+      shape:
+      - 3
+      - 480
+      - 640
+    observation.state:
+      type: STATE
+      shape:
+      - 8
+    action:
+      type: ACTION
+      shape:
+      - 8
+  features_map:
+    observation.images.wrist: observation.images.wrist_0
+    observation.images.top: observation.images.external_0
+    observation.state: observation.state
+    action: action

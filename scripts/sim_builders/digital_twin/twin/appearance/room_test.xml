@@ -1,0 +1,26 @@
+<mujocoinclude>
+  <!-- Room around the desk, table frame (robot base at the origin, desk top z = 0, x toward the front wall / top camera,
+       y to the image right of the top view). Include INSIDE <worldbody>. Geoms only, all visual (contype 0 conaffinity 0,
+       mass 0 is implicit for world geoms): the desk top keeps the scene's own `table_contact` plane as its collider.
+       Desk = 48 x 30 in standing-desk top (1.219 x 0.762 m, user 2026-10-29), edges measured from the top camera:
+       back edge x = -0.0445, front edge x = 0.7175, robot base centred on the long side (user 2026-10-29): left edge y = -0.610, right edge y = +0.610. DESK_H (top above the floor) = 0.75 m ASSUMED.
+       Front wall 0.10 m past the front edge (x = 0.8175; wrist depth 10-29 says 0.80 +- 0.04), ends at y = +1.0
+       (the depth shows floor beyond the wall line for y > 0.9). Side / back walls at plausible distances. -->
+  <!-- desk top slab: the scene's photo texture material; 25 mm thick -->
+  <geom name="room_desk_top" type="box" size="0.3810 0.6096 0.0125" pos="0.3365 0.0 -0.0125" material="table_top" contype="0" conaffinity="0" />
+  <!-- standing-desk frame: two T feet, two columns, one crossbar under the slab; black steel -->
+  <geom name="room_desk_foot_l" type="box" size="0.3300 0.0350 0.0150" pos="0.3365 -0.4596 -0.7350" rgba="0.10 0.10 0.10 1" contype="0" conaffinity="0" />
+  <geom name="room_desk_foot_r" type="box" size="0.3300 0.0350 0.0150" pos="0.3365 0.4596 -0.7350" rgba="0.10 0.10 0.10 1" contype="0" conaffinity="0" />
+  <geom name="room_desk_column_l" type="box" size="0.0350 0.0350 0.3475" pos="0.3365 -0.4596 -0.3725" rgba="0.12 0.12 0.12 1" contype="0" conaffinity="0" />
+  <geom name="room_desk_column_r" type="box" size="0.0350 0.0350 0.3475" pos="0.3365 0.4596 -0.3725" rgba="0.12 0.12 0.12 1" contype="0" conaffinity="0" />
+  <geom name="room_desk_crossbar" type="box" size="0.0300 0.4596 0.0200" pos="0.3365 0.0 -0.0450" rgba="0.12 0.12 0.12 1" contype="0" conaffinity="0" />
+  <!-- floor: plain grey-brown plank colour, DESK_H below the top -->
+  <geom name="room_floor" type="plane" size="4 4 0.1" pos="0 0 -0.75" material="room_floor_mat" contype="0" conaffinity="0" />
+  <!-- front wall (normal toward the robot), light grey paint, with a white baseboard -->
+  <geom name="room_wall_front" type="plane" size="1.3 1.3 0.1" pos="0.8175 -0.3 0.5" zaxis="-1 0 0" rgba="0.775 0.713 0.671 1" contype="0" conaffinity="0" />
+  <geom name="room_baseboard_front" type="box" size="0.006 1.3 0.05" pos="0.8115 -0.3 -0.70" rgba="0.92 0.92 0.90 1" contype="0" conaffinity="0" />
+  <!-- side walls and back wall, plain planes -->
+  <geom name="room_wall_left" type="plane" size="3 3 0.1" pos="0 -2.0 0.5" zaxis="0 1 0" rgba="0.775 0.713 0.671 1" contype="0" conaffinity="0" />
+  <geom name="room_wall_right" type="plane" size="3 3 0.1" pos="0 2.0 0.5" zaxis="0 -1 0" rgba="0.775 0.713 0.671 1" contype="0" conaffinity="0" />
+  <geom name="room_wall_back" type="plane" size="3 3 0.1" pos="-3.0 0 0.5" zaxis="1 0 0" rgba="0.775 0.713 0.671 1" contype="0" conaffinity="0" />
+</mujocoinclude>

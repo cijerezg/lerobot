@@ -1,0 +1,70 @@
+{
+ "n_steps": 91,
+ "cursor_accuracy": 0.077,
+ "cursor_accuracy_within_1": 0.165,
+ "off_task_steps": 0,
+ "stage_accuracy": 0.033,
+ "stage_accuracy_running_max": 0.033,
+ "stage_lag_s": {
+  "reach": {
+   "scorer_t": 18.57,
+   "judge_t": 1.5,
+   "lag_s": -17.07
+  },
+  "held": {
+   "scorer_t": 19.1,
+   "judge_t": 3.5,
+   "lag_s": -15.6
+  },
+  "inside": {
+   "scorer_t": 45.43,
+   "judge_t": 9.5,
+   "lag_s": -35.93
+  }
+ },
+ "stages_judge_only": [
+  "lifted",
+  "over"
+ ],
+ "spearman_progress": 0.597,
+ "spearman_progress_max": 0.597,
+ "scorer_final": {
+  "success": true,
+  "reward": 1.0,
+  "stage": "inside"
+ },
+ "judge_final": {
+  "progress_max": 1.0,
+  "stage": "inside"
+ },
+ "confusion": [
+  [
+   7,
+   8,
+   4,
+   20,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   52,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   0,
+   0
+  ]
+ ]
+}

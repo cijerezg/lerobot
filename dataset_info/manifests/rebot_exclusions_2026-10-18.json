@@ -1,0 +1,887 @@
+{
+  "version": 1,
+  "inactive_roots": [
+    "outputs/rebot_val_2026-10-14-v1"
+  ],
+  "frame_convention": "episode-local half-open [from_frame,to_frame)",
+  "scope": "Only reviewed original-quality 1\u20132 segments; decisions use new usefulness scores | 2026-10-18: + external ReBot usefulness v2 (remove/trim) and idle cuts",
+  "history_policy": "Excluded action targets are forbidden; failed-attempt observation history may condition retained recovery actions.",
+  "exclusions": [
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 0,
+      "from_frame": 3345,
+      "to_frame": 3415,
+      "chunk": "chunk_01",
+      "unit": "unit_0031",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 2,
+      "from_frame": 668,
+      "to_frame": 720,
+      "chunk": "chunk_03",
+      "unit": "unit_0072",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 6,
+      "from_frame": 1469,
+      "to_frame": 2624,
+      "chunk": "chunk_04",
+      "unit": "unit_0108",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2684, plus 2 seconds of preceding context (keep f2624 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 7,
+      "from_frame": 0,
+      "to_frame": 870,
+      "chunk": "chunk_05",
+      "unit": "unit_0112",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f930, plus 2 seconds of preceding context (keep f870 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 7,
+      "from_frame": 1710,
+      "to_frame": 2670,
+      "chunk": "chunk_06",
+      "unit": "unit_0115",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2730, plus 2 seconds of preceding context (keep f2670 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 7,
+      "from_frame": 3060,
+      "to_frame": 3168,
+      "chunk": "chunk_07",
+      "unit": "unit_0117",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 7,
+      "from_frame": 4220,
+      "to_frame": 5643,
+      "chunk": "chunk_08",
+      "unit": "unit_0121",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 11,
+      "from_frame": 1676,
+      "to_frame": 2895,
+      "chunk": "chunk_10",
+      "unit": "unit_0144",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 21,
+      "from_frame": 2058,
+      "to_frame": 2403,
+      "chunk": "chunk_11",
+      "unit": "unit_0254",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2463, plus 2 seconds of preceding context (keep f2403 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 29,
+      "from_frame": 805,
+      "to_frame": 1525,
+      "chunk": "chunk_12",
+      "unit": "unit_0358",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f1585, plus 2 seconds of preceding context (keep f1525 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 30,
+      "from_frame": 5404,
+      "to_frame": 5655,
+      "chunk": "chunk_13",
+      "unit": "unit_0405",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 36,
+      "from_frame": 0,
+      "to_frame": 870,
+      "chunk": "chunk_14",
+      "unit": "unit_0471",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f930, plus 2 seconds of preceding context (keep f870 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 36,
+      "from_frame": 3033,
+      "to_frame": 3753,
+      "chunk": "chunk_15",
+      "unit": "unit_0480",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3813, plus 2 seconds of preceding context (keep f3753 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 37,
+      "from_frame": 903,
+      "to_frame": 1623,
+      "chunk": "chunk_16",
+      "unit": "unit_0487",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f1683, plus 2 seconds of preceding context (keep f1623 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 37,
+      "from_frame": 2856,
+      "to_frame": 3381,
+      "chunk": "chunk_17",
+      "unit": "unit_0493",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3441, plus 2 seconds of preceding context (keep f3381 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 37,
+      "from_frame": 4442,
+      "to_frame": 5432,
+      "chunk": "chunk_18",
+      "unit": "unit_0499",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f5492, plus 2 seconds of preceding context (keep f5432 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 41,
+      "from_frame": 1698,
+      "to_frame": 2958,
+      "chunk": "chunk_19",
+      "unit": "unit_0578",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3018, plus 2 seconds of preceding context (keep f2958 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 41,
+      "from_frame": 3582,
+      "to_frame": 4272,
+      "chunk": "chunk_20",
+      "unit": "unit_0581",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f4332, plus 2 seconds of preceding context (keep f4272 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 42,
+      "from_frame": 1566,
+      "to_frame": 2286,
+      "chunk": "chunk_21",
+      "unit": "unit_0595",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2346, plus 2 seconds of preceding context (keep f2286 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 42,
+      "from_frame": 2640,
+      "to_frame": 3663,
+      "chunk": "chunk_22",
+      "unit": "unit_0598",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 43,
+      "from_frame": 0,
+      "to_frame": 1575,
+      "chunk": "chunk_23",
+      "unit": "unit_0600",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f1635, plus 2 seconds of preceding context (keep f1575 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 44,
+      "from_frame": 0,
+      "to_frame": 867,
+      "chunk": "chunk_24",
+      "unit": "unit_0626",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 49,
+      "from_frame": 459,
+      "to_frame": 651,
+      "chunk": "chunk_25",
+      "unit": "unit_0657",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 49,
+      "from_frame": 651,
+      "to_frame": 756,
+      "chunk": "chunk_26",
+      "unit": "unit_0658",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 50,
+      "from_frame": 1812,
+      "to_frame": 2062,
+      "chunk": "chunk_29",
+      "unit": "unit_0670",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 51,
+      "from_frame": 1398,
+      "to_frame": 1608,
+      "chunk": "chunk_31",
+      "unit": "unit_0693",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 52,
+      "from_frame": 528,
+      "to_frame": 558,
+      "chunk": "chunk_32",
+      "unit": "unit_0697",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 54,
+      "from_frame": 660,
+      "to_frame": 735,
+      "chunk": "chunk_34",
+      "unit": "unit_0724",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 56,
+      "from_frame": 3382,
+      "to_frame": 4062,
+      "chunk": "chunk_36",
+      "unit": "unit_0772",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 57,
+      "from_frame": 3123,
+      "to_frame": 3843,
+      "chunk": "chunk_37",
+      "unit": "unit_0789",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3903, plus 2 seconds of preceding context (keep f3843 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 61,
+      "from_frame": 1038,
+      "to_frame": 1119,
+      "chunk": "chunk_39",
+      "unit": "unit_0879",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 61,
+      "from_frame": 1119,
+      "to_frame": 1149,
+      "chunk": "chunk_40",
+      "unit": "unit_0880",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 66,
+      "from_frame": 5022,
+      "to_frame": 5862,
+      "chunk": "chunk_42",
+      "unit": "unit_0991",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f5922, plus 2 seconds of preceding context (keep f5862 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 0,
+      "from_frame": 1524,
+      "to_frame": 1656,
+      "chunk": "chunk_44",
+      "unit": "unit_1212",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 4,
+      "from_frame": 7791,
+      "to_frame": 8322,
+      "chunk": "chunk_45",
+      "unit": "unit_1295",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 5,
+      "from_frame": 7212,
+      "to_frame": 7848,
+      "chunk": "chunk_46",
+      "unit": "unit_1314",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 7,
+      "from_frame": 4902,
+      "to_frame": 6582,
+      "chunk": "chunk_47",
+      "unit": "unit_1341",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f6642, plus 2 seconds of preceding context (keep f6582 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 7,
+      "from_frame": 7275,
+      "to_frame": 8210,
+      "chunk": "chunk_48",
+      "unit": "unit_1344",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f8270, plus 2 seconds of preceding context (keep f8210 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 9,
+      "from_frame": 1203,
+      "to_frame": 3375,
+      "chunk": "chunk_50",
+      "unit": "unit_1349",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 9,
+      "from_frame": 3375,
+      "to_frame": 3945,
+      "chunk": "chunk_51",
+      "unit": "unit_1350",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f4005, plus 2 seconds of preceding context (keep f3945 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 10,
+      "from_frame": 0,
+      "to_frame": 3360,
+      "chunk": "chunk_52",
+      "unit": "unit_1353",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3420, plus 2 seconds of preceding context (keep f3360 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 11,
+      "from_frame": 3189,
+      "to_frame": 3909,
+      "chunk": "chunk_53",
+      "unit": "unit_1364",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3969, plus 2 seconds of preceding context (keep f3909 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 12,
+      "from_frame": 1164,
+      "to_frame": 2289,
+      "chunk": "chunk_54",
+      "unit": "unit_1371",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2349, plus 2 seconds of preceding context (keep f2289 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 13,
+      "from_frame": 772,
+      "to_frame": 832,
+      "chunk": "chunk_55",
+      "unit": "unit_1378",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 14,
+      "from_frame": 0,
+      "to_frame": 600,
+      "chunk": "chunk_56",
+      "unit": "unit_1387",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f660, plus 2 seconds of preceding context (keep f600 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 14,
+      "from_frame": 778,
+      "to_frame": 847,
+      "chunk": "chunk_57",
+      "unit": "unit_1388",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 14,
+      "from_frame": 847,
+      "to_frame": 1164,
+      "chunk": "chunk_58",
+      "unit": "unit_1389",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 14,
+      "from_frame": 1164,
+      "to_frame": 1257,
+      "chunk": "chunk_59",
+      "unit": "unit_1390",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 15,
+      "from_frame": 0,
+      "to_frame": 930,
+      "chunk": "chunk_60",
+      "unit": "unit_1400",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f990, plus 2 seconds of preceding context (keep f930 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_all-annotated-v14-tasks2",
+      "episode_index": 79,
+      "from_frame": 3475,
+      "to_frame": 3531,
+      "chunk": "chunk_61",
+      "unit": "unit_1528",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1",
+      "episode_index": 1,
+      "from_frame": 633,
+      "to_frame": 741,
+      "chunk": "chunk_62",
+      "unit": "unit_1554",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1",
+      "episode_index": 3,
+      "from_frame": 456,
+      "to_frame": 741,
+      "chunk": "chunk_64",
+      "unit": "unit_1565",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1",
+      "episode_index": 8,
+      "from_frame": 0,
+      "to_frame": 780,
+      "chunk": "chunk_65",
+      "unit": "unit_1609",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f840, plus 2 seconds of preceding context (keep f780 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1",
+      "episode_index": 8,
+      "from_frame": 2408,
+      "to_frame": 2490,
+      "chunk": "chunk_66",
+      "unit": "unit_1614",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1",
+      "episode_index": 13,
+      "from_frame": 900,
+      "to_frame": 1041,
+      "chunk": "chunk_67",
+      "unit": "unit_1655",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1",
+      "episode_index": 22,
+      "from_frame": 0,
+      "to_frame": 489,
+      "chunk": "chunk_69",
+      "unit": "unit_1708",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+      "episode_index": 1,
+      "from_frame": 0,
+      "to_frame": 1572,
+      "chunk": "chunk_72",
+      "unit": "unit_1748",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+      "episode_index": 2,
+      "from_frame": 1050,
+      "to_frame": 1515,
+      "chunk": "chunk_73",
+      "unit": "unit_1751",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+      "episode_index": 5,
+      "from_frame": 1395,
+      "to_frame": 2040,
+      "chunk": "chunk_76",
+      "unit": "unit_1766",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+      "episode_index": 7,
+      "from_frame": 2810,
+      "to_frame": 3470,
+      "chunk": "chunk_77",
+      "unit": "unit_1777",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3530, plus 2 seconds of preceding context (keep f3470 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+      "episode_index": 8,
+      "from_frame": 0,
+      "to_frame": 1260,
+      "chunk": "chunk_78",
+      "unit": "unit_1784",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f1320, plus 2 seconds of preceding context (keep f1260 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 5,
+      "from_frame": 672,
+      "to_frame": 1140,
+      "chunk": "chunk_85",
+      "unit": "unit_1863",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 7,
+      "from_frame": 2004,
+      "to_frame": 2280,
+      "chunk": "chunk_86",
+      "unit": "unit_1880",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 10,
+      "from_frame": 0,
+      "to_frame": 900,
+      "chunk": "chunk_89",
+      "unit": "unit_1922",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f960, plus 2 seconds of preceding context (keep f900 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 10,
+      "from_frame": 1206,
+      "to_frame": 1746,
+      "chunk": "chunk_90",
+      "unit": "unit_1924",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 10,
+      "from_frame": 1746,
+      "to_frame": 2236,
+      "chunk": "chunk_91",
+      "unit": "unit_1925",
+      "pool": "active",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 10,
+      "from_frame": 2236,
+      "to_frame": 2341,
+      "chunk": "chunk_92",
+      "unit": "unit_1926",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 10,
+      "from_frame": 2341,
+      "to_frame": 2457,
+      "chunk": "chunk_93",
+      "unit": "unit_1927",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 11,
+      "from_frame": 1305,
+      "to_frame": 1494,
+      "chunk": "chunk_95",
+      "unit": "unit_1929",
+      "pool": "active",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 11,
+      "from_frame": 1494,
+      "to_frame": 2739,
+      "chunk": "chunk_96",
+      "unit": "unit_1930",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2799, plus 2 seconds of preceding context (keep f2739 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_2026-10-14-annotated-v4",
+      "episode_index": 12,
+      "from_frame": 702,
+      "to_frame": 3162,
+      "chunk": "chunk_97",
+      "unit": "unit_1934",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f3222, plus 2 seconds of preceding context (keep f3162 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+      "episode_index": 8,
+      "from_frame": 1494,
+      "to_frame": 2559,
+      "chunk": "chunk_98",
+      "unit": "unit_1960",
+      "pool": "active",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2619, plus 2 seconds of preceding context (keep f2559 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1",
+      "episode_index": 3,
+      "from_frame": 1650,
+      "to_frame": 2325,
+      "chunk": "chunk_102",
+      "unit": "unit_1993",
+      "pool": "excluded",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f2385, plus 2 seconds of preceding context (keep f2325 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1",
+      "episode_index": 4,
+      "from_frame": 1134,
+      "to_frame": 1740,
+      "chunk": "chunk_103",
+      "unit": "unit_2002",
+      "pool": "excluded",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+      "episode_index": 9,
+      "from_frame": 2679,
+      "to_frame": 2844,
+      "chunk": "chunk_104",
+      "unit": "unit_2016",
+      "pool": "excluded",
+      "reason": "Existing notes show ineffective repetition or failed placement without a meaningful correction in this core."
+    },
+    {
+      "source_root": "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+      "episode_index": 9,
+      "from_frame": 4456,
+      "to_frame": 4749,
+      "chunk": "chunk_105",
+      "unit": "unit_2021",
+      "pool": "excluded",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_val_2026-10-14-v1",
+      "episode_index": 3,
+      "from_frame": 2094,
+      "to_frame": 2178,
+      "chunk": "chunk_106",
+      "unit": "unit_2060",
+      "pool": "validation",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_val_2026-10-14-v1",
+      "episode_index": 6,
+      "from_frame": 1635,
+      "to_frame": 1701,
+      "chunk": "chunk_107",
+      "unit": "unit_2070",
+      "pool": "validation",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/rebot_val_2026-10-14-v1",
+      "episode_index": 8,
+      "from_frame": 0,
+      "to_frame": 645,
+      "chunk": "chunk_108",
+      "unit": "unit_2075",
+      "pool": "validation",
+      "reason": "Remove unproductive prefix; keep documented correction/acquisition from f705, plus 2 seconds of preceding context (keep f645 onward)."
+    },
+    {
+      "source_root": "outputs/rebot_val_2026-10-14-v1",
+      "episode_index": 8,
+      "from_frame": 1182,
+      "to_frame": 1275,
+      "chunk": "chunk_109",
+      "unit": "unit_2077",
+      "pool": "validation",
+      "reason": "User approved removing usefulness-score 1 cores."
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 131,
+      "from_frame": 3603,
+      "to_frame": 3720,
+      "unit": "unit_0051",
+      "kind": "trim",
+      "reason": "Regrasps on the blue-tag corner end in success (tag held f4260+); cut only the ~4 s swing away over empty table f3603-3720."
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 133,
+      "from_frame": 1822,
+      "to_frame": 1920,
+      "unit": "unit_0058",
+      "kind": "trim",
+      "reason": "Cut ~3.3 s of open-jaw hovering: leaves a fold, swings off the towel, hovers over a second fold, leaves. Keep reach and final hem grasp."
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 6,
+      "from_frame": 0,
+      "to_frame": 80,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 14,
+      "from_frame": 0,
+      "to_frame": 81,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 132,
+      "from_frame": 0,
+      "to_frame": 82,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 159,
+      "from_frame": 1303,
+      "to_frame": 1385,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 214,
+      "from_frame": 695,
+      "to_frame": 786,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    },
+    {
+      "source_root": "outputs/external_rebot_train-annotated-v9-tasks1",
+      "episode_index": 215,
+      "from_frame": 1114,
+      "to_frame": 1215,
+      "unit": null,
+      "kind": "idle",
+      "reason": "idle >= 3 s (0.5 s kept each side)"
+    }
+  ],
+  "sources": [
+    "migration/internal_usefulness_review_2026-10-16/cleanup/exclusions.json",
+    "migration/usefulness_review_ext_diverse_2026-10-18"
+  ]
+}

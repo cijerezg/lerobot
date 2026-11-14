@@ -89,7 +89,17 @@ class RebotB601FollowerConfig:
     # the leader is dropped. The gripper gets a higher cap: it travels its full
     # 270 degree range on every open/close, and its force is already limited by
     # gripper_torque_ratio.
-    pos_vel_velocity: float | list[float] = field(default_factory=lambda: [60.0] * 6 + [180.0])
+    pos_vel_velocity: float | list[float] = field(default_factory=lambda: [50.0] * 6 + [180.0])
+
+    # Position-loop gain (Damiao KP_APR) per motor name, written at connect and NOT stored in the
+    # motor: a power cycle brings back the motor's own value (54 on every motor, 2026-11-13).
+    # The joint's response rate is KP_APR / gearbox ratio: 54 gives 1.35 /s (0.76 s time constant)
+    # on the 40:1 joints and 5.4 /s on the 10:1 wrist joints. The default raises the 40:1 joints
+    # to 216 so they respond like the wrist (0.21 s, measured 2026-11-13); data recorded before
+    # that date has the 54 response. Motors not listed keep their own value; None writes nothing.
+    position_kp: dict[str, float] | None = field(
+        default_factory=lambda: {"shoulder_pan": 216.0, "shoulder_lift": 216.0, "elbow_flex": 216.0}
+    )
 
     # Torque/current ratio for the gripper's FORCE_POS mode, in range [0, 1].
     gripper_torque_ratio: float = 0.1

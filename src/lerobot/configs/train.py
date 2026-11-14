@@ -531,13 +531,13 @@ class ProbeConfig:
     # Side figure only: a fan grid of this many joints x this many of the swept frames.
     subtask_sweep_fan_grid: int = 4
     # Scene sweep: the hand-reviewed frame list (per-frame present / absent classes and GT
-    # label, built by migration/subtask_scene_sweep_frames.py and checked on its contact
+    # label, built by scripts/probes/subtask_scene_sweep_frames.py and checked on its contact
     # sheets). Required when the probe is enabled; n_seeds falls back to the sweep's.
     subtask_scene_sweep_frames: str | None = None
     subtask_scene_sweep_n_seeds: int | None = None
     # Precision / contact sweep: the hand-reviewed pre-commit frame list (true precision and
     # contact, plausible and control contact codes per frame), built by
-    # migration/precision_contact_sweep_frames.py. Required when the probe is enabled.
+    # scripts/probes/precision_contact_sweep_frames.py. Required when the probe is enabled.
     precision_contact_sweep_frames: str | None = None
     precision_contact_sweep_n_seeds: int | None = None
 
@@ -578,7 +578,7 @@ class ProbeConfig:
     critic_grad_frames: int = 200  # full encoded-input gradients in critic_sensitivity; 0 disables
     critic_grad_frames_per_subtask: int = 32  # exact-text groups; separate gradient per frame
     critic_subtask_swap: bool = False  # next + unrelated text, fit/progress versus training count
-    critic_text_counts_path: str | None = None  # migration/critic_text_counts.py output
+    critic_text_counts_path: str | None = None  # scripts/probes/critic_text_counts.py output
     critic_diverse_frames: int = 96  # fixed holdout anchors for true-text fit; 0 disables
     # Legacy probe-only fields retained for old configs. Actor/probe AWR now follows
     # policy.advantage_normalization and its frozen training calibration artifact.

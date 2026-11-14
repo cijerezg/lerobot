@@ -2,7 +2,7 @@
 
     DIVERSE_DATASET_ROOT=outputs/diverse_robot_dataset_v3 uv run python -m lerobot.annotation.speed.hybrid_diverse
 
-Same arithmetic as the first hybrid pass (v6, migration/subtask_atoms_2026-09-08), without the
+Same arithmetic as the first hybrid pass (v6, the 2026-09-08 atoms pass), without the
 v4 -> v5 -> v6 chain: the motion pools are fit here from the training atoms of this root, the
 duration labels come from this root's speed_atoms.jsonl. Writes only new files: the reference,
 speed_hybrid_v1/<episode>.npz, speed_atoms_hybrid_v1.jsonl (one row per atom) and
@@ -13,7 +13,8 @@ The runs sidecar alone, for a store that already has the atom sidecar (2026-10-2
     uv run python -m lerobot.annotation.speed.hybrid_diverse runs <store root> [<trace map .json>]
 
 traces default to <store>/<corpus|fmb>/speed_hybrid_v1/<episode>.npz; the map ({"corpus/<episode>": path, ...})
-names them for a store assembled without that folder.
+names them for a store assembled without that folder (the audit-repaired store:
+lerobot/annotation_data/diverse_audit/speed_traces/diverse_trace_map.json).
 """
 from __future__ import annotations
 import collections, hashlib, json, os, sys

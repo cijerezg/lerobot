@@ -40,8 +40,8 @@ Tool transform in `chain.json`: `xyz = 0`, `rpy = (0, pi/2, 0)` from `end_link`,
 uses is `end_joint @ tool` (joint6 frame to hand frame).
 
 Evidence (2026-10-09): the upstream DM collision meshes (`gripper_base.stl`, `left_finger.stl`,
-`right_finger.stl`, Seeed-Projects/reBotArm_control_py `urdf/DM/meshes/collision/`, copies and the
-measuring script in `migration/kinematics_roundtrip_2026-10-09/rebot_meshes/`) are expressed in the
+`right_finger.stl`, Seeed-Projects/reBotArm_control_py `urdf/DM/meshes/collision/`; the local copies and
+the measuring script were scratch files and are no longer on disk) are expressed in the
 `end_link` frame. The gripper base spans x in [-0.107, -0.073] m, the fingers x in [-0.089, 0], and with
 both finger joints at 0 (closed) the two tips meet at x = 0, y = 0, z in ±3.5 mm: the fingertip midpoint
 is the `end_link` origin to within the 4 mm tip chamfer, centred on the roll axis. The fixend hull says the
@@ -53,7 +53,7 @@ same (it tapers to a point at the origin). No caliper measurement was made.
 `raw_closed = 0` (calibration zero, gripper shut), `raw_open = -338.2`, `stroke = 0.057 m`.
 
 Evidence (2026-10-09): with torque off the follower read 0.8 deg fully shut and -338.2 deg at the
-mechanical open stop (`migration/kinematics_roundtrip_2026-10-09/read_gripper_raw.py`). The DM URDF
+mechanical open stop (one-off raw read of the gripper motor; the script was not kept). The DM URDF
 finger joints travel 0 to 0.0285 m each, closed at 0, so the tip gap is 0 shut and 57 mm at the stop
 (the meshes confirm the tips touch at 0). The fingers run on racks, so the opening is linear in motor
 degrees: 0.0843 mm per degree per finger. Commands stay inside the follower's software limit of -270
@@ -64,11 +64,11 @@ add is the tip gap at that stop.
 
 ## Asset provenance
 
-`ReBot_Arm_DM.urdf` is a byte copy of
-`migration/rebot_public_datasets_2026-09-20/source_evidence/reBotArm_control_py/urdf/DM/urdf/ReBot_Arm_DM.urdf`
-(Seeed-Projects/reBotArm_control_py, Damiao-motor B601-DM description; sha256
+`ReBot_Arm_DM.urdf` is a byte copy of `urdf/DM/urdf/ReBot_Arm_DM.urdf` in
+Seeed-Projects/reBotArm_control_py (Damiao-motor B601-DM description; sha256
 `cd3054edec30b70a3afb2e97eb288ad4943a31c9746f8775703733b64ac0c3cf`). Its mesh files are not vendored;
-the loader reads joints only.
+the loader reads joints only. The local clone of that repo (`source_evidence/`, 2026-09-20) is gone
+from both machines; the upstream repo and the hash are the provenance.
 
 Three candidate URDFs were diffed on their joint definitions (origin xyz/rpy, axis, limits):
 
@@ -84,7 +84,8 @@ The chosen chain reproduces pinocchio on the same URDF to 1e-15 (see `lerobot/sc
 
 `uv run python lerobot/scripts/kinematics_roundtrip.py`, 200 recorded frames per source spread over the
 episodes, `q -> fk -> ik(seed = q + noise) -> q'`, noise 5 deg (ReBot) or 0.1 rad (Panda). Output in
-`migration/kinematics_roundtrip_2026-10-09/` (roundtrip.md, roundtrip.json, render\_<source>.png).
+`outputs/kinematics_roundtrip/` (roundtrip.md, roundtrip.json, render\_<source>.png); the 2026-10-09
+output folder is no longer on disk, the table below is its record.
 
 | source | converged | same joints | pose err mm med / max | rot err deg med / max | joint err deg med / max |
 | ------ | --------- | ----------- | --------------------- | --------------------- | ----------------------- |

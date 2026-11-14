@@ -78,7 +78,7 @@ def _is_fresh_hand_parameter(name: str) -> bool:
 
 
 def _weight_block_of(name: str) -> str:
-    """Blocks of the 2026-09-11 weight-delta audit (migration/weight_deltas_2026-09-11)."""
+    """Blocks of the 2026-09-11 weight-delta audit."""
     if name.startswith("model.model.transformer"):
         return "vlm"
     if name.startswith("model.lm_head"):

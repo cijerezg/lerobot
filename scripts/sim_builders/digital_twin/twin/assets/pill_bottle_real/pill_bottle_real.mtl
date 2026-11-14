@@ -1,0 +1,3 @@
+newmtl pill_bottle_real_mat
+Kd 1 1 1
+map_Kd pill_bottle_real_tex.png

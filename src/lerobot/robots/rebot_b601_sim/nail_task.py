@@ -12,7 +12,7 @@ Script (tasks.py, T085): 0 grasp large, 1 move large, 2 release large, 3 push la
 Stages (reward): reach large 0.1, large held 0.2, large over the case 0.3, large seated 0.5, small held 0.6,
 small over the case 0.7, both seated 1.0 (the stage walk is sequential, scorer.py).
 
-Geometry: slot footprints in the case body frame from the scan height map (migration/real2sim_2026-10-17
+Geometry: slot footprints in the case body frame from the scan height map (scripts/sim_builders/real2sim
 object_materials.py: slot = mesh height < 13 mm; centres/extents of the two components; floor median
 7.6 / 8.3 mm + the 2.5 mm mesh shift). Thresholds are plain numbers below.
 """

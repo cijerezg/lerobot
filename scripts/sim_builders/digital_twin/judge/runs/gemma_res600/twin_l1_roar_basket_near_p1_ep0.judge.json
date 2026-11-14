@@ -1,0 +1,17 @@
+{
+ "source": "outputs/twin_eval_res600_2026-10-30/validation/step_00000000/sim/twin_l1_roar_basket_near_p1",
+ "episode": 0,
+ "task": "sim:twin_l1_roar_basket_near",
+ "task_text": "Put the orange bottle in the basket",
+ "model": "google/gemma-4-31B-it",
+ "endpoint": "http://localhost:8011/v1",
+ "period_s": 1.0,
+ "frames_per_camera": 5,
+ "cameras": [
+  "top",
+  "wrist"
+ ],
+ "created": "2026-10-30 23:21:52",
+ "failures": 12,
+ "steps": []
+}

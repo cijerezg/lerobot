@@ -5,6 +5,7 @@ import pytest
 
 from lerobot.robots.rebot_b601_follower import rebot_b601_follower as module
 from lerobot.robots.rebot_b601_follower.config_rebot_b601_follower import RebotB601FollowerRobotConfig
+from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 
 
 class _FakeMotor:
@@ -161,14 +162,20 @@ def test_get_observation_pings_one_motor_per_call_round_robin(monkeypatch):
     assert [m.pings for m in robot.motors.values()] == [2] * len(robot.motor_names)
 
 
-def test_get_observation_reports_vel_and_torque_outside_the_observation_features(monkeypatch):
+def test_get_observation_reports_vel_and_torque_as_their_own_dataset_columns(monkeypatch):
     robot = _robot(monkeypatch, moves=True)
     _PingMotor.dead = set()
     robot.motors = {name: _PingMotor(name) for name in robot.motor_names}
     obs = robot.get_observation()
     assert {name: obs[f"{name}.torque"] for name in robot.motor_names} == dict.fromkeys(robot.motor_names, 0.25)
     assert all(abs(obs[f"{name}.vel"] - 3.0) < 1e-9 for name in robot.motor_names)
-    assert set(robot.observation_features) == {f"{name}.pos" for name in robot.motor_names}
+    features = hw_to_dataset_features(robot.observation_features, "observation")
+    assert features["observation.state"]["names"] == [f"{name}.pos" for name in robot.motor_names]
+    assert features["observation.velocity"]["names"] == [f"{name}.vel" for name in robot.motor_names]
+    assert features["observation.effort"]["names"] == [f"{name}.torque" for name in robot.motor_names]
+    frame = build_dataset_frame(features, obs, prefix="observation")
+    assert frame["observation.state"].shape == frame["observation.velocity"].shape == (len(robot.motor_names),)
+    assert frame["observation.effort"].tolist() == [0.25] * len(robot.motor_names)
 
 
 def test_get_observation_names_the_motor_that_stops_answering(monkeypatch):

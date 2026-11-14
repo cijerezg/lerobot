@@ -5,7 +5,7 @@ its cursor with the scorer's.
     uv run python -m lerobot.rewards.vlm_judge.assign_episode --sim-dir <sim>/twin_l1_pill_basket_far_p1 --episode 0 --out x.json
     # a whole sim run (layout -> script from tasks.py), 4 episodes in flight, resumable
     uv run python -m lerobot.rewards.vlm_judge.assign_episode --sim-run outputs/twin_eval_res600_2026-10-30/validation/step_00000000/sim \
-        --episodes 0 --out-dir migration/digital_twin_2026-10-29/judge/runs/assign_res600 --workers 4
+        --episodes 0 --out-dir lerobot/scripts/sim_builders/digital_twin/judge/runs/assign_res600 --workers 4
 
 Closed loop by default, as live: the offered steps follow the assigner's OWN previous answer (cursor 0 at the reset).
 ``--teacher`` offers the steps around the SCORER's cursor instead (recognition alone, no drift). Every ``--every`` s of video

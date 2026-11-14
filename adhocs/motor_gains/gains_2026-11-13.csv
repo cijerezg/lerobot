@@ -1,0 +1,17 @@
+rid,name,description,shoulder_pan (4340P),shoulder_lift (4340P),elbow_flex (4340P),wrist_flex (4310),wrist_yaw (4310),wrist_roll (4310),gripper (4310)
+4,ACC,Acceleration,2.0,2.0,2.0,2.0,2.0,2.0,2.0
+5,DEC,Deceleration,-2.0,-2.0,-2.0,-2.0,-2.0,-2.0,-2.0
+6,MAX_SPD,Maximum speed,600.0,600.0,600.0,600.0,600.0,600.0,600.0
+10,CTRL_MODE,Control mode,2,2,2,2,2,2,2
+21,PMAX,Position mapping range,12.5,12.5,12.5,12.5,12.5,12.5,12.5
+22,VMAX,Speed mapping range,10.0,10.0,10.0,30.0,30.0,30.0,30.0
+23,TMAX,Torque mapping range,28.0,28.0,28.0,10.0,10.0,10.0,10.0
+24,I_BW,Current loop control bandwidth,1000.0,1000.0,1000.0,1000.0,1000.0,1000.0,1000.0
+25,KP_ASR,Speed loop Kp,0.0038399999029934406,0.0038399999029934406,0.0038399999029934406,0.003719999920576811,0.003719999920576811,0.003719999920576811,0.003719999920576811
+26,KI_ASR,Speed loop Ki,0.0020000000949949026,0.0020000000949949026,0.0020000000949949026,0.0020000000949949026,0.0020000000949949026,0.0020000000949949026,0.0020000000949949026
+27,KP_APR,Position loop Kp,54.0,54.0,54.0,54.0,54.0,54.0,54.0
+28,KI_APR,Position loop Ki,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+31,Deta,Speed loop damping coefficient,4.0,4.0,4.0,4.0,4.0,4.0,4.0
+32,V_BW,Speed loop filter bandwidth,40.0,40.0,40.0,40.0,40.0,40.0,40.0
+33,IQ_c1,Current loop enhancement coefficient,2500.0,2500.0,2500.0,2500.0,2500.0,2500.0,2500.0
+34,VL_c1,Speed loop enhancement coefficient,500.0,500.0,500.0,500.0,500.0,500.0,500.0

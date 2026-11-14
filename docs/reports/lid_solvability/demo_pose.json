@@ -1,0 +1,192 @@
+{
+ "camera": {
+  "pos": [
+   0.609,
+   -0.014,
+   0.8486
+  ],
+  "fovy_deg": 60.73,
+  "f_px": 409.64322231524676
+ },
+ "sim_check": {
+  "base_centre_xml": [
+   0.41892,
+   0.0174
+  ],
+  "base_centre_from_silhouette": [
+   0.4147,
+   0.0171
+  ],
+  "px": [
+   342.0,
+   229.1
+  ]
+ },
+ "t071_ep0_f0": {
+  "base_xy": [
+   0.4966,
+   0.211
+  ],
+  "lid_xy": [
+   0.3171,
+   0.3418
+  ],
+  "hinge_xy": [
+   0.4069,
+   0.2764
+  ],
+  "base_to_lid_deg": 143.9,
+  "lid_shell_size_m": [
+   0.224,
+   0.199
+  ],
+  "base_shell_size_m": [
+   0.28,
+   0.214
+  ],
+  "sim_shell_size_m": [
+   0.186,
+   0.151
+  ],
+  "sim_centre_distance_m": 0.158,
+  "body_yaw_deg_sim_convention": 206.1,
+  "centre_distance_m": 0.2221,
+  "lid_px": [
+   493.8,
+   178.1
+  ],
+  "base_px": [
+   439.5,
+   264.7
+  ],
+  "lid_rect_deg": 32.1,
+  "base_rect_deg": 32.0,
+  "areas_px": [
+   7331,
+   9842
+  ]
+ },
+ "t071_ep2_f0": {
+  "base_xy": [
+   0.4232,
+   0.2574
+  ],
+  "lid_xy": [
+   0.2256,
+   0.3683
+  ],
+  "hinge_xy": [
+   0.3244,
+   0.3129
+  ],
+  "base_to_lid_deg": 150.7,
+  "lid_shell_size_m": [
+   0.232,
+   0.193
+  ],
+  "base_shell_size_m": [
+   0.292,
+   0.21
+  ],
+  "sim_shell_size_m": [
+   0.186,
+   0.151
+  ],
+  "sim_centre_distance_m": 0.158,
+  "body_yaw_deg_sim_convention": 212.9,
+  "centre_distance_m": 0.2265,
+  "lid_px": [
+   501.1,
+   137.3
+  ],
+  "base_px": [
+   458.8,
+   228.5
+  ],
+  "lid_rect_deg": 24.8,
+  "base_rect_deg": 24.9,
+  "areas_px": [
+   6182,
+   9925
+  ]
+ },
+ "t071_ep3_f0": {
+  "base_xy": [
+   0.4665,
+   0.0478
+  ],
+  "lid_xy": [
+   0.4033,
+   -0.078
+  ],
+  "hinge_xy": [
+   0.4349,
+   -0.0151
+  ],
+  "base_to_lid_deg": -116.7,
+  "lid_shell_size_m": [
+   0.213,
+   0.195
+  ],
+  "base_shell_size_m": [
+   0.275,
+   0.168
+  ],
+  "sim_shell_size_m": [
+   0.186,
+   0.151
+  ],
+  "sim_centre_distance_m": 0.158,
+  "body_yaw_deg_sim_convention": 305.5,
+  "centre_distance_m": 0.1408,
+  "lid_px": [
+   296.1,
+   225.5
+  ],
+  "base_px": [
+   358.1,
+   253.1
+  ],
+  "lid_rect_deg": 24.0,
+  "base_rect_deg": 24.0,
+  "areas_px": [
+   5020,
+   6959
+  ]
+ },
+ "camera_check": {
+  "projected_table_corners_px": [
+   [
+    122,
+    58
+   ],
+   [
+    554,
+    38
+   ],
+   [
+    611,
+    372
+   ],
+   [
+    98,
+    388
+   ]
+  ],
+  "far_edge_row_bg_vs_demo": [
+   379,
+   389
+  ],
+  "side_edge_cols_bg_vs_demo": [
+   [
+    98,
+    580
+   ],
+   [
+    90,
+    630
+   ]
+  ],
+  "px_per_m_on_table": 482.7567289084282
+ }
+}

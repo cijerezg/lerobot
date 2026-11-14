@@ -5,7 +5,7 @@
 ``python -c "from lerobot.robots.rebot_b601_sim.tasks import main; main()" overrides <scene>`` (draccus CLI
 flags with JSON lists, one per line) and the layouts from ``... layouts``; config_rl_sim.yaml keeps the nail task as its single values.
 
-Placements: scenes/<layout>_p<k>/ (twin set) or scenes/<layout>_v<k>/ (the old photo-composite set, migration/sim_variants_2026-10-28)
+Placements: scenes/<layout>_p<k>/ (twin set) or scenes/<layout>_v<k>/ (the old photo-composite set, scripts/sim_builders/variants)
 share the base layout's Task; ``layout_name`` strips the suffix, ``variants(layout)`` lists them on disk and ``eval_layouts()`` is
 LAYOUTS with every base replaced by its placements (``layouts`` prints that, so run_sim_eval.sh runs the placements, never a base).
 
@@ -18,9 +18,9 @@ bottle_basket and lift_bottle have no sheet entry (sheet_id None): the strings a
 bottle_basket script follows T072 steps 5-8 (grasp / move / release the spray bottle in the basket, return to home)
 with T048's "brown basket" wording, lift_bottle's follows T082/T089 (one-step grasp, side-pinch) plus a lift step.
 
-Twin set (2026-10-30, scenes twin_l<L>_<config>_p<1-4>, migration/digital_twin_2026-10-29/envs/ENVS_REPORT.md): four levels
+Twin set (2026-10-30, scenes twin_l<L>_<config>_p<1-4>, scripts/sim_builders/digital_twin/envs/ENVS_REPORT.md): four levels
 twin_l1 .. twin_l4 on the digital-twin desk (single object / target + distractors / full desk / full desk sequential), four
-hand-designed configurations per level, four hand-designed placements each (v2 2026-11-08, migration/twin_eval_v2_2026-11-08; p2-p4 were +-6 cm jitters of p1 until then), dense staged scorers
+hand-designed configurations per level, four hand-designed placements each (v2 2026-11-08, scripts/sim_builders/twin_eval_v2; p2-p4 were +-6 cm jitters of p1 until then), dense staged scorers
 (twin_tasks.py). ``eval_layouts()`` returns its placements on disk (a configuration without a scene folder is skipped). Task strings: T054 / T038 verbatim, pill bottle after T051 steps
 1-3, orange bottle = T107's name for the ROAR bottle, the bit after T056/T057 ("the bit", precision 5 top-pinch), the sequence
 tasks after T037 steps 1-6 (first object first; "the two bits" in any order), the fold task = T067 steps 1-5 ("Close the bit

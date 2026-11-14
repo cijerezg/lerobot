@@ -1,0 +1,11 @@
+# Roots built but not yet in config_rl.yaml. data_count.py counts each root from its meta/episodes.
+- root: outputs/rebot_2026-10-23-annotated-v1
+  note: rollouts 10-23 (user cut-v2), annotated, verify PASS; handover migration/annotation_2026-10-23
+- root: outputs/rebot_2026-10-24-annotated-v1
+  note: rollout run 22-29-27, annotated, verify PASS; handover migration/annotation_2026-10-24
+- root: outputs/rebot_2026-10-26-annotated-v1
+  note: rollouts 10-26 (runs 13-47-11, 14-31-33, 15-01-17), annotated, verify PASS; handover migration/annotation_2026-10-26
+- root: outputs/rebot_teleop_2026-10-26-annotated-v1
+  note: teleop 10-26 afternoon, annotated, verify PASS; handover migration/annotation_teleop_2026-10-26
+- root: outputs/rebot_teleop_2026-10-26b-annotated-v1
+  note: teleop 10-26 evening, annotated, verify PASS, frame-level speed; handover migration/annotation_teleop_2026-10-26b

@@ -22,7 +22,7 @@ original output directory; retain it. This is a ReBot episode survey, not the
 40/20/40 training sampling mixture.
 
 ```bash
-xdg-open lerobot/docs/engineering_notes/reports/critic_gradients_v2_2000/index.html
+xdg-open lerobot/docs/reports/critic_gradients_v2_2000/index.html
 
 PYTHONPATH=lerobot/src .venv/bin/python -m lerobot.scripts.view_probes \
   outputs/probe_runs/critic_gradients_v2_002000_train128_20260927
@@ -37,14 +37,16 @@ Rebuild from saved measurements:
 ```bash
 PYTHONPATH=lerobot/src .venv/bin/python -m lerobot.probes.critic_gradient_view \
   outputs/probe_runs/critic_gradients_v2_002000_train128_20260927/step_00002000/critic_sensitivity
-.venv/bin/python migration/compare_critic_gradient_runs.py \
+.venv/bin/python lerobot/scripts/probes/compare_critic_gradient_runs.py \
   outputs/probe_runs/critic_swap_002000_train128_20260926/step_00002000/critic_sensitivity \
   outputs/probe_runs/critic_gradients_v2_002000_train128_20260927/step_00002000/critic_sensitivity
-node migration/summarize_critic_gradients.cjs \
+node lerobot/scripts/probes/summarize_critic_gradients.cjs \
   outputs/probe_runs/critic_gradients_v2_002000_train128_20260927/step_00002000/critic_sensitivity
 ```
 
 These commands rebuild the live output; this docs snapshot is retained separately.
+Checked 2026-11-13: neither `outputs/probe_runs/critic_*` directory exists on the workstation any
+more, so the viewer and rebuild commands above have no inputs here; only this snapshot remains.
 
 ## Main observations
 

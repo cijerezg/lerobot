@@ -12,7 +12,7 @@ from pathlib import Path
 
 import cv2, numpy as np, pandas as pd
 
-HERE = Path("migration/precision_contact_annotation_2026-09-25")  # results folder of the 09-25 pass
+HERE = Path("outputs/_annotation/precision_contact_annotation_2026-09-25")  # results folder of the 09-25 pass
 sys.argv, _argv = sys.argv[:1], sys.argv
 from lerobot.annotation.precision_contact import render_rows as rr  # noqa: E402
 from lerobot.annotation.precision_contact import sample_contacts as sc  # noqa: E402

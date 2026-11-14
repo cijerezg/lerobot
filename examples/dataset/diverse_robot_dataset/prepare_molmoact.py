@@ -21,7 +21,7 @@ A later round tops the quota up without re-reviewing the first round: `nominate 
 the earlier candidates.json, excludes its nominees from the pool, and writes the union of both
 rounds (each record stamped `round`); `proxies --round v3 --sheets-dir` renders only the new
 round into a separate review dir with a `batches.json` for the batch writer. `finalize` then
-takes the union verdict file (see migration/diverse_v3_control_mode_2026-09-19/molmoact/).
+takes the union verdict file (`molmoact_review/`: reviewer brief, `batch_writer.py`, `union_verdicts.py`).
 """
 
 from __future__ import annotations

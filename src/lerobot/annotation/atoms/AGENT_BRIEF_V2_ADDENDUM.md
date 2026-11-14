@@ -1,14 +1,14 @@
-# v2 addendum to AGENT_BRIEF.md (read AGENT_BRIEF.md and REVIEW_GUIDE.md first)
+# v2 addendum to AGENT_BRIEF.md (read AGENT_BRIEF.md and rubrics/subtask_atoms_rubric.md first)
 
 This round reviews the v2 corpus. EVERY command you run must be prefixed with these three
 environment variables, exactly:
 
-    DIVERSE_DATASET_ROOT=outputs/diverse_robot_dataset_v2 ATOMS_REVIEW_ROOT=outputs/_annotation/subtask_atoms_review_v2 ATOMS_WORK_ROOT=migration/subtask_atoms_v2_2026-09-17 uv run python migration/subtask_atoms_2026-09-08/<tool>.py ...
+    DIVERSE_DATASET_ROOT=outputs/diverse_robot_dataset_v2 ATOMS_REVIEW_ROOT=outputs/_annotation/subtask_atoms_review_v2 ATOMS_WORK_ROOT=lerobot/annotation_data/atoms_v2 uv run python -m lerobot.annotation.atoms.<tool> ...
 
 Paths differ from the brief accordingly: sheets are under
 `outputs/_annotation/subtask_atoms_review_v2/sheets/<source>/`, agent reviews go to
 `outputs/_annotation/subtask_atoms_review_v2/agent_reviews/<episode_id>.json`, proposals are
-`migration/subtask_atoms_v2_2026-09-17/proposals.jsonl`.
+`lerobot/annotation_data/atoms_v2/proposals.jsonl`.
 
 Source `molmoact` (MolmoAct Dataset, Franka): native rate is 20 Hz for `molmoact__tabletop__*`
 and 15 Hz for `molmoact__household__*`. Cameras: `primary` (external, shown on the sheets),

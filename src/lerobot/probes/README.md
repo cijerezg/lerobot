@@ -55,10 +55,12 @@ with `index.json`, `summary.json`, and CSV downloads alongside it. The standalon
 `python -m lerobot.probes.subspace_spans --cache_dir ...` and `--report_only` paths
 remain available for saved-cache analysis.
 
-Flow inversion remains an optional curiosity experiment in
-`migration/flow_inversion_2026-09-28/flow_inversion.py`,
-with its existing `flow_inversion_report` renderer. It is not registered or enabled
-in the official validation suite.
+Flow inversion is an optional curiosity experiment (2026-09-28) with a standalone runner,
+`lerobot/scripts/probes/flow_inversion.py`, and its `flow_inversion_report` renderer. It is
+not registered or enabled in the official validation suite. The runner was a scratch file
+and is not on disk as of 2026-11-13; the renderer, `flow_roundtrip` and
+`flow_interpolation_compare` are in this package. The commands below record how the runs
+were made and need the runner restored at that path.
 
 ### Flow inversion reconstruction experiment
 
@@ -71,7 +73,7 @@ from known seeded noise. Padding joints are excluded from errors; episode-end
 repeated chunk targets are retained, as in the original probe.
 
 ```bash
-PYTHONPATH=lerobot/src .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+PYTHONPATH=lerobot/src .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
   --config_path=<checkpoint-compatible-config.yaml> \
   --policy.pretrained_path=<checkpoint>/pretrained_model \
   --inv_out=<new-output-directory> --inv_roundtrip \
@@ -97,7 +99,7 @@ to converge; it is not claimed to exactly invert the finite-precision sampler.
 Rebuild the report without loading a checkpoint:
 
 ```bash
-PYTHONPATH=lerobot/src .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+PYTHONPATH=lerobot/src .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
   --inv_out=<output-directory> --inv_roundtrip --inv_analyze_only
 ```
 
@@ -112,10 +114,10 @@ controls or a sweep of solver settings.
 
 ```bash
 PYTHONPATH=lerobot/src OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 \
-  .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+  .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
   --config_path=config_rl_validate.yaml \
   --policy.pretrained_path=outputs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
-  --inv_out=migration/flow_noise_pca_diverse_v1_1200/results \
+  --inv_out=outputs/probe_runs/flow_noise_pca_diverse_v1_1200/results \
   --inv_noise_pca --inv_pca_points=150 --inv_num_steps=20 --inv_refine=4
 ```
 
@@ -137,8 +139,8 @@ whitening, outlier removal, or filtering on reconstruction MSE. The saved
 To refresh the PCA page from all completed contexts without running the model:
 
 ```bash
-PYTHONPATH=lerobot/src .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
-  --inv_out=migration/flow_noise_pca_diverse_v1_1200/results --inv_noise_pca --inv_analyze_only
+PYTHONPATH=lerobot/src .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
+  --inv_out=outputs/probe_runs/flow_noise_pca_diverse_v1_1200/results --inv_noise_pca --inv_analyze_only
 ```
 
 ### Fixed-frame action interpolation
@@ -161,7 +163,7 @@ noise recovery RMS. Generation is not a guarantee of task success.
 
 ```bash
 PYTHONPATH=lerobot/src OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 \
-  .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+  .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
   --config_path=config_rl_validate.yaml \
   --policy.pretrained_path=outputs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
   --inv_out=<new-output-directory> --inv_generated_actions \
@@ -199,7 +201,7 @@ noise seeds, and actual matching discrepancies are shown in the report.
 
 The recorded pool contains own-ReBot validation chunks at 3-frame intervals,
 excluding each anchor's 60-frame neighborhood. The generated pool reuses the nine
-saved actions from `migration/flow_generated_interpolation_rebot_1200`.
+saved actions from `outputs/probe_runs/flow_generated_interpolation_rebot_1200`.
 Selection greedily takes three distinct pairs with the smallest worst relative
 endpoint-distance mismatch over the three anchors, without using inversion
 outcomes. Selected recorded windows do not overlap. The current completed run's

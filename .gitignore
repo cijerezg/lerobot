@@ -165,6 +165,7 @@ aim/
 # Data folders
 data/
 outputs/
+annotation_data/
 
 # Translations
 *.mo
@@ -179,4 +180,6 @@ outputs/
 !src/lerobot/robots/rebot_b601_follower/urdf/*.urdf
 !src/lerobot/robots/rebot_b601_follower/mjcf/*.xml
 !src/lerobot/robots/rebot_b601_follower/mjcf/assets/*_col_*.stl
+# Sim scene builders keep their source scenes next to the scripts.
+!scripts/sim_builders/**/*.xml
 *.part

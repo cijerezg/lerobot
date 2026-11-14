@@ -28,8 +28,14 @@ uv sync --locked --extra test --extra dev                         # Test + dev t
 ```
 
 The user's workspace keeps this clone as `lerobot/` next to `config_rl.yaml` (the live run
-config), `outputs/` (datasets, checkpoints, probe runs) and `migration/` (scratch). Those are
+config) and `outputs/` (datasets, checkpoints, probe runs). Those are
 not in git; `CHEAT_SHEET.md` commands are written from that workspace root.
+
+Scratch: per-pass annotation work goes under `outputs/_annotation/passes/<pass>_<date>/`, other
+scratch under `outputs/scratch/<topic>_<date>/`. Anything that code, configs or docs come to
+depend on is moved into the repo (`lerobot/dataset_info/manifests`, `lerobot/annotation_data`,
+`lerobot/scripts`, `lerobot/docs`) the same day. `migration/` now holds only frozen inputs of
+the published reports under `reports/` and gets no new files.
 
 ## Key Commands
 

@@ -1,0 +1,37 @@
+timestep 0.002 free bodies ['bits_kit', 'pill_bottle', 'roar_bottle', 'navy_bottle', 'bit_1', 'bit_2', 'bit_3', 'bit_4', 'bit_5', 'bit_6', 'bits_box', 'bit_holder', 'basket_bottle', 'basket_can', 'basket_card', 'basket_card_white', 'clipper_case', 'clipper_large', 'clipper_small', 'basket', 'headphone_case', 'tape_roll', 'paper_cup']
+start contacts with penetration > 1 mm:
+  link1:link1/g25 x link4:link4/g61 dist -1.8 mm
+  link1:link1/g26 x link4:link4/g61 dist -10.8 mm
+  link1:link1/g30 x link4:link4/g60 dist -10.7 mm
+  link2:link2/g41 x link4:link4/g61 dist -12.0 mm
+  clipper_case:clipper_case/g324 x clipper_small:clipper_small/g341 dist -1.7 mm
+  clipper_case:clipper_case/g324 x clipper_small:clipper_small/g341 dist -1.6 mm
+  clipper_case:clipper_case/g324 x clipper_small:clipper_small/g341 dist -1.3 mm
+  clipper_case:clipper_case/g324 x clipper_small:clipper_small/g341 dist -1.2 mm
+start ncon 11
+after 1 s (500 steps) ncon 104
+body              dxy mm   dz mm tilt deg  z0 -> z1 (m)
+bits_kit             0.1    -3.1     0.00  0.0030 -> -0.0001
+pill_bottle          0.0    -2.2     0.07  0.0020 -> -0.0002
+roar_bottle          0.0    -2.1     0.00  0.0020 -> -0.0001
+navy_bottle          0.0    -2.1     0.00  0.0020 -> -0.0001
+bit_1                0.0    -1.3     0.37  0.0040 -> 0.0027
+bit_2                0.0    -1.3     0.42  0.0040 -> 0.0027
+bit_3                0.0    -1.3     0.35  0.0040 -> 0.0027
+bit_4                0.0    -1.3     0.37  0.0040 -> 0.0027
+bit_5                0.0    -1.3     0.42  0.0040 -> 0.0027
+bit_6                0.0    -1.3     0.37  0.0040 -> 0.0027
+bits_box             0.0    -2.1     0.00  0.0145 -> 0.0124
+bit_holder           0.0    -2.1     0.00  0.0095 -> 0.0074
+basket_bottle        0.0    -2.6     0.01  0.0140 -> 0.0114
+basket_can           0.0    -2.3     0.00  0.0440 -> 0.0417
+basket_card          0.0    -2.3     0.09  0.0170 -> 0.0147
+basket_card_white     0.0    -3.3     0.09  0.0220 -> 0.0187
+clipper_case         0.0    -2.1     0.02  0.0020 -> -0.0001
+clipper_large        0.0    -2.2     0.00  0.0071 -> 0.0049
+clipper_small        0.2    -0.0     0.77  0.0106 -> 0.0106
+basket               0.0    -2.0     0.00  0.0020 -> -0.0000
+headphone_case       0.0    -2.1     0.03  0.0220 -> 0.0199
+tape_roll            0.0    -2.1     0.00  0.0170 -> 0.0149
+paper_cup            0.0    -2.1     0.00  0.0570 -> 0.0549
+body-body contact pairs over the second (robot/table excluded): {('link1', 'link4'): 855, ('link2', 'link4'): 626, ('basket', 'basket_can'): 1000, ('clipper_case', 'clipper_small'): 3325, ('basket', 'basket_card'): 2460, ('basket', 'basket_bottle'): 489, ('basket_card', 'basket_card_white'): 3880}

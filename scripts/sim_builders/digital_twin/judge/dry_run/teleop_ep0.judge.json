@@ -1,0 +1,88 @@
+{
+ "source": "outputs/rebot_teleop_2026-10-29-cut-v1",
+ "episode": 0,
+ "task": "basket:pill bottle",
+ "task_text": "Put the pill bottle in the basket",
+ "model": "mock",
+ "endpoint": "http://127.0.0.1:8099/v1",
+ "period_s": 0.5,
+ "frames_per_camera": 4,
+ "cameras": [
+  "top",
+  "wrist"
+ ],
+ "created": "2026-10-30 11:15:00",
+ "failures": 0,
+ "steps": [
+  {
+   "t": 0.0,
+   "subtask_id": 5,
+   "stage_id": 5,
+   "progress": 1.0,
+   "confidence": 0.8,
+   "evidence": "mock answer 98 on 2 images",
+   "subtask": "retreat",
+   "stage": "inside",
+   "cursor": 2,
+   "stage_value": 1.0,
+   "progress_max": 1.0,
+   "latency_s": 0.002
+  },
+  {
+   "t": 0.5,
+   "subtask_id": 5,
+   "stage_id": 5,
+   "progress": 1.0,
+   "confidence": 0.8,
+   "evidence": "mock answer 99 on 4 images",
+   "subtask": "retreat",
+   "stage": "inside",
+   "cursor": 2,
+   "stage_value": 1.0,
+   "progress_max": 1.0,
+   "latency_s": 0.001
+  },
+  {
+   "t": 1.0,
+   "subtask_id": 5,
+   "stage_id": 5,
+   "progress": 1.0,
+   "confidence": 0.8,
+   "evidence": "mock answer 100 on 6 images",
+   "subtask": "retreat",
+   "stage": "inside",
+   "cursor": 2,
+   "stage_value": 1.0,
+   "progress_max": 1.0,
+   "latency_s": 0.001
+  },
+  {
+   "t": 1.5,
+   "subtask_id": 5,
+   "stage_id": 5,
+   "progress": 1.0,
+   "confidence": 0.8,
+   "evidence": "mock answer 101 on 8 images",
+   "subtask": "retreat",
+   "stage": "inside",
+   "cursor": 2,
+   "stage_value": 1.0,
+   "progress_max": 1.0,
+   "latency_s": 0.002
+  },
+  {
+   "t": 2.0,
+   "subtask_id": 5,
+   "stage_id": 5,
+   "progress": 1.0,
+   "confidence": 0.8,
+   "evidence": "mock answer 102 on 8 images",
+   "subtask": "retreat",
+   "stage": "inside",
+   "cursor": 2,
+   "stage_value": 1.0,
+   "progress_max": 1.0,
+   "latency_s": 0.001
+  }
+ ]
+}

@@ -4,6 +4,7 @@ Training data lives under `outputs/diverse_robot_dataset/` — `corpus/` and `fm
 Staging, review, logs, and provenance live under `outputs/diverse_robot_dataset_build/`. Pilot
 outputs are evidence and test fixtures only; they are not part of the training set.
 The plan of record is `DIVERSE_ROBOT_DATASET.md` at the workspace root.
+The label folder `migration/diverse_quality_mistake_labels/` named below and in the scripts is no longer on disk (2026-11-13).
 
 ## Unified source-native corpus
 

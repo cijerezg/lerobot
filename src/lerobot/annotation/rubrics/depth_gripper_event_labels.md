@@ -195,9 +195,10 @@ by an atomic rename.
 
 ### Consolidated and RGB-only roots
 
-A consolidated root (`migration/training_mix_2026-09-21/consolidate_sources.py`) preserves
+A consolidated root (built by the one-off training-mix consolidation of 2026-09-21, script
+not kept in the repo) preserves
 the leaf sources' event and frame-label tables with rebased indices and writes this file
-by merging the leaves (`depth_event_labels_info.py` in the same folder): every field that
+by merging the leaves (`depth_event_labels_info.py` of the same one-off): every field that
 is identical across all leaf `_labels_info.json` files is carried over, and the row and
 event counts are recomputed from the consolidated sidecars. The probes read
 `resolved_gripper_dimension`, `thresholds_degrees`, `fps`, and `rubric_version` from it,

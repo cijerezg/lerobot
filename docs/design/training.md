@@ -28,6 +28,15 @@ fallback — but dtype/size mismatches DO silently fall back, so the policy conf
 must declare its `image_storage_*` fields). History windows are assembled at
 sample time — no cache format change.
 
+**Normalization stats source** (`rl_molmoact2_trainer._saved_processor_path`): if
+`policy.pretrained_path`, `checkpoint_path` or `<output_dir>/checkpoints/last/pretrained_model`
+holds saved pre/post-processors, the trainer loads THOSE and ignores
+`policy.embodiment_stats_path`. A new per-embodiment stats file only takes effect on a run
+with `pretrained_path: null` (raw MolmoAct2 init) and a fresh output dir. Only the single-row
+`action_encoding_stats_path` (no `embodiment_stats_path`) overrides saved ACTION stats.
+`scripts/compute_filtered_stats.py` recomputes the per-embodiment file over the frames
+training actually samples (weight-0 groups and exclusion ranges dropped).
+
 **Frame exclusions** (post-cache, reversible; `rl/data_sources/frame_exclusions.py`): ranges
 whose action targets are never sampled. Excluded frames can still appear as observation
 history for a kept start. Delete the config key to restore full sampling.

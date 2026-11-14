@@ -1,6 +1,6 @@
 # Short-term memory as its own image slot (design 2026-11-04)
 
-> **Status:** built 2026-11-04, trained once (rebot-mem-slot-internal-20261104, internal-only, base ckpt), PARKED 2026-11-07: memory off in the live yamls (`history_keys: []`, migration/config_memory_off_2026-11-07/), run outputs and probe results deleted; code kept. On landing, this replaces the consumption half of [memory_prompts.md §2.4](../design/memory_prompts.md) and this note moves to archive. Build report: `migration/memory_history_slot_2026-11-04/REPORT.md`.
+> **Status:** built 2026-11-04, trained once (rebot-mem-slot-internal-20261104, internal-only, base ckpt), PARKED 2026-11-07: memory off in the live yamls (`history_keys: []`; the before-copies of the yamls were not kept), run outputs and probe results deleted; code kept. On landing, this replaces the consumption half of [memory_prompts.md §2.4](../design/memory_prompts.md) and this note moves to archive. The 2026-11-04 build report was a scratch file and is no longer on disk.
 
 Supersedes the consumption half of [memory_prompts.md §2.4](../design/memory_prompts.md): the
 MEM video encoder stays, but its output no longer replaces the current image. It

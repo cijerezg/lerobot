@@ -21,7 +21,7 @@ from lerobot.annotation.paths import WORKSPACE as ROOT
 DATA_ROOT = ROOT / os.environ.get("DIVERSE_DATASET_ROOT", "outputs/diverse_robot_dataset")
 CORPUS = DATA_ROOT / "corpus"
 FMB = DATA_ROOT / "fmb"
-WORK = ROOT / os.environ.get("ATOMS_WORK_ROOT", "migration/subtask_atoms_2026-09-08")
+WORK = ROOT / os.environ.get("ATOMS_WORK_ROOT", "lerobot/annotation_data/atoms")
 REVIEW = ROOT / os.environ.get("ATOMS_REVIEW_ROOT", "outputs/_annotation/subtask_atoms_review")
 # Sources whose state is an end-effector pose (xyz metres, Euler, gripper), not joints.
 EE_SOURCES = {"molmoact"}

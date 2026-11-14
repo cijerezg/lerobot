@@ -1,0 +1,104 @@
+{
+ "basket_colour_top_cam": {
+  "real_rgb": [
+   26.3,
+   27.7,
+   20.3
+  ],
+  "sim_rgb": [
+   46.5,
+   41.7,
+   47.1
+  ],
+  "suggested_extra_gain": [
+   0.566,
+   0.665,
+   0.431
+  ]
+ },
+ "basket_colour_wrist_space": {
+  "real_wrist_patch_rgb": [
+   45.4,
+   33.5,
+   17.7
+  ],
+  "sim_wall_rgb": [
+   6.6,
+   5.4,
+   2.0
+  ],
+  "suggested_extra_gain": [
+   6.883,
+   6.191,
+   8.762
+  ]
+ },
+ "rest_2s": {
+  "bottle_moved_m": 0.00014215299777015772,
+  "bottle_tilt_deg": 1.7075472925031877e-06,
+  "basket_moved_m": 0.0,
+  "worst_penetration_m": -0.00018706225162294643,
+  "contacts": [
+   [
+    "",
+    ""
+   ],
+   [
+    "table_contact",
+    "bottle"
+   ]
+  ]
+ },
+ "drop_test": {
+  "bottle_rel_basket": [
+   0.0303,
+   -0.0398,
+   0.0562
+  ],
+  "inside_on_floor": true,
+  "basket_moved_m": 0.0,
+  "contacts": [
+   [
+    "",
+    ""
+   ],
+   [
+    "bottle",
+    "basket_floor"
+   ]
+  ]
+ },
+ "gripper": {
+  "tip_gap_m": {
+   "slide_0.0": -0.0015646364373888345,
+   "slide_0.025": 0.04843536356261122,
+   "slide_0.05": 0.09843536356261126
+  },
+  "bottle_diameter_m": 0.055,
+  "graspable": true
+ },
+ "ik": {
+  "gripper_end_over_bottle_z0.15": {
+   "pos_err_m": 1.415262216750919e-16,
+   "q_deg": [
+    -9.7,
+    -79.2,
+    -53.6,
+    21.7,
+    4.6,
+    0.0
+   ]
+  },
+  "gripper_end_over_basket_centre_z0.35": {
+   "pos_err_m": 1.2719202621569003e-16,
+   "q_deg": [
+    22.1,
+    -77.1,
+    -71.4,
+    11.1,
+    -9.8,
+    -0.0
+   ]
+  }
+ }
+}

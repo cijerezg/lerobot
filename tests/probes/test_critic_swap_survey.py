@@ -40,7 +40,7 @@ def test_bulk_episode_index_keeps_selected_row_order_without_reading_observation
 
 
 def test_round_robin_sampling_covers_groups_and_respects_episode_selection(tmp_path):
-    path = Path(__file__).resolve().parents[3] / 'migration/critic_swap_survey.py'
+    path = Path(__file__).resolve().parents[2] / 'scripts/probes/critic_swap_survey.py'
     spec = importlib.util.spec_from_file_location('survey_test_module', path)
     module = importlib.util.module_from_spec(spec)
     # dataclass inspects its defining module during class creation.

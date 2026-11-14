@@ -1,7 +1,7 @@
 # Sim scenes
 
 MuJoCo layouts for `rebot_b601_sim` (`config.scene = <name>` resolves to `scenes/<name>/scene.xml`).
-Built 2026-10-17 from the 2026-10-16 nail-clipper recordings (`migration/real2sim_2026-10-17`, HANDOFF.md there has
+Built 2026-10-17 from the 2026-10-16 nail-clipper recordings (`scripts/sim_builders/real2sim`, HANDOFF.md there has
 the calibration numbers and the rebuild order; the build scripts stay in that folder).
 
 | layout | source | task objects | notes |
@@ -13,7 +13,7 @@ the calibration numbers and the rebuild order; the build scripts stay in that fo
 | ep3 | 10-16 ep 3 frame 0 | clippers 0.25-0.33 m from the case | tidy-up recording |
 | lift_bottle | ep0's standing bottle at clippers_only's case position | one bottle (`bottle`) | 2026-10-22, easy tier |
 | bottle_basket | ep0's standing bottle + measured brown basket (`assets/photoreal/basket`, woven mesh from 10-21 wrist frames, hollow collider) | `bottle`, `basket` | 2026-10-22, easy tier |
-| close_lid | ep2's hinged headphone case, base fixed, lid on a real hinge with a tray collider (floor + four 7 mm rim walls); the loop handle on the base's far end has capsule colliders (2026-10-28) | `headphone_case`, `headphone_lid`, hinge `lid_hinge` (0 = open, closed = the nonzero end of its `range`) | 2026-10-22, easy tier; solvability study in `migration/lid_solvability_2026-10-28` |
+| close_lid | ep2's hinged headphone case, base fixed, lid on a real hinge with a tray collider (floor + four 7 mm rim walls); the loop handle on the base's far end has capsule colliders (2026-10-28) | `headphone_case`, `headphone_lid`, hinge `lid_hinge` (0 = open, closed = the nonzero end of its `range`) | 2026-10-22, easy tier; solvability study in `scripts/sim_builders/lid_solvability` |
 
 ## Eval set, tiers and staged reward (2026-10-22)
 
@@ -81,7 +81,7 @@ unchanged. Lighting and materials use the approved native MuJoCo appearance pass
 
 `assets/photoreal/{clippers,objects,headphones}/` contains the promoted meshes and
 textures. XML references are relative and all required runtime assets are packaged
-with LeRobot. The scenes do not depend on `migration/` at runtime.
+with LeRobot. The scenes do not depend on the builder folders at runtime.
 
 Visual additions have zero mass and disabled contacts. Some legacy visual geoms
 remain hidden in group 5 because they contribute inferred body mass/inertia.
@@ -90,12 +90,12 @@ headphone half and fabric hinge are rigid visual additions to the original body;
 there is no simulated closing joint or new collision surface. Cup/tape openings
 and the organizer lid are also visual details over simplified original colliders.
 
-Source/reference and builder history remains in the workspace under
-`migration/photoreal_clippers_2026-10-17/`,
-`migration/photoreal_objects_2026-10-18/`, and
-`migration/photoreal_headphone_hinge_2026-10-18/`.
+Source/reference and builder history is under
+`scripts/sim_builders/photoreal_clippers/`,
+`scripts/sim_builders/photoreal_objects/`, and
+`scripts/sim_builders/photoreal_headphone_hinge/`.
 The integration backup, asset manifest and validation reports are under
-`migration/photoreal_integration_2026-10-18/`. Earlier experiment hash checks describe
+`scripts/sim_builders/photoreal_integration/`. Earlier experiment hash checks describe
 the pre-integration state; their original-scene hashes intentionally differ now.
 
 ## Placement variants (2026-10-28)
@@ -112,7 +112,7 @@ clippers, case and kit), unprojected through the ext camera onto the table: the 
 (0.565, 0.422), (0.538, -0.302) in table coordinates (x toward the camera, y to the robot's right), intersected with the 0.50 m
 reach disc around the base (basket centre <= 0.48 m, bottle <= 0.45 m from the basket). Yaw is uniform for the free objects, base
 +-25 deg for the basket. close_lid instead centres on the three T071 demo poses measured by the lid study
-(`migration/lid_solvability_2026-10-28/demo_pose_summary.json`: ep0, ep2, ep3; variants 1-3 and 4-6 follow them in that order)
+(`scripts/sim_builders/lid_solvability/demo_pose_summary.json`: ep0, ep2, ep3; variants 1-3 and 4-6 follow them in that order)
 with +-4 cm xy and +-20 deg yaw jitter around the demo body yaw (lid toward the robot side as in the demos). Every pose keeps the
 body's AABB 2 cm inside the table and its convex footprint (lid open and the strap-loop capsules included) 2 cm clear of every
 other scene body and of the robot base, and passes an IK reach test inside the follower's soft joint limits (straight-down pinch at
@@ -120,14 +120,14 @@ the object top; position only 5 cm over the basket rim; for close_lid a pinch ac
 closes it); each variant settles for 1 s with the task objects moving < 5 mm.
 
 Regenerate (seed 20261028, per-layout sub-seed = index in bottle_basket, clippers_only, ep0, ep3, close_lid; byte-identical
-output): `MUJOCO_GL=egl PYTHONSAFEPATH=1 uv run python migration/sim_variants_2026-10-28/generate_variants.py [--layouts ...]`.
+output): `MUJOCO_GL=egl PYTHONSAFEPATH=1 uv run python lerobot/scripts/sim_builders/variants/generate_variants.py [--layouts ...]`.
 Each variant folder holds `scene.xml` (only the task-object body lines differ from the base), `objects.json` (`variant_of`, seed,
 sampled poses, the lid's hinge point) and a copy of `background_top.png`; meshes and `materials/` stay referenced through the base
-folder. Contact sheets: `migration/sim_variants_2026-10-28/contact_<layout>.png`.
+folder. Contact sheets (by-product of the script): `scripts/sim_builders/variants/contact_<layout>.png`.
 
 ## Twin eval set (2026-10-30)
 
-`twin_l<L>_<config>_p<1-4>` layouts: the digital-twin desk (`migration/digital_twin_2026-10-29/twin/scene_twin.xml`, room geometry
+`twin_l<L>_<config>_p<1-4>` layouts: the digital-twin desk (`scripts/sim_builders/digital_twin/twin/scene_twin.xml`, room geometry
 instead of a real background composite, the aligned `ext` camera, package copies of the twin assets under `assets/twin/`, room files
 under `assets/twin/room/`). Four levels (tiers `twin_l1` .. `twin_l4`) x four hand-designed configurations x four placements: `p1` is
 the configuration itself, `p2`-`p4` are three more hand-designed placements (v2, 2026-11-08: target side and distance, basket pose, distractor arrangement, kit open / mirrored / closed / closed and moved; until then they were xy +-6 cm, yaw +-20 deg jitters of p1) under the placement rules above (2 cm inside
@@ -135,7 +135,7 @@ the desk, 2 cm clearance, no start contact with the parked arm, IK reach of the 
 < 5 mm). L1 = basket + one object; L2 = target + distractors (a second tape roll `tape_roll_2` and the clipper case with both
 clippers seated exist as bodies); L3 = the full twin desk (tape / pill bottle target, "Close the bit kit", "Close the headphone case lid" with the kit
 closed; the basket stays at its twin pose with its contents); L4 = the full desk, sequential multi-object tasks (`twin_tasks.sequence_scorer`, equal ladder
-shares in task order). Built by `migration/twin_eval_v2_2026-11-08/build_twin_envs_v2.py` (report `ENVS_REPORT_v2.md` there, v1 scenes in `scenes_v1_backup/`; the 10-30 jitter build was `migration/digital_twin_2026-10-29/envs/build_twin_envs.py`, report
+shares in task order). Built by `scripts/sim_builders/twin_eval_v2/build_twin_envs_v2.py` (report `ENVS_REPORT_v2.md` there, v1 scenes in the workspace's `assets/sim_sources/twin_eval_v2/scenes_v1_backup/`; the 10-30 jitter build was `scripts/sim_builders/digital_twin/envs/build_twin_envs.py`, report
 `envs/ENVS_REPORT.md`). Scorers in `twin_tasks.py` are staged like the others and additionally dense (`reward_dense` in
 subtask_events.json / sim/index.json). This is the eval set (2026-11-05; `TWIN=1` selected it from 10-30 to 11-05): `tasks.py LAYOUTS`
 is the twin configurations, `tasks.py layouts` / `eval_layouts()` list their placements on disk (64) and `run_sim_eval.sh` runs them with the config's `episodes: 4` each; config_rl_sim.yaml's top camera carries no background

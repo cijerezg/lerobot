@@ -1,0 +1,33 @@
+  pointmap_config:
+    depth_key: wrist_0
+    depth_units_mm: 0.1
+    intrinsics:
+    - 394.9832
+    - 394.9832
+    - 322.5604
+    - 238.6966
+    image_size:
+    - 480
+    - 640
+    patch_size: 20
+    pooling_size:
+    - 2
+    - 2
+    z_min_mm: 70.0
+    z_max_mm: 800.0
+    token_width: 1152
+    visual_num_blocks: 7
+    visual_feature_taps:
+    - 3
+    - 7
+    visual_source_indices:
+    - 0
+    - 4
+    - 8
+    - 12
+    - 16
+    - 20
+    - 24
+    output_bound: 128.0
+    dropout_prob: 0.0
+    rgb_dropout_prob: 0.0

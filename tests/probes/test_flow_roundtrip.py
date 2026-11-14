@@ -117,7 +117,9 @@ def test_production_replay_restores_consumed_modalities_under_same_autocast():
 
     from lerobot.utils.constants import ACTION
 
-    script = Path(__file__).resolve().parents[3] / 'migration/flow_inversion_2026-09-28/flow_inversion.py'
+    script = Path(__file__).resolve().parents[2] / 'scripts/probes/flow_inversion.py'
+    if not script.is_file():
+        pytest.skip('standalone flow_inversion.py runner is not on disk (scratch file, gone by 2026-11-13)')
     spec = importlib.util.spec_from_file_location('flow_inversion_regression', script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

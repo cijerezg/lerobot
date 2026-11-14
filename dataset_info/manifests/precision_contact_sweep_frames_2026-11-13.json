@@ -1,0 +1,2733 @@
+[
+ {
+  "episode_idx": 0,
+  "frame_idx": 276,
+  "global_idx": 276,
+  "segment_index": 0,
+  "segment": [
+   0,
+   361
+  ],
+  "commit_frame": 307,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the brown shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -177.5
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 291,
+  "global_idx": 291,
+  "segment_index": 0,
+  "segment": [
+   0,
+   361
+  ],
+  "commit_frame": 307,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the brown shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -178.4
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 300,
+  "global_idx": 300,
+  "segment_index": 0,
+  "segment": [
+   0,
+   361
+  ],
+  "commit_frame": 307,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the brown shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -178.8
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 627,
+  "global_idx": 627,
+  "segment_index": 2,
+  "segment": [
+   606,
+   679
+  ],
+  "commit_frame": 657,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "release",
+  "gt_subtask": "release the brown shirt in the bin",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -1.7
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 642,
+  "global_idx": 642,
+  "segment_index": 2,
+  "segment": [
+   606,
+   679
+  ],
+  "commit_frame": 657,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "release",
+  "gt_subtask": "release the brown shirt in the bin",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -1.9
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 651,
+  "global_idx": 651,
+  "segment_index": 2,
+  "segment": [
+   606,
+   679
+  ],
+  "commit_frame": 657,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "release",
+  "gt_subtask": "release the brown shirt in the bin",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -1.9
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 984,
+  "global_idx": 984,
+  "segment_index": 3,
+  "segment": [
+   679,
+   1057
+  ],
+  "commit_frame": 1015,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -152.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 999,
+  "global_idx": 999,
+  "segment_index": 3,
+  "segment": [
+   679,
+   1057
+  ],
+  "commit_frame": 1015,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -152.4
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1008,
+  "global_idx": 1008,
+  "segment_index": 3,
+  "segment": [
+   679,
+   1057
+  ],
+  "commit_frame": 1015,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -152.4
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1362,
+  "global_idx": 1362,
+  "segment_index": 5,
+  "segment": [
+   1284,
+   1541
+  ],
+  "commit_frame": 1392,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1377,
+  "global_idx": 1377,
+  "segment_index": 5,
+  "segment": [
+   1284,
+   1541
+  ],
+  "commit_frame": 1392,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1386,
+  "global_idx": 1386,
+  "segment_index": 5,
+  "segment": [
+   1284,
+   1541
+  ],
+  "commit_frame": 1392,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1635,
+  "global_idx": 1635,
+  "segment_index": 6,
+  "segment": [
+   1541,
+   1715
+  ],
+  "commit_frame": 1665,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -115.6
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1650,
+  "global_idx": 1650,
+  "segment_index": 6,
+  "segment": [
+   1541,
+   1715
+  ],
+  "commit_frame": 1665,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -112.9
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1659,
+  "global_idx": 1659,
+  "segment_index": 6,
+  "segment": [
+   1541,
+   1715
+  ],
+  "commit_frame": 1665,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -105.6
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1836,
+  "global_idx": 1836,
+  "segment_index": 8,
+  "segment": [
+   1810,
+   1886
+  ],
+  "commit_frame": 1865,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1851,
+  "global_idx": 1851,
+  "segment_index": 8,
+  "segment": [
+   1810,
+   1886
+  ],
+  "commit_frame": 1865,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -1.1
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 1860,
+  "global_idx": 1860,
+  "segment_index": 8,
+  "segment": [
+   1810,
+   1886
+  ],
+  "commit_frame": 1865,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -2.2
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2337,
+  "global_idx": 2337,
+  "segment_index": 9,
+  "segment": [
+   1886,
+   2418
+  ],
+  "commit_frame": 2367,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -117.8
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2352,
+  "global_idx": 2352,
+  "segment_index": 9,
+  "segment": [
+   1886,
+   2418
+  ],
+  "commit_frame": 2367,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -147.8
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2361,
+  "global_idx": 2361,
+  "segment_index": 9,
+  "segment": [
+   1886,
+   2418
+  ],
+  "commit_frame": 2367,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -146.8
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2508,
+  "global_idx": 2508,
+  "segment_index": 11,
+  "segment": [
+   2494,
+   2603
+  ],
+  "commit_frame": 2523,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2517,
+  "global_idx": 2517,
+  "segment_index": 11,
+  "segment": [
+   2494,
+   2603
+  ],
+  "commit_frame": 2523,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2619,
+  "global_idx": 2619,
+  "segment_index": 12,
+  "segment": [
+   2603,
+   2707
+  ],
+  "commit_frame": 2649,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -171.8
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2634,
+  "global_idx": 2634,
+  "segment_index": 12,
+  "segment": [
+   2603,
+   2707
+  ],
+  "commit_frame": 2649,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -181.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2643,
+  "global_idx": 2643,
+  "segment_index": 12,
+  "segment": [
+   2603,
+   2707
+  ],
+  "commit_frame": 2649,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "grasp the shirt",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -181.7
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2754,
+  "global_idx": 2754,
+  "segment_index": 14,
+  "segment": [
+   2748,
+   2789
+  ],
+  "commit_frame": 2769,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 5,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 2763,
+  "global_idx": 2763,
+  "segment_index": 14,
+  "segment": [
+   2748,
+   2789
+  ],
+  "commit_frame": 2769,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "release",
+  "gt_subtask": "release the shirt in the bin",
+  "quality": 5,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3201,
+  "global_idx": 3201,
+  "segment_index": 15,
+  "segment": [
+   2789,
+   3277
+  ],
+  "commit_frame": 3230,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "grasp",
+  "gt_subtask": "grasp the white sock nearest the bin",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -184.6
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3216,
+  "global_idx": 3216,
+  "segment_index": 15,
+  "segment": [
+   2789,
+   3277
+  ],
+  "commit_frame": 3230,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "grasp",
+  "gt_subtask": "grasp the white sock nearest the bin",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -184.8
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3225,
+  "global_idx": 3225,
+  "segment_index": 15,
+  "segment": [
+   2789,
+   3277
+  ],
+  "commit_frame": 3230,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "grasp",
+  "gt_subtask": "grasp the white sock nearest the bin",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -183.7
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3513,
+  "global_idx": 3513,
+  "segment_index": 17,
+  "segment": [
+   3442,
+   3571
+  ],
+  "commit_frame": 3542,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "release",
+  "gt_subtask": "release the white sock in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3528,
+  "global_idx": 3528,
+  "segment_index": 17,
+  "segment": [
+   3442,
+   3571
+  ],
+  "commit_frame": 3542,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "release",
+  "gt_subtask": "release the white sock in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3537,
+  "global_idx": 3537,
+  "segment_index": 17,
+  "segment": [
+   3442,
+   3571
+  ],
+  "commit_frame": 3542,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "release the white sock in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3840,
+  "global_idx": 3840,
+  "segment_index": 18,
+  "segment": [
+   3571,
+   3950
+  ],
+  "commit_frame": 3870,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "grasp the black sock",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -154.3
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3855,
+  "global_idx": 3855,
+  "segment_index": 18,
+  "segment": [
+   3571,
+   3950
+  ],
+  "commit_frame": 3870,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "grasp the black sock",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -148.1
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 3864,
+  "global_idx": 3864,
+  "segment_index": 18,
+  "segment": [
+   3571,
+   3950
+  ],
+  "commit_frame": 3870,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "grasp the black sock",
+  "quality": 3,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -144.2
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 4137,
+  "global_idx": 4137,
+  "segment_index": 20,
+  "segment": [
+   4125,
+   4198
+  ],
+  "commit_frame": 4151,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "release",
+  "gt_subtask": "release the black sock in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 4146,
+  "global_idx": 4146,
+  "segment_index": 20,
+  "segment": [
+   4125,
+   4198
+  ],
+  "commit_frame": 4151,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "release the black sock in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -0.1
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 4551,
+  "global_idx": 4551,
+  "segment_index": 21,
+  "segment": [
+   4198,
+   4636
+  ],
+  "commit_frame": 4582,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the sock",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -132.4
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 4566,
+  "global_idx": 4566,
+  "segment_index": 21,
+  "segment": [
+   4198,
+   4636
+  ],
+  "commit_frame": 4582,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the sock",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -222.9
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 4575,
+  "global_idx": 4575,
+  "segment_index": 21,
+  "segment": [
+   4198,
+   4636
+  ],
+  "commit_frame": 4582,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the sock",
+  "quality": 2,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -250.6
+ },
+ {
+  "episode_idx": 0,
+  "frame_idx": 4809,
+  "global_idx": 4809,
+  "segment_index": 23,
+  "segment": [
+   4806,
+   4851
+  ],
+  "commit_frame": 4814,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "release the sock in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -8.7
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 531,
+  "global_idx": 5598,
+  "segment_index": 0,
+  "segment": [
+   0,
+   596
+  ],
+  "commit_frame": 560,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "grasp",
+  "gt_subtask": "grasp the nail clipper",
+  "quality": 5,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 4,
+  "gripper": -70.8
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 546,
+  "global_idx": 5613,
+  "segment_index": 0,
+  "segment": [
+   0,
+   596
+  ],
+  "commit_frame": 560,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "grasp",
+  "gt_subtask": "grasp the nail clipper",
+  "quality": 5,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 4,
+  "gripper": -70.8
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 555,
+  "global_idx": 5622,
+  "segment_index": 0,
+  "segment": [
+   0,
+   596
+  ],
+  "commit_frame": 560,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "grasp",
+  "gt_subtask": "grasp the nail clipper",
+  "quality": 5,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 4,
+  "gripper": -69.8
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 945,
+  "global_idx": 6012,
+  "segment_index": 2,
+  "segment": [
+   894,
+   1007
+  ],
+  "commit_frame": 976,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "release",
+  "gt_subtask": "release the nail clipper in the small slot",
+  "quality": 4,
+  "true_contact": 11,
+  "true_contact_slug": "insert",
+  "plausible_contacts": [
+   9,
+   10,
+   11
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 5,
+  "gripper": -24.5
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 960,
+  "global_idx": 6027,
+  "segment_index": 2,
+  "segment": [
+   894,
+   1007
+  ],
+  "commit_frame": 976,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "release",
+  "gt_subtask": "release the nail clipper in the small slot",
+  "quality": 4,
+  "true_contact": 11,
+  "true_contact_slug": "insert",
+  "plausible_contacts": [
+   9,
+   10,
+   11
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 5,
+  "gripper": -30.9
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 969,
+  "global_idx": 6036,
+  "segment_index": 2,
+  "segment": [
+   894,
+   1007
+  ],
+  "commit_frame": 976,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "release",
+  "gt_subtask": "release the nail clipper in the small slot",
+  "quality": 4,
+  "true_contact": 11,
+  "true_contact_slug": "insert",
+  "plausible_contacts": [
+   9,
+   10,
+   11
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 5,
+  "gripper": -36.0
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 1020,
+  "global_idx": 6087,
+  "segment_index": 3,
+  "segment": [
+   1007,
+   1167
+  ],
+  "commit_frame": 1050,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "push the nail clipper into the small slot",
+  "quality": 4,
+  "true_contact": 5,
+  "true_contact_slug": "push",
+  "plausible_contacts": [
+   5,
+   6
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -64.8
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 1035,
+  "global_idx": 6102,
+  "segment_index": 3,
+  "segment": [
+   1007,
+   1167
+  ],
+  "commit_frame": 1050,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "push the nail clipper into the small slot",
+  "quality": 4,
+  "true_contact": 5,
+  "true_contact_slug": "push",
+  "plausible_contacts": [
+   5,
+   6
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -64.8
+ },
+ {
+  "episode_idx": 1,
+  "frame_idx": 1044,
+  "global_idx": 6111,
+  "segment_index": 3,
+  "segment": [
+   1007,
+   1167
+  ],
+  "commit_frame": 1050,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "push the nail clipper into the small slot",
+  "quality": 4,
+  "true_contact": 5,
+  "true_contact_slug": "push",
+  "plausible_contacts": [
+   5,
+   6
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -64.8
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 516,
+  "global_idx": 6750,
+  "segment_index": 0,
+  "segment": [
+   0,
+   642
+  ],
+  "commit_frame": 547,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the headphone case lid",
+  "quality": 5,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   0,
+   2,
+   3
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -117.7
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 531,
+  "global_idx": 6765,
+  "segment_index": 0,
+  "segment": [
+   0,
+   642
+  ],
+  "commit_frame": 547,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the headphone case lid",
+  "quality": 5,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   0,
+   2,
+   3
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -117.5
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 540,
+  "global_idx": 6774,
+  "segment_index": 0,
+  "segment": [
+   0,
+   642
+  ],
+  "commit_frame": 547,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the headphone case lid",
+  "quality": 5,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   0,
+   2,
+   3
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -117.0
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 918,
+  "global_idx": 7152,
+  "segment_index": 1,
+  "segment": [
+   642,
+   1002
+  ],
+  "commit_frame": 948,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "release",
+  "gt_subtask": "close the headphone case lid",
+  "quality": 5,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   2,
+   5
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 933,
+  "global_idx": 7167,
+  "segment_index": 1,
+  "segment": [
+   642,
+   1002
+  ],
+  "commit_frame": 948,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "release",
+  "gt_subtask": "close the headphone case lid",
+  "quality": 5,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   2,
+   5
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 942,
+  "global_idx": 7176,
+  "segment_index": 1,
+  "segment": [
+   642,
+   1002
+  ],
+  "commit_frame": 948,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "release",
+  "gt_subtask": "close the headphone case lid",
+  "quality": 5,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   2,
+   5
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -0.0
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 1620,
+  "global_idx": 7854,
+  "segment_index": 2,
+  "segment": [
+   1002,
+   1680
+  ],
+  "commit_frame": 1650,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "grasp the yellow pill bottle",
+  "quality": 5,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -166.2
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 1635,
+  "global_idx": 7869,
+  "segment_index": 2,
+  "segment": [
+   1002,
+   1680
+  ],
+  "commit_frame": 1650,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "grasp the yellow pill bottle",
+  "quality": 5,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -166.2
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 1644,
+  "global_idx": 7878,
+  "segment_index": 2,
+  "segment": [
+   1002,
+   1680
+  ],
+  "commit_frame": 1650,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "grasp the yellow pill bottle",
+  "quality": 5,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -165.7
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 1962,
+  "global_idx": 8196,
+  "segment_index": 3,
+  "segment": [
+   1680,
+   2034
+  ],
+  "commit_frame": 1991,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "release",
+  "gt_subtask": "stand the yellow pill bottle upright",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -129.3
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 1977,
+  "global_idx": 8211,
+  "segment_index": 3,
+  "segment": [
+   1680,
+   2034
+  ],
+  "commit_frame": 1991,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "release",
+  "gt_subtask": "stand the yellow pill bottle upright",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -140.4
+ },
+ {
+  "episode_idx": 2,
+  "frame_idx": 1986,
+  "global_idx": 8220,
+  "segment_index": 3,
+  "segment": [
+   1680,
+   2034
+  ],
+  "commit_frame": 1991,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "stand the yellow pill bottle upright",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -146.6
+ },
+ {
+  "episode_idx": 3,
+  "frame_idx": 696,
+  "global_idx": 8964,
+  "segment_index": 0,
+  "segment": [
+   0,
+   771
+  ],
+  "commit_frame": 726,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "grasp the water bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -157.2
+ },
+ {
+  "episode_idx": 3,
+  "frame_idx": 711,
+  "global_idx": 8979,
+  "segment_index": 0,
+  "segment": [
+   0,
+   771
+  ],
+  "commit_frame": 726,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "grasp the water bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -160.5
+ },
+ {
+  "episode_idx": 3,
+  "frame_idx": 720,
+  "global_idx": 8988,
+  "segment_index": 0,
+  "segment": [
+   0,
+   771
+  ],
+  "commit_frame": 726,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "grasp the water bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -153.4
+ },
+ {
+  "episode_idx": 3,
+  "frame_idx": 1626,
+  "global_idx": 9894,
+  "segment_index": 2,
+  "segment": [
+   1096,
+   1704
+  ],
+  "commit_frame": 1657,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the water bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -198.9
+ },
+ {
+  "episode_idx": 3,
+  "frame_idx": 1641,
+  "global_idx": 9909,
+  "segment_index": 2,
+  "segment": [
+   1096,
+   1704
+  ],
+  "commit_frame": 1657,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the water bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -198.7
+ },
+ {
+  "episode_idx": 3,
+  "frame_idx": 1650,
+  "global_idx": 9918,
+  "segment_index": 2,
+  "segment": [
+   1096,
+   1704
+  ],
+  "commit_frame": 1657,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the water bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -198.5
+ },
+ {
+  "episode_idx": 3,
+  "frame_idx": 2097,
+  "global_idx": 10365,
+  "segment_index": 4,
+  "segment": [
+   2094,
+   2178
+  ],
+  "commit_frame": 2104,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "release",
+  "gt_subtask": "release the water bottle in the basket",
+  "quality": 1,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -119.3
+ },
+ {
+  "episode_idx": 4,
+  "frame_idx": 342,
+  "global_idx": 10788,
+  "segment_index": 0,
+  "segment": [
+   0,
+   438
+  ],
+  "commit_frame": 373,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the outer edge of the flap with the bits",
+  "quality": 5,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -141.9
+ },
+ {
+  "episode_idx": 4,
+  "frame_idx": 357,
+  "global_idx": 10803,
+  "segment_index": 0,
+  "segment": [
+   0,
+   438
+  ],
+  "commit_frame": 373,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the outer edge of the flap with the bits",
+  "quality": 5,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -143.5
+ },
+ {
+  "episode_idx": 4,
+  "frame_idx": 366,
+  "global_idx": 10812,
+  "segment_index": 0,
+  "segment": [
+   0,
+   438
+  ],
+  "commit_frame": 373,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the outer edge of the flap with the bits",
+  "quality": 5,
+  "true_contact": 4,
+  "true_contact_slug": "cloth-pinch",
+  "plausible_contacts": [
+   4,
+   0
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -141.0
+ },
+ {
+  "episode_idx": 4,
+  "frame_idx": 612,
+  "global_idx": 11058,
+  "segment_index": 1,
+  "segment": [
+   438,
+   648
+  ],
+  "commit_frame": 641,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "release",
+  "gt_subtask": "fold the flap with the bits over the middle of the kit",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -17.1
+ },
+ {
+  "episode_idx": 4,
+  "frame_idx": 627,
+  "global_idx": 11073,
+  "segment_index": 1,
+  "segment": [
+   438,
+   648
+  ],
+  "commit_frame": 641,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "release",
+  "gt_subtask": "fold the flap with the bits over the middle of the kit",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -19.6
+ },
+ {
+  "episode_idx": 4,
+  "frame_idx": 636,
+  "global_idx": 11082,
+  "segment_index": 1,
+  "segment": [
+   438,
+   648
+  ],
+  "commit_frame": 641,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "fold the flap with the bits over the middle of the kit",
+  "quality": 3,
+  "true_contact": 9,
+  "true_contact_slug": "set-down",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 2,
+  "gripper": -20.2
+ },
+ {
+  "episode_idx": 5,
+  "frame_idx": 531,
+  "global_idx": 11625,
+  "segment_index": 0,
+  "segment": [
+   0,
+   693
+  ],
+  "commit_frame": 560,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "grasp",
+  "gt_subtask": "grasp the purple bottle",
+  "quality": 3,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -229.7
+ },
+ {
+  "episode_idx": 5,
+  "frame_idx": 546,
+  "global_idx": 11640,
+  "segment_index": 0,
+  "segment": [
+   0,
+   693
+  ],
+  "commit_frame": 560,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "grasp",
+  "gt_subtask": "grasp the purple bottle",
+  "quality": 3,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -225.9
+ },
+ {
+  "episode_idx": 5,
+  "frame_idx": 555,
+  "global_idx": 11649,
+  "segment_index": 0,
+  "segment": [
+   0,
+   693
+  ],
+  "commit_frame": 560,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "grasp",
+  "gt_subtask": "grasp the purple bottle",
+  "quality": 3,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -223.5
+ },
+ {
+  "episode_idx": 5,
+  "frame_idx": 1590,
+  "global_idx": 12684,
+  "segment_index": 2,
+  "segment": [
+   1260,
+   1674
+  ],
+  "commit_frame": 1621,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the purple bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -208.2
+ },
+ {
+  "episode_idx": 5,
+  "frame_idx": 1605,
+  "global_idx": 12699,
+  "segment_index": 2,
+  "segment": [
+   1260,
+   1674
+  ],
+  "commit_frame": 1621,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the purple bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -208.1
+ },
+ {
+  "episode_idx": 5,
+  "frame_idx": 1614,
+  "global_idx": 12708,
+  "segment_index": 2,
+  "segment": [
+   1260,
+   1674
+  ],
+  "commit_frame": 1621,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the purple bottle",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -207.7
+ },
+ {
+  "episode_idx": 6,
+  "frame_idx": 825,
+  "global_idx": 13911,
+  "segment_index": 0,
+  "segment": [
+   0,
+   948
+  ],
+  "commit_frame": 854,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "grasp",
+  "gt_subtask": "grasp the open pill bottle",
+  "quality": 2,
+  "true_contact": 1,
+  "true_contact_slug": "side-pinch",
+  "plausible_contacts": [
+   0,
+   1,
+   2
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -207.7
+ },
+ {
+  "episode_idx": 6,
+  "frame_idx": 840,
+  "global_idx": 13926,
+  "segment_index": 0,
+  "segment": [
+   0,
+   948
+  ],
+  "commit_frame": 854,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "grasp",
+  "gt_subtask": "grasp the open pill bottle",
+  "quality": 2,
+  "true_contact": 1,
+  "true_contact_slug": "side-pinch",
+  "plausible_contacts": [
+   0,
+   1,
+   2
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -219.1
+ },
+ {
+  "episode_idx": 6,
+  "frame_idx": 849,
+  "global_idx": 13935,
+  "segment_index": 0,
+  "segment": [
+   0,
+   948
+  ],
+  "commit_frame": 854,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "grasp",
+  "gt_subtask": "grasp the open pill bottle",
+  "quality": 2,
+  "true_contact": 1,
+  "true_contact_slug": "side-pinch",
+  "plausible_contacts": [
+   0,
+   1,
+   2
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -220.9
+ },
+ {
+  "episode_idx": 7,
+  "frame_idx": 384,
+  "global_idx": 15171,
+  "segment_index": 0,
+  "segment": [
+   0,
+   495
+  ],
+  "commit_frame": 414,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.0,
+  "kind": "grasp",
+  "gt_subtask": "grasp the cup",
+  "quality": 4,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   0,
+   1,
+   2
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -102.4
+ },
+ {
+  "episode_idx": 7,
+  "frame_idx": 399,
+  "global_idx": 15186,
+  "segment_index": 0,
+  "segment": [
+   0,
+   495
+  ],
+  "commit_frame": 414,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.5,
+  "kind": "grasp",
+  "gt_subtask": "grasp the cup",
+  "quality": 4,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   0,
+   1,
+   2
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -99.0
+ },
+ {
+  "episode_idx": 7,
+  "frame_idx": 408,
+  "global_idx": 15195,
+  "segment_index": 0,
+  "segment": [
+   0,
+   495
+  ],
+  "commit_frame": 414,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.2,
+  "kind": "grasp",
+  "gt_subtask": "grasp the cup",
+  "quality": 4,
+  "true_contact": 2,
+  "true_contact_slug": "rim-pinch",
+  "plausible_contacts": [
+   0,
+   1,
+   2
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 3,
+  "gripper": -96.3
+ },
+ {
+  "episode_idx": 7,
+  "frame_idx": 765,
+  "global_idx": 15552,
+  "segment_index": 2,
+  "segment": [
+   765,
+   810
+  ],
+  "commit_frame": 779,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "release",
+  "gt_subtask": "release the cup in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -6.6
+ },
+ {
+  "episode_idx": 7,
+  "frame_idx": 774,
+  "global_idx": 15561,
+  "segment_index": 2,
+  "segment": [
+   765,
+   810
+  ],
+  "commit_frame": 779,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "release the cup in the basket",
+  "quality": 4,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 1,
+  "gripper": -9.9
+ },
+ {
+  "episode_idx": 8,
+  "frame_idx": 717,
+  "global_idx": 16464,
+  "segment_index": 0,
+  "segment": [
+   0,
+   822
+  ],
+  "commit_frame": 748,
+  "offset_s": 1.0,
+  "seconds_before_commit": 1.03,
+  "kind": "grasp",
+  "gt_subtask": "grasp the bit",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 5,
+  "gripper": -5.6
+ },
+ {
+  "episode_idx": 8,
+  "frame_idx": 732,
+  "global_idx": 16479,
+  "segment_index": 0,
+  "segment": [
+   0,
+   822
+  ],
+  "commit_frame": 748,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.53,
+  "kind": "grasp",
+  "gt_subtask": "grasp the bit",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 5,
+  "gripper": -29.5
+ },
+ {
+  "episode_idx": 8,
+  "frame_idx": 741,
+  "global_idx": 16488,
+  "segment_index": 0,
+  "segment": [
+   0,
+   822
+  ],
+  "commit_frame": 748,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.23,
+  "kind": "grasp",
+  "gt_subtask": "grasp the bit",
+  "quality": 2,
+  "true_contact": 0,
+  "true_contact_slug": "top-pinch",
+  "plausible_contacts": [
+   0,
+   1
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 5,
+  "gripper": -36.3
+ },
+ {
+  "episode_idx": 8,
+  "frame_idx": 1206,
+  "global_idx": 16953,
+  "segment_index": 2,
+  "segment": [
+   1182,
+   1275
+  ],
+  "commit_frame": 1235,
+  "offset_s": 1.0,
+  "seconds_before_commit": 0.97,
+  "kind": "release",
+  "gt_subtask": "release the bit in the compartment with the gray bits",
+  "quality": 1,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10,
+   11
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 4,
+  "gripper": -9.4
+ },
+ {
+  "episode_idx": 8,
+  "frame_idx": 1221,
+  "global_idx": 16968,
+  "segment_index": 2,
+  "segment": [
+   1182,
+   1275
+  ],
+  "commit_frame": 1235,
+  "offset_s": 0.5,
+  "seconds_before_commit": 0.47,
+  "kind": "release",
+  "gt_subtask": "release the bit in the compartment with the gray bits",
+  "quality": 1,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10,
+   11
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 4,
+  "gripper": -10.6
+ },
+ {
+  "episode_idx": 8,
+  "frame_idx": 1230,
+  "global_idx": 16977,
+  "segment_index": 2,
+  "segment": [
+   1182,
+   1275
+  ],
+  "commit_frame": 1235,
+  "offset_s": 0.2,
+  "seconds_before_commit": 0.17,
+  "kind": "release",
+  "gt_subtask": "release the bit in the compartment with the gray bits",
+  "quality": 1,
+  "true_contact": 10,
+  "true_contact_slug": "drop",
+  "plausible_contacts": [
+   9,
+   10,
+   11
+  ],
+  "control_contacts": [
+   7,
+   12
+  ],
+  "true_precision": 4,
+  "gripper": -14.1
+ }
+]
