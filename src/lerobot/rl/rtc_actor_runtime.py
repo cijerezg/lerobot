@@ -211,14 +211,19 @@ def _return_to_rest(online_env, teleop_device, fps: float, leader_torqued: bool,
         teleop_device.disable_torque()
 
 
+def _reads_depth(cfg) -> bool:
+    """The policy reads raw depth at inference: point-map tokens, or the tip adapter's wrist depth points."""
+    return getattr(cfg.policy, "pointmap_config", None) is not None or getattr(cfg.policy, "tip_target", False)
+
+
 def _obs_with_depth(policy_obs: dict, env_obs: dict, cfg) -> dict:
     """Carry raw {cam}.depth from the env observation into the inference observation under the
     canonical observation.depth.{cam} key (convert_env_obs_to_policy_format drops depth; values
-    stay raw — the point-map builder consumes metric depth). Gated on the POLICY's pointmap_config,
-    not the camera's use_depth. Returns a shallow copy when depth is added so the caller's dict
+    stay raw — the point-map builder consumes metric depth). Gated on what the POLICY reads
+    (_reads_depth), not the camera's use_depth. Returns a shallow copy when depth is added so the caller's dict
     (also used for transition storage / episode logs) stays depth-free.
     """
-    if getattr(cfg.policy, "pointmap_config", None) is None:
+    if not _reads_depth(cfg):
         return policy_obs
     depth = {
         f"observation.depth.{key[: -len('.depth')]}": val
@@ -879,6 +884,7 @@ def rtc_inference_worker(
                     metadata=cycle_metadata,
                     gripper_torque_level=_gripper_torque_level(shared_state, cfg),
                     velocity=_velocity(shared_state, cfg),
+                    policy=policy,
                 )
                 t_preproc_end = time.perf_counter()
 
@@ -1705,7 +1711,7 @@ def _warmup_observation(cfg, history_offsets: dict[str, list[int]] | None, actio
         name = env.features_map.get(key, key)
         if name in cfg.policy.input_features:
             obs[name] = torch.zeros(1, *feature.shape, dtype=torch.float32)
-    if getattr(cfg.policy, "pointmap_config", None) is not None:
+    if _reads_depth(cfg):
         for cam, camera in getattr(env.robot, "cameras", {}).items():
             if getattr(camera, "use_depth", False):
                 image_key = f"{OBS_IMAGES}.{cam}"
@@ -1816,6 +1822,7 @@ def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTC
         robot_type=cfg.env.robot.type if hasattr(cfg.env, "robot") else "",
         subtask=subtask,
         metadata=_merge_subtask_metadata(_constant_inference_metadata(cfg), shared_state),
+        policy=policy,
     )
     dummy_prev = torch.zeros(execution_horizon, action_dim, device=device, dtype=torch.float32)
     with torch.no_grad():

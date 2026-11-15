@@ -49,6 +49,8 @@ NQ_ROBOT = 8
 # [0, 0.05] m, 0 = closed (probes/action_trace_sim.py).
 GRIPPER_DEG_OPEN = -238.8
 GRIPPER_SLIDE_OPEN = 0.05
+# Finger travel per motor radian: the two finger forces (N) times this, halved, are the motor torque (N*m).
+GRIPPER_M_PER_RAD = GRIPPER_SLIDE_OPEN / math.radians(-GRIPPER_DEG_OPEN)
 ARM_BODIES = ("link1", "link2", "link3", "link4", "link5", "link6", "gripper_end", "gripper_left", "gripper_right")
 # Depth sidecar units and the real sidecar's effective range (scripts/sim_builders/real2sim scene_render.py).
 DEPTH_UNITS_M = 1e-4
@@ -85,6 +87,11 @@ class RebotB601Sim(Robot):
         self.data: mujoco.MjData | None = None
         self._q0 = 0
         self._ctrl_deg = np.zeros(len(self.motor_names))
+        # MJCF joint angle = follower degrees + this (config.joint_zero_offset_deg); states and actions stay follower degrees.
+        self._zero_deg = np.zeros(len(self.motor_names)) if config.joint_zero_offset_deg is None else np.asarray(config.joint_zero_offset_deg, dtype=float)
+        # Mean velocity over the last control tick in deg/s. The instantaneous qvel at the tick end misses the gripper:
+        # its actuator reaches a new target within the tick and is at rest again when the observation is read.
+        self._vel_deg = np.zeros(len(self.motor_names))
         # GL contexts are thread-bound: RobotEnv renders once at setup on the main thread, then
         # every frame from the env worker, so each thread owns its renderers.
         self._local = threading.local()
@@ -106,7 +113,13 @@ class RebotB601Sim(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        # .vel (deg/s) and .torque (N*m): the follower's keys (observation.velocity / observation.effort).
+        return {
+            **self._motors_ft,
+            **{f"{motor}.vel": float for motor in self.motor_names},
+            **{f"{motor}.torque": float for motor in self.motor_names},
+            **self._cameras_ft,
+        }
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -125,6 +138,9 @@ class RebotB601Sim(Robot):
                 spec.body(name).gravcomp = 1.0
         self.model = spec.compile()
         self.model.opt.timestep = 1.0 / (self.config.fps * self.config.substeps)
+        self._fingers = [self.model.actuator("joint_left").id, self.model.actuator("joint_right").id]
+        if self.config.gripper_force_cap is not None:
+            self.model.actuator_forcerange[self._fingers] = (-self.config.gripper_force_cap, self.config.gripper_force_cap)
         self.data = mujoco.MjData(self.model)
         self._q0 = int(self.model.jnt_qposadr[self.model.joint("joint1").id])
         for cam, config in self.config.cameras.items():
@@ -153,8 +169,10 @@ class RebotB601Sim(Robot):
     def _reset_scene(self) -> None:
         """Objects back to their MJCF poses, arm at qpos0 (the park pose), targets holding it."""
         mujoco.mj_resetData(self.model, self.data)
+        self._ctrl_deg = from_qpos(self._qpos_robot())  # qpos0 read as follower degrees: the park pose
+        self._qpos_robot()[:] = to_qpos(self._ctrl_deg + self._zero_deg)
         self.data.ctrl[:] = self._qpos_robot()
-        self._ctrl_deg = from_qpos(self._qpos_robot())
+        self._vel_deg = np.zeros(len(self.motor_names))
         mujoco.mj_forward(self.model, self.data)
         # let the objects settle (neighbours placed from the image overlap by a few mm and push apart) before the start
         # poses are taken: the composite renders a clutter body only once it has moved from here
@@ -168,7 +186,13 @@ class RebotB601Sim(Robot):
         return self.data.qpos[self._q0 : self._q0 + NQ_ROBOT]
 
     def _present_deg(self) -> np.ndarray:
-        return from_qpos(self._qpos_robot())
+        return from_qpos(self._qpos_robot()) - self._zero_deg
+
+    def _present_torque(self) -> np.ndarray:
+        """Actuator torques in N*m. Arm: with gravcomp on they carry no gravity load, unlike the follower's. Gripper: the
+        finger forces as the motor torque, positive = squeezing (the follower's sign)."""
+        force = self.data.actuator_force
+        return np.concatenate([force[:ARM_DOF], [-force[self._fingers].sum() * GRIPPER_M_PER_RAD / 2]])
 
     def _renderer(self, cam: str) -> mujoco.Renderer:
         renderers = getattr(self._local, "renderers", None)
@@ -182,6 +206,8 @@ class RebotB601Sim(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         obs_dict = {f"{motor}.pos": float(pos) for motor, pos in zip(self.motor_names, self._present_deg(), strict=True)}
+        obs_dict.update({f"{motor}.vel": float(vel) for motor, vel in zip(self.motor_names, self._vel_deg, strict=True)})
+        obs_dict.update({f"{motor}.torque": float(torque) for motor, torque in zip(self.motor_names, self._present_torque(), strict=True)})
         if self.skip_render:
             self.skip_render = False
             return obs_dict | self._frames
@@ -198,7 +224,7 @@ class RebotB601Sim(Robot):
                 renderer.update_scene(self.data, config.camera)
                 obs_dict[f"{cam}.depth"] = depth_sidecar(renderer.render())
                 renderer.disable_depth_rendering()
-        self._frames = {key: value for key, value in obs_dict.items() if not key.endswith(".pos")}
+        self._frames = {key: value for key, value in obs_dict.items() if not key.endswith((".pos", ".vel", ".torque"))}
         return obs_dict
 
     def _composite(self, cam: str, renderer: mujoco.Renderer, config, rgb: np.ndarray, background: np.ndarray) -> np.ndarray:
@@ -230,10 +256,12 @@ class RebotB601Sim(Robot):
             goal_pos[motor_name] = max(min_limit, min(max_limit, goal_pos[motor_name]))
         goal_deg = np.array([goal_pos[name] for name in self.motor_names])
         slew = None if self.config.pos_vel_velocity is None else np.asarray(self.config.pos_vel_velocity) * self.model.opt.timestep
+        before = self._present_deg()
         for _ in range(self.config.substeps):
             self._ctrl_deg = goal_deg if slew is None else self._ctrl_deg + np.clip(goal_deg - self._ctrl_deg, -slew, slew)
-            self.data.ctrl[:] = to_qpos(self._ctrl_deg)
+            self.data.ctrl[:] = to_qpos(self._ctrl_deg + self._zero_deg)
             mujoco.mj_step(self.model, self.data)
+        self._vel_deg = (self._present_deg() - before) * self.config.fps
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     @check_if_not_connected

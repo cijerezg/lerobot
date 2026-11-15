@@ -80,6 +80,7 @@ Each note opens with `> **Status:** ...`. Vocabulary: **idea** Â· **building** Â
 | [`open_questions.md`](notes/open_questions.md)                                   | living list                   | Unresolved repo-level questions                                                     |
 | [`speed_frame_level_alternatives.md`](notes/speed_frame_level_alternatives.md)   | decided, 2026-10-26           | Frame-level speed label: the smoothing / hysteresis / minimum-run alternatives measured, label shares before and after |
 | [`memory_history_slot.md`](notes/memory_history_slot.md)                         | built, off (parked 2026-11-07) | Short-term memory as its own image slot: design, one internal-only run, parked      |
+| [`tip_target_adapter.md`](notes/tip_target_adapter.md)                           | built 2026-11-15; on          | Tip target prompt clause, hindsight targets, the adapter that fills it at inference |
 | [`ee_mixture_loss/TODO.md`](ee_mixture_loss/TODO.md)                             | building, 2026-10-09          | The EE mixture loss (hand block, FK term, masked FAST): plan, decisions, phases; its folder holds the proposal and the loss notes |
 
 ## `runbooks/`

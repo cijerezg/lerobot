@@ -14,6 +14,8 @@ TIP_LR = 2e-4
 TIP_GRAD_CLIP_NORM = 1.0
 TIP_WRIST_CAMERA = "observation.images.wrist_0"
 TIP_TOP_CAMERA = "observation.images.external_0"
+TIP_DEPTH_COLUMN = "depth.wrist_0.depth"  # the wrist depth frames in the replay buffer (role name)
+TIP_DEPTH_OBSERVATION = "observation.depth.wrist_0"  # the wrist depth frame in the actor's observation
 LABEL_SIGMA = 0.75  # width of the label around the target pixel, in wrist patches
 POINT_SCALE = 0.1  # m; the depth points enter the adapter in this unit (about their median distance)
 FX, FY, CX, CY = 394.9832, 394.9832, 322.5604, 238.6966  # D405 at 640 x 480
@@ -121,6 +123,17 @@ def scaled_points(points):
     return torch.cat([points[..., :3] / POINT_SCALE * (points[..., 3:] > 0), points[..., 3:]], -1)
 
 
+def tip_vector(scores, points):
+    """scores [B, 730] (float32); points [B, 27, 27, 4] from patch_points. Returns the probability of "no target" [B]
+    and the vector from the gripper tip to the target [B, 3] (m, tool frame): the mean of the patches' depth points
+    weighted by their probability, over the patches with a reading."""
+    b = scores.shape[0]
+    p = scores.softmax(-1)
+    weights = p[:, :-1] * (points[..., 3].reshape(b, -1) > 0)
+    weights = weights / weights.sum(1, keepdim=True).clip(1e-9)
+    return p[:, -1], (weights[..., None] * points[..., :3].reshape(b, -1, 3)).sum(1)
+
+
 def tip_target_loss(scores, target, points, reduction):
     """scores [B, 730] (float32); target [B, 6] rows of utils/tip_target.py; points [B, 27, 27, 4] from patch_points.
 
@@ -147,9 +160,7 @@ def tip_target_loss(scores, target, points, reduction):
         p = scores.softmax(-1)
         peak = p[:, :-1].argmax(-1)
         off = torch.maximum((peak // GRID - gv.floor()).abs(), (peak % GRID - gu.floor()).abs())
-        weights = p[:, :-1] * (points[..., 3].reshape(b, -1) > 0)
-        weights = weights / weights.sum(1, keepdim=True).clip(1e-9)
-        vector = (weights[..., None] * points[..., :3].reshape(b, -1, 3)).sum(1)
+        vector = tip_vector(scores, points)[1]
         error_cm = 100 * (vector - target[:, 1:4]).norm(dim=-1)
 
         def mean(values, rows):

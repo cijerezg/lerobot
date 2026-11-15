@@ -42,6 +42,7 @@ from .tip_target import (
     patch_points,
     scaled_points,
     tip_target_loss,
+    tip_vector,
 )
 
 logger = logging.getLogger(__name__)
@@ -3825,21 +3826,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
             metrics["depth_gripper_close_bce"] = depth_event_head_bce[0].detach().float().item()
             metrics["depth_gripper_open_bce"] = depth_event_head_bce[1].detach().float().item()
 
-        if self.tip_adapter is not None and TIP_TARGET_KEY in batch:
-            # The adapter reads this forward's image tokens detached: its loss moves the adapter only.
+        if self.tip_adapter is not None and TIP_DEPTH_KEY in batch:
+            # The adapter reads this forward's image tokens detached: its loss moves the adapter only. A batch
+            # without the wrist depth frame (the probes) renders the clause and skips the adapter.
             target = batch[TIP_TARGET_KEY].float()
-            cameras = list(self.config.image_keys)
-            features = self._tip_image_features.detach().view(target.shape[0], len(cameras), 196, -1)
-            points = patch_points(batch[TIP_DEPTH_KEY])
-            adapter_dtype = self.tip_adapter.none.dtype
-            scores = self.tip_adapter(
-                features[:, cameras.index(TIP_WRIST_CAMERA)].to(adapter_dtype),
-                features[:, cameras.index(TIP_TOP_CAMERA)].to(adapter_dtype),
-                scaled_points(points).to(adapter_dtype),
-                self._backbone().transformer.wte(batch["tip_subtask_ids"]).detach().to(adapter_dtype),
-                batch["tip_subtask_mask"],
-            )
-            tip_loss, tip_metrics = tip_target_loss(scores.float(), target, points, reduction)
+            scores, points = self._tip_scores(self._tip_image_features, batch)
+            tip_loss, tip_metrics = tip_target_loss(scores, target, points, reduction)
             losses.append(tip_loss)
             metrics.update(tip_metrics)
 
@@ -3868,6 +3860,48 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if "discrete_auxiliary_loss" in metrics and discrete_auxiliary_loss is not None:
                 metrics["discrete_auxiliary_loss_raw"] = discrete_auxiliary_loss.detach().float()
         return loss, metrics
+
+    def _tip_scores(self, image_features: Tensor, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
+        """The tip adapter (tip_target.py) on one forward's image tokens, detached: its scores [B, 730] (float32)
+        and the wrist depth points [B, 27, 27, 4] of batch[TIP_DEPTH_KEY]."""
+        cameras = list(self.config.image_keys)
+        points = patch_points(batch[TIP_DEPTH_KEY])
+        features = image_features.detach().view(points.shape[0], len(cameras), 196, -1)
+        adapter_dtype = self.tip_adapter.none.dtype
+        scores = self.tip_adapter(
+            features[:, cameras.index(TIP_WRIST_CAMERA)].to(adapter_dtype),
+            features[:, cameras.index(TIP_TOP_CAMERA)].to(adapter_dtype),
+            scaled_points(points).to(adapter_dtype),
+            self._backbone().transformer.wte(batch["tip_subtask_ids"]).detach().to(adapter_dtype),
+            batch["tip_subtask_mask"],
+        )
+        return scores.float(), points
+
+    @torch.no_grad()
+    def predict_tip_target(self, batch: dict[str, Tensor]) -> Tensor:
+        """Inference: the tip adapter's rows [in_view, x, y, z] (utils/tip_target.py) for a preprocessed batch that
+        carries the wrist depth frame under TIP_DEPTH_KEY. Training renders the true offset in the prompt's tip
+        target clause; a rollout has none, so the actor renders this row (build_inference_batch). The image tokens
+        do not depend on the prompt, so the batch is one packed without the clause."""
+        backbone = self._backbone()
+        model_dtype = _torch_dtype(self.config.dtype)
+        device = next(self.parameters()).device
+        autocast_context = (
+            torch.autocast(device_type=device.type, dtype=model_dtype)
+            if device.type in {"cuda", "cpu"} and model_dtype in {torch.bfloat16, torch.float16}
+            else nullcontext()
+        )
+        with autocast_context:
+            images, token_pooling = backbone.merge_visual_inputs(
+                input_ids=batch["input_ids"],
+                pixel_values=batch["pixel_values"].to(dtype=model_dtype),
+                image_token_pooling=batch.get("image_token_pooling"),
+                image_grids=batch.get("image_grids"),
+                image_num_crops=batch.get("image_num_crops"),
+            )
+            scores, points = self._tip_scores(backbone.vision_backbone(images, token_pooling), batch)
+        none, vector = tip_vector(scores, points)
+        return torch.cat([(none <= 0.5).float()[:, None], vector], 1)
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:

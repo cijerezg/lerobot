@@ -54,6 +54,14 @@ class RebotB601SimRobotConfig(RobotConfig):
     # (config_rl.yaml: [40]*6 + [180]). None drives the position actuators with the raw target,
     # the executor action_trace_sim measured against (sim lag about half the real lag).
     pos_vel_velocity: list[float] | None = None
+    # Joint zero correction in follower degrees, one per motor: MJCF angle = follower angle + offset. None = no correction.
+    # At the real tube grasps the uncorrected model holds the fingertip pads 22-52 mm above the table (mean 35; they
+    # straddle a 10 mm tube); -3.43 on shoulder_lift puts them at 8 mm with 4.5 mm spread (41 grasps of the three tube
+    # roots, scripts/sim_builders/tube_peg/README.md).
+    joint_zero_offset_deg: list[float] | None = None
+    # Force limit of each finger actuator in N; None = the MJCF's (1904 N, never reached). The rigid tube of the tube
+    # layouts stays in the pads up to about 10 N per finger (scripts/sim_builders/tube_peg/verify_tube_peg.py).
+    gripper_force_cap: float | None = None
     # Episodes to run before the robot stops the process (SIGINT, the operator's Ctrl-C); None = unbounded.
     episodes: int | None = None
     # Subtask cursor and staged reward from the MuJoCo state (tasks.py scorer of the scene) instead of the operator console.

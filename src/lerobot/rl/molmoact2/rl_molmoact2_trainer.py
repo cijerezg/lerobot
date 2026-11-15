@@ -1102,7 +1102,9 @@ class MolmoAct2Trainer(Trainer):
         batch = preprocessor(pre_input)
         if getattr(cfg.policy, "tip_target", False):
             batch[TIP_TARGET_KEY] = raw_comp[TIP_TARGET_KEY].float()
-            batch[TIP_DEPTH_KEY] = raw_comp["depth.wrist.depth"]
+            from lerobot.policies.molmoact2.tip_target import TIP_DEPTH_COLUMN
+
+            batch[TIP_DEPTH_KEY] = raw_comp[TIP_DEPTH_COLUMN]
         if cfg.policy.depth_gripper_event_loss.enabled:
             from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
 
@@ -1637,7 +1639,8 @@ class MolmoAct2Trainer(Trainer):
         Tensors are moved to the policy device after preprocessing so the env
         processor no longer needs a DeviceProcessorStep.
 
-        context kwargs: preprocessor (required), robot_type, subtask, metadata.
+        context kwargs: preprocessor (required), robot_type, subtask, metadata, gripper_torque_level,
+        velocity, policy (for the tip target clause).
         """
         from lerobot.probes.utils import fill_absent_cameras, identity_columns
         from lerobot.types import TransitionKey
@@ -1669,6 +1672,18 @@ class MolmoAct2Trainer(Trainer):
             complementary[VELOCITY_KEY] = torch.tensor([context["velocity"]])
         if complementary:
             pre_input[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        # Tip target clause: training renders the true offset, a rollout has none, so the tip adapter's
+        # vector stands in (policy = the actor's policy). The adapter reads this observation's image
+        # tokens: pack once without the clause, ask the adapter, and the pack below renders its row.
+        if context.get("policy") is not None and getattr(cfg.policy, "tip_target", False):
+            from lerobot.policies.molmoact2.tip_target import TIP_DEPTH_OBSERVATION
+
+            wrist_depth = observation[TIP_DEPTH_OBSERVATION]
+            with torch.no_grad():
+                first = preprocessor(pre_input)
+            first = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in first.items()}
+            first[TIP_DEPTH_KEY] = wrist_depth.reshape(1, *wrist_depth.shape[-2:]).to(device)
+            complementary[TIP_TARGET_KEY] = context["policy"].predict_tip_target(first).cpu()
         with torch.no_grad():
             batch = preprocessor(pre_input)
         # One-shot depth confirmation: the delivery chain (env worker -> shared state -> filter ->

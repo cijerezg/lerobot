@@ -150,7 +150,7 @@ from lerobot.probes.utils import (
     sample_episodes_evenly,
 )
 from lerobot.utils.action_smoothing import apply_butterworth_filter
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import OBS_EFFORT, OBS_STATE, OBS_VELOCITY
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.gripper_torque import GRIPPER_TORQUE_LEVEL_KEY
 from lerobot.utils.motor_velocity import VELOCITY_KEY
@@ -344,6 +344,8 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
                 claim(factor, key)
             else:
                 fixed.append(key)   # the clause stays the anchor's
+        elif name in (OBS_VELOCITY, OBS_EFFORT):
+            fixed.append(key)   # the raw motor columns: the prompt reads the smoothed columns above, not these
         else:
             raise KeyError(f"observation key {key!r} belongs to no swap switch")
     empty = [factor for factor, keys in groups.items() if not keys]
