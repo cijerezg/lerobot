@@ -49,6 +49,14 @@ def test_current_subtask_clause():
     assert "The current step is grab the far side." in prompt
 
 
+def test_gripper_torque_clause_follows_the_state():
+    prompt = build(
+        discrete_state_string="<s>", gripper_torque_level=5, gripper_torque_levels=8, metadata={"quality": 5}
+    )
+    assert "The current state of the robot is <s>. The gripper torque is 5 of 8. The quality is" in prompt
+    assert build(gripper_torque_level=0, gripper_torque_levels=8) == build()
+
+
 def test_unified_layout_pads_state_history_and_action_without_reordering():
     step = MolmoAct2UnifiedLayoutProcessorStep(
 state_dim=8, action_dim=8)

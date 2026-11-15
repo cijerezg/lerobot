@@ -249,6 +249,7 @@ _FORWARDED_COMPLEMENTARY = (
     "metadata_speed",
     "metadata_precision",
     "metadata_contact",
+    "gripper_torque_level",
     "state_dim_is_pad",
     "action_dim_is_pad",
     "action_layout_id",
@@ -1582,6 +1583,9 @@ class MolmoAct2Trainer(Trainer):
             complementary["embodiment"] = [context["robot_type"]]
         if context.get("metadata") is not None:
             complementary["metadata"] = context["metadata"]
+        # Gripper torque level of the last control steps (1..levels); absent = no clause.
+        if context.get("gripper_torque_level"):
+            complementary["gripper_torque_level"] = torch.tensor([context["gripper_torque_level"]])
         if complementary:
             pre_input[TransitionKey.COMPLEMENTARY_DATA] = complementary
         with torch.no_grad():

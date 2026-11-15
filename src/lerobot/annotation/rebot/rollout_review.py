@@ -6,8 +6,8 @@ Renders one review video per episode (top | wrist, burned-in t = episode seconds
 outputs/_annotation/rollout_review_<date>/videos when missing, then opens http://127.0.0.1:<port>. In the page: pick an episode,
 play it (space; 1x / 2x / 4x; arrows seek 1 s, shift+arrows 10 s), press [ at the start and ] at the end of every stretch
 to REMOVE (or type the spans: "15-31, 36-43, 50-"), then Save. Save writes <work>/plan.json, builds the root with
-build_root --plan (the kept spans of a source episode are spliced into one episode, boundaries snapped to multiples of 3
-frames so the depth phase survives), runs verify_root and writes the README ledger. The output path is --out, the path
+build_root --plan (every kept span becomes its own episode, so no episode has a jump inside it; boundaries are snapped
+to multiples of 3 frames so the depth phase survives), runs verify_root and writes the README ledger. The output path is --out, the path
 in the page, or outputs/rebot_rollouts_<date>-cut-v<N> with the first free N. Episodes without marks are kept whole;
 untick an episode to leave it out of the root.
 """
@@ -170,8 +170,9 @@ def spans(text, n):
     return merged
 
 
-def plan_entry(row, remove, why):
-    """Plan row for build_root: keep = [first kept, last kept), cuts = the removed stretches between them."""
+def plan_entries(row, remove, why):
+    """Plan rows for build_root: one per kept stretch (an episode never contains a jump: action chunks and history
+    windows would run across it)."""
     n = row["frames"]
     kept, cursor = [], 0
     for a, b in spans(remove, n) + [(n - n % 3, n - n % 3)]:
@@ -180,17 +181,20 @@ def plan_entry(row, remove, why):
         cursor = max(cursor, b)
     assert kept, f"{row['id']}: nothing kept"
     run, src = Path(row["run"]), dataset(row["run"])
-    return {
-        "source": str(src.relative_to(WORKSPACE) if src.is_relative_to(WORKSPACE) else src),
-        "episode": row["episode"],
-        "keep": [kept[0][0], kept[-1][1]],
-        "cuts": [[kept[i][1], kept[i + 1][0]] for i in range(len(kept) - 1)],
-        "task": row["task"],
-        "run": run.name,
-        "recorded_date": run.parent.name,
-        "remove": remove,
-        "why": why,
-    }
+    return [
+        {
+            "source": str(src.relative_to(WORKSPACE) if src.is_relative_to(WORKSPACE) else src),
+            "episode": row["episode"],
+            "keep": [a, b],
+            "cuts": [],
+            "task": row["task"],
+            "run": run.name,
+            "recorded_date": run.parent.name,
+            "remove": remove,
+            "why": why,
+        }
+        for a, b in kept
+    ]
 
 
 def default_out(date):
@@ -208,7 +212,7 @@ def build(work, out, plan):
     build_root.build(build_root.rows_from_plan(work), out)
     verify_root.check(out)
     rows = "\n".join(
-        f"| {i} | {p['run']} | {p['episode']} | {p['keep']} | {p['cuts']} | {p['remove'] or 'whole'} | {p['why'] or ''} |"
+        f"| {i} | {p['run']} | {p['episode']} | {p['keep']} | {p['remove'] or 'whole'} | {p['why'] or ''} |"
         for i, p in enumerate(plan)
     )
     (out / "README.md").write_text(
@@ -216,8 +220,8 @@ def build(work, out, plan):
         f" Sources untouched under outputs/train. Plan: `{(work / 'plan.json').relative_to(WORKSPACE)}`; verify_root PASS ->"
         f" meta/cleanup_verification.json. `meta/tasks.parquet` = operator-typed task strings, to revise during annotation."
         f" `meta/online_labels.parquet` keeps is_intervention + the typed `recorded_subtask`.\n\n"
-        f"| ep | source run | src ep | kept (source frames) | spliced out | removed (episode s) | why |\n"
-        f"|---|---|---|---|---|---|---|\n{rows}\n"
+        f"| ep | source run | src ep | kept (source frames) | removed from the source episode (s) | why |\n"
+        f"|---|---|---|---|---|---|\n{rows}\n"
     )
     print("DONE", out.relative_to(WORKSPACE), flush=True)
 
@@ -331,7 +335,7 @@ def serve(rows, work, out, port):
                 _json_response(self, {"error": "a build is running"})
                 return
             try:
-                plan = [plan_entry(by_id[e["id"]], e["remove"], req["why"]) for e in req["episodes"]]
+                plan = [p for e in req["episodes"] for p in plan_entries(by_id[e["id"]], e["remove"], req["why"])]
                 assert plan, "no episode ticked"
                 assert not (WORKSPACE / req["out"]).exists(), f"{req['out']} exists; pick another path"
             except Exception as exc:

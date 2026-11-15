@@ -25,7 +25,12 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MODEL_INPUT_KEYS, MolmoAct2Policy, _torch_dtype
 from lerobot.rl.molmoact2.hybrid_critic import CriticFusion, MolmoAct2Critic
-from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig, MemoryConfig
+from lerobot.rl.shared_config import (
+    ActorLearnerConfig,
+    ConcurrencyConfig,
+    GripperTorqueConfig,
+    MemoryConfig,
+)
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -48,6 +53,9 @@ class MolmoAct2RLConfig(MolmoAct2Config):
 
     # ── Memory (short-term observation history) ─────────────────────────────
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+
+    # ── Gripper torque level in the prompt ──────────────────────────────────
+    gripper_torque: GripperTorqueConfig = field(default_factory=GripperTorqueConfig)
 
     # ── Subtask generation (two-prompt, string-level) ────────────────────────
     subtask_max_new_tokens: int = 0  # 0 = generation disabled

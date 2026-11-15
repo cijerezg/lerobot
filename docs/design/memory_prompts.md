@@ -27,6 +27,7 @@ disabled by default and is independent of the history enable switch.
 The task is to {task}.
 [ The current step is {subtask}. ]                                   ← HL subtask
 The current state of the robot is <state_start><state_k>…<state_end>.    ← discrete digit tokens (02 §4.1)
+[ The gripper torque is {n} of {levels}. ]                           ← gripper torque level
 [ The recent states of the robot, oldest to newest, are: <T_h continuous positions> ]  ← proprio history (§2.4)
 [ The quality is {q} of 5. ] [ The robot made {a mistake | no mistakes}. ]     ← metadata
 Given these, what action should the robot take to complete the task?
@@ -36,6 +37,17 @@ Image history is **not in the prompt** — it enters through the MEM video encod
 (§2.4) at zero LLM-token cost. The proprio-history clause keeps its text lead-in,
 but the values are continuous embeddings (one sequence position per past state),
 not digit strings.
+
+Gripper torque clause (`policy.gripper_torque`, `utils/gripper_torque.py`): the gripper
+dimension of `observation.effort` is smoothed with a causal weighted mean of the last 4
+frames (0.4 on the newest, then 0.3, 0.2, 0.1; an episode's first frames repeat its first
+sample) and cut into `levels` equal-width levels between `low` and `high` (N*m, the 1st and
+99th percentile of the smoothed torque of the training data; readings outside go to level
+1 or `levels`). The learner computes the level per frame at buffer load
+(`materialize_dataset_labels`, complementary column `gripper_torque_level`), the actor
+from the last 4 control steps (`RTCSharedState.gripper_torques`). Level 0 means no reading
+(roots without the effort column, the diverse corpus) and renders no clause. The clause
+has no training dropout: the robot reads the torque at inference. `levels: 0` turns it off.
 
 The pretraining-era setup/control clauses ("The setup is `<setup_start>…`",
 "The expected control mode is …") were **removed 2026-07-22** — they existed to

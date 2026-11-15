@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from lerobot.datasets.embodiment import (
@@ -16,6 +17,12 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.rl.buffer import ReplayBuffer, concatenate_variable_dim_batch_transitions
 from lerobot.utils.constants import ACTION, OBS_EFFORT, OBS_STATE, OBS_VELOCITY
 from lerobot.utils.depth_gripper_events import load_depth_gripper_event_targets
+from lerobot.utils.gripper_torque import (
+    GRIPPER_TORQUE_KEY,
+    GRIPPER_TORQUE_LEVEL_KEY,
+    gripper_torque_levels,
+    smooth_gripper_torque,
+)
 
 
 @dataclass(frozen=True)
@@ -682,6 +689,25 @@ def _install_buffer_column(
     buffer.has_complementary_info = True
 
 
+def _gripper_torque_level_column(dataset, gripper_torque) -> torch.Tensor | None:
+    """Per-frame prompt level of the gripper torque, smoothed within each episode.
+
+    None when the root has no effort column (recorded before 2026-11-13).
+    """
+    hf_dataset = dataset.hf_dataset
+    if OBS_EFFORT not in hf_dataset.column_names:
+        return None
+    gripper = dataset.meta.features[OBS_EFFORT]["names"].index(GRIPPER_TORQUE_KEY)
+    effort = np.stack(hf_dataset.data.column(OBS_EFFORT).to_numpy(zero_copy_only=False))
+    torque = effort[:, gripper].astype(np.float64)
+    episodes = _dataset_index_column(dataset, "episode_index").numpy()
+    starts = np.flatnonzero(np.diff(episodes, prepend=episodes[0] - 1))
+    smoothed = np.concatenate([smooth_gripper_torque(part) for part in np.split(torque, starts[1:])])
+    return torch.as_tensor(
+        gripper_torque_levels(smoothed, gripper_torque.levels, gripper_torque.low, gripper_torque.high)
+    )
+
+
 def materialize_dataset_labels(
     buffer: ReplayBuffer,
     dataset,
@@ -690,6 +716,7 @@ def materialize_dataset_labels(
     is_main_process: bool = False,
     require_depth_gripper_event_labels: bool = False,
     embodiment: str | None = None,
+    gripper_torque=None,
 ) -> None:
     """Overlay current labels on heavy cache data without decoding video."""
     task_indices = _dataset_index_column(dataset, "task_index")
@@ -738,6 +765,10 @@ def materialize_dataset_labels(
             present,
             embodiment_origin,
         )
+    if gripper_torque is not None and gripper_torque.levels > 0:
+        levels = _gripper_torque_level_column(dataset, gripper_torque)
+        if levels is not None:
+            _install_buffer_column(buffer, GRIPPER_TORQUE_LEVEL_KEY, levels, fill_value=0)
     if require_depth_gripper_event_labels:
         from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
         from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
@@ -858,6 +889,7 @@ def load_additional_offline_buffers(
                 getattr(getattr(cfg.policy, "depth_gripper_event_loss", None), "enabled", False)
             ),
             embodiment=source.embodiment,
+            gripper_torque=getattr(cfg.policy, "gripper_torque", None),
         )
         buffer.dataset = dataset
         buffer.offline_source = source

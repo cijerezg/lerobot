@@ -877,6 +877,7 @@ def run_offline_training(
             getattr(getattr(cfg.policy, "depth_gripper_event_loss", None), "enabled", False)
         ),
         embodiment=normalization_source.embodiment,
+        gripper_torque=getattr(cfg.policy, "gripper_torque", None),
     )
     if memory_cfg is not None and memory_cfg.metadata_enabled:
         offline_replay_buffer.materialize_metadata(*load_metadata_rows(offline_dataset.root))

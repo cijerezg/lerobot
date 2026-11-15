@@ -302,6 +302,8 @@ def _build_robot_text(
     num_depth_tokens: int = 0,
     num_history_images: int = 0,
     history_ages_seconds=(6.0, 4.0, 2.0),
+    gripper_torque_level: int = 0,
+    gripper_torque_levels: int = 0,
 ) -> str:
     """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
 
@@ -341,7 +343,12 @@ def _build_robot_text(
     the only thing telling the model which space the state tokens and the target
     live in. None omits it (byte-identical legacy prompt). No training dropout, for
     the embodiment clause's reason: the control mode is a property of the layout
-    record, known at inference, so hiding it would only teach the model to ignore it."""
+    record, known at inference, so hiding it would only teach the model to ignore it.
+
+    gripper_torque_level: the smoothed gripper torque as a level 1..gripper_torque_levels
+    (utils/gripper_torque.py), rendered right after the state clause. 0 omits it (a
+    source without the reading; byte-identical legacy prompt). No training dropout:
+    the robot reads it at inference."""
     embodiment_clause = (
         f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
     )
@@ -350,6 +357,11 @@ def _build_robot_text(
     )
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
+    )
+    gripper_torque_clause = (
+        f" The gripper torque is {gripper_torque_level} of {gripper_torque_levels}."
+        if gripper_torque_level > 0
+        else ""
     )
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
     depth_clause = (
@@ -378,7 +390,8 @@ def _build_robot_text(
             metadata_clause += f" The contact is {contact_phrase_for(int(metadata['contact']))}."
     prompt = (
         f"{embodiment_clause}{control_mode_clause}The task is to {task}."
-        f"{depth_clause}{subtask_clause}{state_clause}{history_clause}{history_images_clause}"
+        f"{depth_clause}{subtask_clause}{state_clause}{gripper_torque_clause}"
+        f"{history_clause}{history_images_clause}"
         f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
@@ -1366,6 +1379,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     subtask_names: list[str] = field(default_factory=list)
     subtask_dropout: float = 0.0
     metadata_dropout: float = 0.0
+    # Gripper torque clause: number of levels the complementary column
+    # "gripper_torque_level" counts in (GripperTorqueConfig.levels); 0 = clause off.
+    gripper_torque_levels: int = 0
     # Embodiment clause vocabulary: index → prompt name, pinned into the saved config
     # so a checkpoint renders through the vocabulary it trained with even after
     # lerobot/datasets/embodiment.py grows new robots. No dropout knob on purpose —
@@ -1483,6 +1499,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "embodiment_names": list(self.embodiment_names),
             "subtask_dropout": self.subtask_dropout,
             "metadata_dropout": self.metadata_dropout,
+            "gripper_torque_levels": self.gripper_torque_levels,
             "history_dropout": self.history_dropout,
             "history_stride_seconds": self.history_stride_seconds,
             "history_times_seconds": self.history_times_seconds,
@@ -2028,6 +2045,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             for i in range(batch_size)
         ]
 
+    def _extract_gripper_torque_levels(self, complementary: dict, batch_size: int) -> list[int]:
+        level = complementary.get("gripper_torque_level")
+        if level is None or self.gripper_torque_levels <= 0:
+            return [0] * batch_size
+        return torch.as_tensor(level).detach().cpu().reshape(-1).long().expand(batch_size).tolist()
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if self.prompt_mode == "subtask_generation":
             return self._pack_subtask_generation(transition)
@@ -2081,6 +2104,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
         control_modes = self._extract_control_modes(complementary, batch_size)
         metadata_list = self._extract_metadata(complementary, batch_size)
+        gripper_torque_level_list = self._extract_gripper_torque_levels(complementary, batch_size)
         history_states = self._extract_history_states(complementary, batch_size)
         image_keys = self._resolve_image_keys(observation)
         history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
@@ -2151,6 +2175,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 num_depth_tokens=self.num_depth_tokens,
                 current_subtask=current_subtask,
                 metadata=metadata,
+                gripper_torque_level=gripper_torque_level_list[batch_idx],
+                gripper_torque_levels=self.gripper_torque_levels,
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -2442,6 +2468,8 @@ def make_molmoact2_pre_post_processors(
     # bare MolmoAct2Config used for BC/eval, hence the getattr default.
     memory_cfg = getattr(config, "memory", None)
     history_dropout = memory_cfg.history_dropout if memory_cfg is not None else 0.0
+    gripper_torque_cfg = getattr(config, "gripper_torque", None)
+    gripper_torque_levels = gripper_torque_cfg.levels if gripper_torque_cfg is not None else 0
     # Anti-laziness RGB dropout rides pointmap_config (depth_redesign_options.md §4.3):
     # the blacked camera is the depth camera; depth-free configs get 0 (no-op).
     pointmap_cfg = getattr(config, "pointmap_config", None)
@@ -2525,6 +2553,7 @@ def make_molmoact2_pre_post_processors(
             env_action_dim=env_action_dim,
             subtask_dropout=config.subtask_dropout,
             metadata_dropout=config.metadata_dropout,
+            gripper_torque_levels=gripper_torque_levels,
             history_dropout=history_dropout,
             history_stride_seconds=config.history_stride_seconds,
             history_times_seconds=config.history_times_seconds,

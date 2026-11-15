@@ -32,8 +32,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/insert-floss-v1 \
-    --dataset.single_task="Insert tube into dental floss package" \
+    --dataset.repo_id=cijerezg/insert-tube-into-peg-v1 \
+    --dataset.single_task="put the tube in the peg" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \
@@ -110,9 +110,19 @@ uv run python -m lerobot.scripts.compare_sim outputs/<run_a>/checkpoints/<step> 
 
 ## Rollout review (cut recorded inference episodes into a training root)
 
-One command: renders a review video per episode (missing ones only) into `outputs/_annotation/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
+One command: renders a review video per episode (missing ones only) into `outputs/_annotation/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Every kept stretch becomes its own episode (no jump inside an episode, so no action chunk or history window runs across a cut). Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
 
 uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/<root>]
+
+## Subtask labeler (label a root's subtasks by hand)
+
+One command: renders one clip per episode (top | wrist | wrist depth; missing ones only) into `outputs/_annotation/passes/subtasks_<root>/clips`, opens a browser page (http://127.0.0.1:7872) with the clip over the position / velocity / torque traces of one joint. Keys `1`-`9` end that subtask at the playhead (it covers the stretch since the previous boundary) and open its text for a free edit (Enter keeps, Esc drops the edit, up/down = earlier texts); `0` = unlabelled up to here; space, arrows = one frame (shift 1 s), `-` `=` rate (0.25x-4x), `Q` `W` previous / next boundary, `E` edit, `[` `]` subtask starts / ends here, Del removes, Ctrl+Z undo. Every change is saved at once to `labels/episode_<E>.json` (`segments: [{start, end, class, subtask}]`, end exclusive); the labels found at launch are copied to `labels_history/`. The root is only read.
+
+uv run python -m lerobot.annotation.rebot.subtask_labeler outputs/<root> --subtasks "approach tube" "grasp tube" "move tube to peg" "insert tube in peg" "return home" [--work <folder>] [--port 7872] [--no-open]
+
+Labels -> a new root with the subtask tables (every episode whole, quality -1 = not graded; no precision / contact / speed tables):
+
+uv run python -m lerobot.annotation.rebot.subtask_labels_root outputs/_annotation/passes/subtasks_<root> --out outputs/<new root>
 
 ## Merge annotated roots
 

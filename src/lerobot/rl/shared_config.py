@@ -104,6 +104,24 @@ class MemoryConfig:
 
 
 @dataclass
+class GripperTorqueConfig:
+    """Gripper torque in the prompt as a level (docs/design/memory_prompts.md §1.1).
+
+    levels: number of equal-width levels; 0 = off (no clause).
+    low / high: the range the levels divide, in N*m: the 1st and 99th percentile of the
+        smoothed gripper torque of the training data. Readings outside go to the end levels.
+    """
+
+    levels: int = 0
+    low: float = 0.0
+    high: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.levels > 0 and self.high <= self.low:
+            raise ValueError(f"gripper_torque needs low < high, got {self.low} and {self.high}.")
+
+
+@dataclass
 class ActorLearnerConfig:
     learner_host: str = "127.0.0.1"
     learner_port: int = 50051

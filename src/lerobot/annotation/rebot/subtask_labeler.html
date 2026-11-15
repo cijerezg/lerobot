@@ -1,0 +1,686 @@
+<!doctype html><meta charset="utf-8"><title>Subtask labeler</title>
+<style>
+:root {
+  color-scheme: light;
+  --plane: #f4f4f1; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --grid: #e7e6df; --axis: #c3c2b7; --border: rgba(11,11,11,.10); --wash: rgba(11,11,11,.05); --wash2: rgba(11,11,11,.09);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --good: #1a8a4c; --bad: #d03b3b; --fill: .20; --fillOn: .38;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --plane: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2a2a28; --axis: #3d3d3a; --border: rgba(255,255,255,.10); --wash: rgba(255,255,255,.06); --wash2: rgba(255,255,255,.12);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    --good: #3fbf7a; --bad: #e66767; --fill: .26; --fillOn: .48;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--plane);
+       display: grid; grid-template: auto minmax(0, 1fr) / minmax(0, 1fr) 320px; gap: 10px; padding: 10px; }
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+kbd { font: 600 11px/1 ui-monospace, "SF Mono", Menlo, monospace; display: inline-block; min-width: 20px; text-align: center; padding: 4px 5px;
+      border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); color: var(--ink2); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+/* header */
+#head { grid-column: 1 / 3; display: flex; align-items: center; gap: 14px; padding: 8px 12px; }
+#head h1 { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 80px; }
+#eps { display: flex; gap: 6px; flex: 1; overflow-x: auto; scrollbar-width: none; }
+.ep { position: relative; border: 1px solid var(--border); background: none; border-radius: 8px; padding: 4px 10px 7px; white-space: nowrap;
+      color: var(--ink2); display: flex; gap: 7px; align-items: center; overflow: hidden; flex: none; }
+.ep:hover { background: var(--wash); }
+.ep.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.ep small { opacity: .65; font-variant-numeric: tabular-nums; }
+.ep .bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--muted); }
+.ep.done .bar { background: var(--good); }
+.ep .tick { color: var(--good); font-weight: 700; }
+#done { border: 1px solid var(--border); background: none; border-radius: 8px; padding: 5px 12px; white-space: nowrap; }
+#done:hover { background: var(--wash); }
+#done.on { border-color: var(--good); color: var(--good); }
+#saved { color: var(--muted); white-space: nowrap; min-width: 86px; text-align: right; font-variant-numeric: tabular-nums; }
+#saved.bad { color: var(--bad); font-weight: 600; }
+
+/* stage */
+#stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+#views { position: relative; align-self: center; width: min(100%, calc(46vh * var(--aspect, 4))); aspect-ratio: var(--aspect, 4); flex: none;
+         border-radius: 12px; overflow: hidden; background: #000; }
+#views video { width: 100%; height: 100%; display: block; }
+#views .pane { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+#views .pane + .pane { border-left: 6px solid var(--plane); }
+#views .pane span { position: absolute; left: 10px; top: 10px; padding: 2px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 600;
+                    color: #fff; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); }
+#views .pane + .pane span { left: 8px; }
+
+#deck { display: flex; align-items: center; gap: 12px; padding: 8px 12px; flex: none; }
+#play { width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--ink); color: var(--surface); font-size: 14px; flex: none; }
+#play:hover { opacity: .85; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 2px; gap: 2px; flex: none; }
+.seg button { border: 0; background: none; padding: 3px 9px; border-radius: 6px; color: var(--ink2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.seg button:hover { background: var(--wash); }
+.seg button.on { background: var(--ink); color: var(--surface); }
+#clock { font-variant-numeric: tabular-nums; color: var(--ink2); white-space: nowrap; flex: none; min-width: 150px; }
+#clock b { color: var(--ink); font-weight: 600; font-size: 15px; }
+#cap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 9px; background: var(--wash);
+       min-height: 38px; border: 1.5px solid transparent; cursor: text; }
+#cap.editing { background: var(--surface); border-color: var(--ink); }
+#cap .sw { width: 12px; height: 12px; }
+#capText { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#capText.none { font-weight: 400; font-size: 13px; color: var(--muted); }
+#capInput { flex: 1; min-width: 60px; border: 0; outline: 0; background: none; font-size: 16px; font-weight: 600; display: none; }
+#cap.editing #capInput { display: block; }
+#cap.editing #capText { display: none; }
+#variants { display: none; gap: 6px; flex: none; max-width: 55%; overflow: hidden; }
+#cap.editing #variants { display: flex; }
+#variants button { border: 1px solid var(--border); background: none; border-radius: 999px; padding: 2px 10px; color: var(--ink2); white-space: nowrap; }
+#variants button:hover, #variants button.on { background: var(--wash2); color: var(--ink); }
+#capHint { color: var(--muted); font-size: 12px; white-space: nowrap; flex: none; }
+
+#charts { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px 6px; }
+#bar { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+#bar .lab { color: var(--muted); }
+#reset { border: 1px solid var(--border); border-radius: 8px; background: none; padding: 4px 10px; color: var(--ink2); margin-left: auto; }
+#reset:hover { background: var(--wash); }
+#reset:disabled { opacity: .4; cursor: default; }
+#overviewBox { height: 30px; position: relative; margin-bottom: 8px; flex: none; }
+#plotBox { flex: 1; min-height: 0; position: relative; }
+canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+#overview { cursor: pointer; }
+
+/* side */
+#side { display: flex; flex-direction: column; min-height: 0; padding: 12px; gap: 12px; }
+#side h2 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+#keys { display: flex; flex-direction: column; gap: 4px; }
+#keys button { display: flex; align-items: center; gap: 9px; border: 1px solid var(--border); background: none; border-radius: 8px; padding: 5px 8px; text-align: left; }
+#keys button:hover { background: var(--wash); }
+#keys button span.t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#keys button.gap { color: var(--ink2); }
+#listWrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#list { flex: 1; overflow-y: auto; margin: 0 -6px; scrollbar-width: thin; }
+.row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 7px; cursor: pointer; }
+.row:hover { background: var(--wash); }
+.row.on { background: var(--wash2); }
+.row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.gap .t { color: var(--muted); }
+.row .when { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
+.row .del { border: 0; background: none; color: var(--muted); padding: 0 4px; border-radius: 4px; visibility: hidden; font-size: 14px; line-height: 1; }
+.row:hover .del { visibility: visible; }
+.row .del:hover { color: var(--bad); background: var(--wash); }
+#empty { color: var(--muted); padding: 8px 6px; }
+#help { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; align-items: center; color: var(--ink2); font-size: 12px; }
+#help .k { white-space: nowrap; }
+
+#tip { position: fixed; display: none; pointer-events: none; z-index: 10; background: var(--surface); border: 1px solid var(--border);
+       border-radius: 8px; padding: 7px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.16); font-variant-numeric: tabular-nums; }
+#tip .when { color: var(--ink2); margin-bottom: 3px; }
+#tip .sub { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-weight: 600; }
+#tip td { padding: 1px 0; white-space: nowrap; }
+#tip td.name { color: var(--ink2); padding-right: 12px; }
+#tip td.value { text-align: right; font-weight: 600; }
+#tip td.unit { color: var(--muted); padding-left: 4px; }
+</style>
+
+<div id="head" class="card">
+  <h1 id="title"></h1>
+  <div id="eps"></div>
+  <span id="saved"></span>
+  <button id="done"></button>
+</div>
+
+<div id="stage">
+  <div id="views"><video id="video" muted playsinline preload="auto"></video></div>
+  <div id="deck" class="card">
+    <button id="play" title="Space">▶</button>
+    <span class="seg" id="rates"></span>
+    <span id="clock"></span>
+    <div id="cap" title="E or Enter edits the text">
+      <span class="sw" id="capSw"></span><span id="capText"></span>
+      <input id="capInput" spellcheck="false" autocomplete="off">
+      <span id="variants"></span><span id="capHint"></span>
+    </div>
+  </div>
+  <div id="charts" class="card">
+    <div id="bar">
+      <span class="lab">Joint</span><span class="seg" id="joints"></span>
+      <button id="reset">Whole episode</button>
+    </div>
+    <div id="overviewBox"><canvas id="overview"></canvas></div>
+    <div id="plotBox"><canvas id="plot"></canvas></div>
+  </div>
+</div>
+
+<div id="side" class="card">
+  <div><h2>End a subtask at the playhead</h2><div id="keys"></div></div>
+  <div id="listWrap"><h2 id="listTitle">Subtasks</h2><div id="list"></div></div>
+  <div>
+    <h2>Keys</h2>
+    <div id="help">
+      <span class="k"><kbd>Space</kbd></span><span>play / pause</span>
+      <span class="k"><kbd>←</kbd> <kbd>→</kbd></span><span>one frame (Shift: 1 s)</span>
+      <span class="k"><kbd>−</kbd> <kbd>=</kbd></span><span>slower / faster</span>
+      <span class="k"><kbd>Q</kbd> <kbd>W</kbd></span><span>previous / next boundary</span>
+      <span class="k"><kbd>E</kbd></span><span>edit the text (Enter keeps, Esc drops, ↑ ↓ earlier texts)</span>
+      <span class="k"><kbd>[</kbd> <kbd>]</kbd></span><span>this subtask starts / ends here</span>
+      <span class="k"><kbd>Del</kbd></span><span>remove this subtask (the one before it extends)</span>
+      <span class="k"><kbd>Ctrl</kbd> <kbd>Z</kbd></span><span>undo (Shift: redo)</span>
+      <span class="k">Mouse</span><span>click seeks, wheel zooms, drag pans, drag a boundary to move it</span>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const video = $("video"), plot = $("plot"), overview = $("overview"), tip = $("tip"), input = $("capInput");
+const RATES = [0.25, 0.5, 1, 2, 4], LEFT = 58, RIGHT = 14, TRACK = 40, HEAD = 22, GAP = 10, AXIS = 22;
+const MEASURES = [
+  {key: "state", label: "Position", unit: "deg", floor: 2, digits: 2},
+  {key: "velocity", label: "Velocity", unit: "deg/s", floor: 4, digits: 1},
+  {key: "torque", label: "Torque", unit: "N·m", floor: 0.1, digits: 3},
+];
+let M, D = null, n = 1, fps = 30, dt = 1 / 30, last = 1;
+let segs = [], done = false, undo = [], redo = [], used = [];      // segs: [{start, key (null = unlabelled), text}], by start
+let joint = "gripper", view = [0, 1], hover = null, drag = null, dirty = true, drawnFrame = -1, shownSeg = -2;
+let editing = null, resume = false, cycle = 0, saveTimer = null, layout = [];
+
+const clamp = (v, low, high) => Math.min(Math.max(v, low), high);
+const frame = () => clamp(Math.floor(video.currentTime * fps + 1e-3), 0, n - 1);
+const seek = f => { video.currentTime = (clamp(Math.round(f), 0, n - 1) + 0.5) / fps; dirty = true; };
+const clock = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+const signed = (v, digits) => (v < 0 ? "−" : "+") + Math.abs(v).toFixed(digits);
+const color = key => css(`--s${key % 8 + 1}`);
+const segAt = f => { let i = -1; while (i + 1 < segs.length && segs[i + 1].start <= f) { i++; } return i; };
+const endOf = i => i + 1 < segs.length ? segs[i + 1].start : n;
+const escapeHtml = s => s.replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const store = (key, value) => { try { localStorage.setItem(key, value); } catch (e) {} };
+const recall = key => { try { return localStorage.getItem(key); } catch (e) { return null; } };
+
+// ---------- labels ----------
+function tidy() {
+  segs.sort((a, b) => a.start - b.start);
+  segs = segs.filter((s, i) => !(s.key === null && (i === 0 || segs[i - 1].key === null)) && !(i + 1 < segs.length && segs[i + 1].start === s.start));
+  segs = segs.filter((s, i) => !(i > 0 && segs[i - 1].key === s.key && segs[i - 1].text === s.text));   // same subtask twice in a row = one
+}
+function change(edit) {
+  undo.push(JSON.stringify(segs)); redo = [];
+  edit(); tidy(); changed();
+}
+function changed() {
+  const labelled = segs.reduce((sum, s, i) => sum + (s.key === null ? 0 : endOf(i) - s.start), 0);
+  const entry = M.episodes.find(e => e.episode === D.episode);
+  entry.labelled = labelled; entry.done = done;
+  renderEpisodes(); renderList(); shownSeg = -2; dirty = true;
+  $("saved").textContent = "Saving…"; $("saved").className = "";
+  clearTimeout(saveTimer); saveTimer = setTimeout(save, 200);
+}
+async function save() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const body = {done, segments: segs.map((s, i) => ({start: s.start, end: endOf(i), class: s.key === null ? null : M.subtasks[s.key], subtask: s.text})).filter(s => s.class !== null)};
+  try {
+    const answer = await fetch(`/api/labels/${D.episode}`, {method: "POST", body: JSON.stringify(body)});
+    if (!answer.ok) { throw new Error(answer.status); }
+    if (saveTimer === null) { $("saved").textContent = "Saved ✓"; $("saved").className = ""; }
+  } catch (error) {
+    $("saved").textContent = "NOT SAVED, retrying"; $("saved").className = "bad";
+    saveTimer = setTimeout(save, 2000);
+  }
+}
+function remember(key, text) { used[key] = [text, ...used[key].filter(t => t !== text)]; }
+function mark(key) {                                      // the stretch that ends at the playhead becomes this subtask
+  closeEditor(true);
+  const f = frame(), end = f >= n - 1 ? n : f;
+  if (end === 0) { return; }
+  const i = segAt(end - 1), rest = i >= 0 ? {key: segs[i].key, text: segs[i].text} : {key: null, text: ""};
+  const text = key === null ? "" : used[key][0];
+  change(() => {
+    if (end < n && !segs.some(s => s.start === end)) { segs.push({start: end, ...rest}); }
+    if (i >= 0) { segs[i].key = key; segs[i].text = text; } else { segs.push({start: 0, key, text}); }
+  });
+  if (key !== null) { openEditor(segAt(end - 1), true); }
+}
+function markGap() { mark(null); }
+function remove(i) { if (i >= 0) { change(() => { segs.splice(i, 1); }); } }
+function startHere() { const f = frame(), i = segAt(f); if (i >= 0 && f > segs[i].start) { change(() => { segs[i].start = f; }); } }
+function endHere() {
+  const f = frame(), i = segAt(f);
+  if (i < 0 || f <= segs[i].start || segs[i].key === null) { return; }
+  change(() => { if (i + 1 < segs.length) { segs[i + 1].start = f; } else { segs.push({start: f, key: null, text: ""}); } });
+}
+function step(stack, other) {
+  if (!stack.length) { return; }
+  closeEditor(false);
+  other.push(JSON.stringify(segs)); segs = JSON.parse(stack.pop()); changed();
+}
+
+// ---------- caption + editor ----------
+function openEditor(i, stay) {
+  if (i < 0 || segs[i].key === null) { return; }
+  closeEditor(true);
+  editing = segs[i]; resume = !video.paused; video.pause(); cycle = 0;
+  if (!stay) { seekIfOutside(i); }
+  input.value = editing.text;
+  $("cap").classList.add("editing");
+  $("capSw").style.background = color(editing.key);
+  $("capHint").textContent = "Enter ↵";
+  renderVariants();
+  input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+}
+function seekIfOutside(i) { const f = frame(); if (f < segs[i].start || f >= endOf(i)) { seek(segs[i].start); } }
+function renderVariants() {
+  const list = used[editing.key];
+  $("variants").innerHTML = list.length > 1 ? list.slice(0, 5).map(t => `<button class="${t === input.value ? "on" : ""}">${escapeHtml(t)}</button>`).join("") : "";
+}
+function closeEditor(keep) {
+  if (!editing) { return; }
+  const seg = editing, text = input.value.trim().replace(/\s+/g, " ");
+  editing = null;
+  $("cap").classList.remove("editing"); input.blur();
+  if (keep && text) {
+    remember(seg.key, text);
+    if (text !== seg.text) { change(() => { seg.text = text; }); }
+  }
+  shownSeg = -2; dirty = true;
+  if (resume) { video.play(); }
+}
+input.addEventListener("keydown", e => {
+  e.stopPropagation();
+  if (e.key === "Enter") { closeEditor(true); }
+  else if (e.key === "Escape") { closeEditor(false); }
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Tab") {
+    const list = used[editing.key];
+    cycle = (cycle + (e.key === "ArrowUp" ? list.length - 1 : 1)) % list.length;
+    input.value = list[cycle]; renderVariants();
+  } else { return; }
+  e.preventDefault();
+});
+input.addEventListener("input", () => { if (editing) { renderVariants(); } });
+input.addEventListener("blur", () => setTimeout(() => { if (editing && document.activeElement !== input) { closeEditor(true); } }, 120));
+$("variants").addEventListener("mousedown", e => {
+  e.preventDefault();
+  if (e.target.tagName === "BUTTON") { input.value = e.target.textContent; renderVariants(); }
+});
+$("cap").addEventListener("click", () => { if (!editing) { openEditor(segAt(frame())); } });
+function renderCaption(i) {
+  if (editing) { return; }
+  const seg = i >= 0 && segs[i].key !== null ? segs[i] : null;
+  $("capSw").style.background = seg ? color(seg.key) : "transparent";
+  $("capText").textContent = seg ? seg.text : `Unlabelled. Press 1–${M.subtasks.length} at the end of a subtask.`;
+  $("capText").className = seg ? "" : "none";
+  $("capHint").textContent = seg ? `${((endOf(i) - seg.start) * dt).toFixed(1)} s` : "";
+  document.querySelectorAll("#list .row").forEach(row => {
+    const on = Number(row.dataset.i) === i;
+    if (on && !row.classList.contains("on")) { row.scrollIntoView({block: "nearest"}); }
+    row.classList.toggle("on", on);
+  });
+}
+
+// ---------- side + header ----------
+function renderEpisodes() {
+  $("eps").innerHTML = M.episodes.map(e => `<button class="ep ${D && e.episode === D.episode ? "on" : ""} ${e.done ? "done" : ""}" data-ep="${e.episode}">
+    episode ${e.episode} <small>${clock(e.frames / M.fps)}</small>${e.done ? '<span class="tick">✓</span>' : ""}<span class="bar" style="width:${(100 * e.labelled / e.frames).toFixed(1)}%"></span></button>`).join("");
+  $("done").textContent = done ? "✓ Episode done" : "Mark episode done";
+  $("done").classList.toggle("on", done);
+}
+function renderList() {
+  const rows = segs.map((s, i) => `<div class="row ${s.key === null ? "gap" : ""}" data-i="${i}">
+    <span class="sw" style="background:${s.key === null ? "transparent" : color(s.key)}"></span>
+    <span class="t">${s.key === null ? "unlabelled" : escapeHtml(s.text)}</span>
+    <span class="when">${clock(s.start * dt)} · ${((endOf(i) - s.start) * dt).toFixed(1)} s</span>
+    <button class="del" title="remove">×</button></div>`);
+  $("list").innerHTML = rows.join("") || `<div id="empty">Nothing yet. Play, stop where a subtask begins and press its key.</div>`;
+  $("listTitle").textContent = `Subtasks · ${segs.filter(s => s.key !== null).length}`;
+}
+$("list").addEventListener("click", e => {
+  const row = e.target.closest(".row");
+  if (!row) { return; }
+  const i = Number(row.dataset.i);
+  if (e.target.classList.contains("del")) { remove(i); } else { seek(segs[i].start); }
+});
+$("list").addEventListener("dblclick", e => { const row = e.target.closest(".row"); if (row) { openEditor(Number(row.dataset.i)); } });
+$("eps").addEventListener("click", e => { const b = e.target.closest(".ep"); if (b) { load(Number(b.dataset.ep)); } });
+$("done").onclick = () => { done = !done; changed(); };
+$("keys").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { if (b.dataset.k === "gap") { markGap(); } else { mark(Number(b.dataset.k)); } } });
+document.addEventListener("click", e => { const b = e.target.closest("button"); if (b) { b.blur(); } });
+
+// ---------- drawing ----------
+function fit(canvas) {
+  const box = canvas.getBoundingClientRect(), ratio = window.devicePixelRatio || 1;
+  canvas.width = box.width * ratio; canvas.height = box.height * ratio;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return [ctx, box.width, box.height];
+}
+const toX = (t, range, width) => LEFT + (t - range[0]) / (range[1] - range[0]) * (width - LEFT - RIGHT);
+const toT = (x, range, width) => range[0] + (x - LEFT) / (width - LEFT - RIGHT) * (range[1] - range[0]);
+function niceStep(span, count) {
+  const raw = span / count, power = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 5, 10].find(m => m * power >= raw) * power;
+}
+// One point per frame, or the low and the high of every pixel column when there are more frames than that.
+function trace(ctx, values, first, lastIndex, range, width, toY) {
+  const columns = Math.floor(width - LEFT - RIGHT), count = lastIndex - first + 1;
+  ctx.beginPath();
+  if (count <= columns * 3) {
+    for (let i = first; i <= lastIndex; i++) { ctx.lineTo(toX(i * dt, range, width), toY(values[i])); }
+  } else {
+    for (let c = 0; c < columns; c++) {
+      const a = first + Math.floor(c * count / columns), b = Math.min(lastIndex, first + Math.floor((c + 1) * count / columns));
+      let low = Infinity, high = -Infinity;
+      for (let i = a; i <= b; i++) { low = Math.min(low, values[i]); high = Math.max(high, values[i]); }
+      const x = toX((a + b) / 2 * dt, range, width);
+      ctx.lineTo(x, toY(low)); ctx.lineTo(x, toY(high));
+    }
+  }
+  ctx.stroke();
+}
+function ellipsis(ctx, text, room) {
+  if (ctx.measureText(text).width <= room) { return text; }
+  while (text.length > 1 && ctx.measureText(text + "…").width > room) { text = text.slice(0, -1); }
+  return text.length > 1 ? text + "…" : "";
+}
+
+function drawPlot() {
+  const [ctx, width, height] = fit(plot), f = frame(), current = segAt(f), series = D.series[joint];
+  const ink = css("--ink"), ink2 = css("--ink2"), muted = css("--muted"), grid = css("--grid"), axis = css("--axis"), surface = css("--surface");
+  const fill = Number(css("--fill")), fillOn = Number(css("--fillOn"));
+  const first = Math.max(0, Math.floor(view[0] / dt)), lastIndex = Math.min(n - 1, Math.ceil(view[1] / dt));
+  const body = height - TRACK - AXIS - 8, stripHeight = (body - GAP * (MEASURES.length - 1)) / MEASURES.length;
+  const x0 = LEFT, x1 = width - RIGHT;
+
+  // Subtask track, and its tint down the charts.
+  ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, height - AXIS); ctx.clip();
+  ctx.fillStyle = css("--wash"); ctx.beginPath(); ctx.roundRect(x0, 4, x1 - x0, TRACK - 8, 6); ctx.fill();
+  segs.forEach((s, i) => {
+    if (s.key === null) { return; }
+    const a = toX(s.start * dt, view, width), b = toX(endOf(i) * dt, view, width);
+    if (b < x0 || a > x1) { return; }
+    const c = color(s.key);
+    ctx.fillStyle = c; ctx.globalAlpha = 0.07; ctx.fillRect(a, TRACK + 4, b - a, height - AXIS - TRACK - 4);
+    ctx.globalAlpha = i === current ? fillOn : fill; ctx.beginPath(); ctx.roundRect(a + 1, 4, Math.max(b - a - 2, 1), TRACK - 8, 5); ctx.fill();
+    ctx.globalAlpha = 1; ctx.beginPath(); ctx.roundRect(a + 1, 4, Math.min(4, Math.max(b - a - 2, 1)), TRACK - 8, [5, 0, 0, 5]); ctx.fill();
+    ctx.font = `${i === current ? 600 : 500} 12.5px system-ui, sans-serif`; ctx.textBaseline = "middle"; ctx.textAlign = "left"; ctx.fillStyle = ink;
+    const from = Math.max(a, x0) + 11;
+    ctx.fillText(ellipsis(ctx, s.text, b - from - 6), from, TRACK / 2 + 0.5);
+  });
+  ctx.restore();
+
+  layout = [];
+  MEASURES.forEach((measure, k) => {
+    const head = TRACK + 8 + k * (stripHeight + GAP), top = head + HEAD, bottom = head + stripHeight;
+    const lines = measure.key === "state" ? [series.action, series.state] : [series[measure.key]];
+    let low = Infinity, high = -Infinity;
+    for (const values of lines) { for (let i = first; i <= lastIndex; i++) { low = Math.min(low, values[i]); high = Math.max(high, values[i]); } }
+    if (high - low < measure.floor) { const middle = (high + low) / 2; low = middle - measure.floor / 2; high = middle + measure.floor / 2; }
+    const pad = (high - low) * 0.1; low -= pad; high += pad;
+    const toY = v => bottom - (v - low) / (high - low) * (bottom - top);
+    layout.push({measure, top: head, bottom, toY});
+
+    ctx.textBaseline = "middle"; ctx.textAlign = "left";
+    ctx.font = "600 13px system-ui, sans-serif"; ctx.fillStyle = ink; ctx.fillText(measure.label, LEFT, head + 9);
+    let x = LEFT + ctx.measureText(measure.label).width + 8;
+    ctx.font = "12px system-ui, sans-serif"; ctx.fillStyle = muted; ctx.fillText(measure.unit, x, head + 9); x += ctx.measureText(measure.unit).width + 18;
+    if (measure.key === "state") {
+      for (const [name, dashed] of [["command", true], ["measured", false]]) {
+        ctx.strokeStyle = dashed ? muted : ink; ctx.lineWidth = dashed ? 1.2 : 1.6; ctx.setLineDash(dashed ? [4, 3] : []);
+        ctx.beginPath(); ctx.moveTo(x, head + 9); ctx.lineTo(x + 18, head + 9); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = ink2; ctx.fillText(name, x + 23, head + 9); x += 23 + ctx.measureText(name).width + 14;
+      }
+    }
+    ctx.textAlign = "right"; ctx.font = "600 13px system-ui, sans-serif"; ctx.fillStyle = ink;
+    ctx.fillText(`${signed(series[measure.key][f], measure.digits)} ${measure.unit}`, x1, head + 9);
+
+    const stepY = niceStep(high - low, stripHeight > 120 ? 5 : 3), digits = Math.max(0, -Math.floor(Math.log10(stepY) + 1e-9));
+    ctx.font = "11px system-ui, sans-serif";
+    for (let v = Math.ceil(low / stepY) * stepY; v <= high; v += stepY) {
+      const y = Math.round(toY(v)) + 0.5, zero = Math.abs(v) < stepY / 2;
+      ctx.strokeStyle = zero ? axis : grid; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      ctx.fillStyle = muted; ctx.fillText((zero ? 0 : v).toFixed(digits).replace("-", "−"), LEFT - 8, y);
+    }
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, top - 4, x1 - x0, bottom - top + 8); ctx.clip();
+    ctx.lineJoin = "round"; ctx.lineCap = "round";
+    lines.forEach((values, j) => {
+      const command = lines.length > 1 && j === 0;
+      ctx.strokeStyle = command ? muted : ink; ctx.lineWidth = command ? 1.2 : 1.5; ctx.setLineDash(command ? [4, 3] : []);
+      trace(ctx, values, first, lastIndex, view, width, toY);
+    });
+    ctx.setLineDash([]); ctx.restore();
+  });
+
+  // Time axis.
+  const span = view[1] - view[0], stepT = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120].find(s => span / s <= 12) || 300;
+  ctx.font = "11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = muted;
+  for (let t = Math.ceil(view[0] / stepT - 1e-9) * stepT; t <= view[1] + 1e-9; t += stepT) {
+    const x = Math.round(toX(t, view, width)) + 0.5;
+    ctx.strokeStyle = axis; ctx.beginPath(); ctx.moveTo(x, height - AXIS + 2); ctx.lineTo(x, height - AXIS + 6); ctx.stroke();
+    ctx.fillText(stepT < 1 ? t.toFixed(1) + " s" : last >= 120 ? `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}` : t.toFixed(0) + " s", x, height - AXIS + 9);
+  }
+
+  // Hover line, then the playhead with a dot on every measured line.
+  const line = (t, stroke, lineWidth) => {
+    if (t < view[0] || t > view[1]) { return null; }
+    const x = toX(t, view, width);
+    ctx.strokeStyle = stroke; ctx.lineWidth = lineWidth; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height - AXIS); ctx.stroke();
+    return x;
+  };
+  if (hover !== null) { line(hover * dt, muted, 1); }
+  const x = line(f * dt, ink, 1.5);
+  if (x !== null) {
+    ctx.fillStyle = ink; ctx.beginPath(); ctx.moveTo(x - 5, 0); ctx.lineTo(x + 5, 0); ctx.lineTo(x, 6); ctx.fill();
+    for (const {measure, toY} of layout) {
+      ctx.fillStyle = ink; ctx.strokeStyle = surface; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, toY(series[measure.key][f]), 4, 0, 7); ctx.fill(); ctx.stroke();
+    }
+  }
+}
+
+// Whole episode: the subtasks, the gripper position as a landmark, the zoom window and the playhead.
+function drawOverview() {
+  const [ctx, width, height] = fit(overview), values = D.series[M.landmark].state, range = [0, last];
+  let low = Infinity, high = -Infinity;
+  for (const v of values) { low = Math.min(low, v); high = Math.max(high, v); }
+  const toY = v => height - 3 - (v - low) / (high - low || 1) * (height - 8);
+  ctx.fillStyle = css("--wash"); ctx.beginPath(); ctx.roundRect(LEFT, 0, width - LEFT - RIGHT, height, 5); ctx.fill();
+  segs.forEach((s, i) => {
+    if (s.key === null) { return; }
+    const a = toX(s.start * dt, range, width), b = toX(endOf(i) * dt, range, width);
+    ctx.fillStyle = color(s.key); ctx.globalAlpha = 0.45; ctx.fillRect(a + 0.5, 0, Math.max(b - a - 1, 1), height); ctx.globalAlpha = 1;
+  });
+  ctx.strokeStyle = css("--ink2"); ctx.lineWidth = 1; ctx.lineJoin = "round";
+  trace(ctx, values, 0, n - 1, range, width, toY);
+  if (view[0] > 0 || view[1] < last) {
+    const a = toX(view[0], range, width), b = toX(view[1], range, width);
+    ctx.strokeStyle = css("--ink"); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(a, 0.75, Math.max(b - a, 3), height - 1.5, 4); ctx.stroke();
+  }
+  const x = toX(frame() * dt, range, width);
+  ctx.strokeStyle = css("--ink"); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+  ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "middle"; ctx.textAlign = "right"; ctx.fillStyle = css("--muted");
+  ctx.fillText("episode", LEFT - 8, height / 2);
+}
+
+function setView(start, span) {
+  span = clamp(span, Math.min(1, last), last);
+  start = clamp(start, 0, last - span);
+  view = [start, start + span];
+  $("reset").disabled = view[0] === 0 && view[1] === last;
+  dirty = true;
+}
+
+// ---------- mouse ----------
+function boundaryNear(x, y) {
+  if (y > TRACK) { return -1; }
+  const width = plot.clientWidth;
+  let best = -1, distance = 6;
+  segs.forEach((s, i) => { const d = Math.abs(toX(s.start * dt, view, width) - x); if (d < distance) { best = i; distance = d; } });
+  return best;
+}
+plot.onmousedown = e => {
+  const i = boundaryNear(e.offsetX, e.offsetY);
+  if (i >= 0) { closeEditor(true); undo.push(JSON.stringify(segs)); redo = []; drag = {boundary: i, moved: false}; }
+  else { drag = {x: e.offsetX, start: view[0], moved: false}; }
+};
+plot.onmousemove = e => {
+  const width = plot.clientWidth;
+  if (drag && "boundary" in drag) {
+    const i = drag.boundary, f = clamp(Math.round(toT(e.offsetX, view, width) / dt), i > 0 ? segs[i - 1].start + 1 : 0, endOf(i) - 1);
+    if (f !== segs[i].start) { segs[i].start = f; drag.moved = true; renderList(); shownSeg = -2; }
+    seek(f);
+    return;
+  }
+  if (drag && Math.abs(e.offsetX - drag.x) > 3) { drag.moved = true; }
+  if (drag && drag.moved) {
+    setView(drag.start - (e.offsetX - drag.x) / (width - LEFT - RIGHT) * (view[1] - view[0]), view[1] - view[0]);
+    hover = null; tip.style.display = "none";
+    return;
+  }
+  plot.style.cursor = boundaryNear(e.offsetX, e.offsetY) >= 0 ? "ew-resize" : "crosshair";
+  if (e.offsetX < LEFT || e.offsetX > width - RIGHT) { hover = null; tip.style.display = "none"; dirty = true; return; }
+  hover = clamp(Math.round(toT(e.offsetX, view, width) / dt), 0, n - 1);
+  showTip(e); dirty = true;
+};
+function release(e) {
+  if (!drag) { return; }
+  if ("boundary" in drag) { if (drag.moved) { changed(); } else { undo.pop(); seek(segs[drag.boundary].start); } }
+  else if (!drag.moved && e.type === "mouseup") { seek(toT(e.offsetX, view, plot.clientWidth) / dt); }
+  drag = null;
+}
+plot.onmouseup = release;
+plot.onmouseleave = e => { release(e); hover = null; tip.style.display = "none"; dirty = true; };
+plot.ondblclick = e => {
+  if (e.offsetY <= TRACK) { openEditor(segAt(clamp(Math.round(toT(e.offsetX, view, plot.clientWidth) / dt), 0, n - 1))); } else { setView(0, last); }
+};
+plot.onwheel = e => {
+  e.preventDefault();
+  const t = toT(e.offsetX, view, plot.clientWidth), span = (view[1] - view[0]) * (e.deltaY < 0 ? 0.8 : 1.25);
+  setView(t - (t - view[0]) / (view[1] - view[0]) * clamp(span, Math.min(1, last), last), span);
+};
+overview.onmousedown = overview.onmousemove = e => {
+  if (e.buttons !== 1) { return; }
+  const t = clamp(toT(e.offsetX, [0, last], overview.clientWidth), 0, last);
+  seek(t / dt);
+  if (view[1] - view[0] < last) { setView(t - (view[1] - view[0]) / 2, view[1] - view[0]); }
+};
+function showTip(e) {
+  const series = D.series[joint], i = segAt(hover), seg = i >= 0 && segs[i].key !== null ? segs[i] : null;
+  const row = (name, value, unit) => `<tr><td class="name">${name}</td><td class="value">${value}</td><td class="unit">${unit}</td></tr>`;
+  tip.innerHTML = `<div class="when">${clock(hover * dt)} · frame ${hover} · ${joint.replace("_", " ")}</div>` +
+    (seg ? `<div class="sub"><span class="sw" style="background:${color(seg.key)}"></span>${escapeHtml(seg.text)}</div>` : "") +
+    `<table>${row("command", signed(series.action[hover], 2), "deg")}${row("position", signed(series.state[hover], 2), "deg")}` +
+    `${row("velocity", signed(series.velocity[hover], 1), "deg/s")}${row("torque", signed(series.torque[hover], 3), "N·m")}</table>`;
+  tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 16, window.innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = Math.min(e.clientY + 16, window.innerHeight - tip.offsetHeight - 8) + "px";
+}
+
+// ---------- transport + keys ----------
+function toggle() { if (video.paused) { if (frame() >= n - 1) { seek(0); } video.play(); } else { video.pause(); } }
+function setRate(rate) {
+  video.playbackRate = rate; store("labeler.rate", rate);
+  document.querySelectorAll("#rates button").forEach(b => b.classList.toggle("on", Number(b.dataset.v) === rate));
+}
+function jump(direction) {
+  const f = frame(), starts = segs.map(s => s.start).concat([0, n - 1]).sort((a, b) => a - b);
+  const target = direction > 0 ? starts.find(s => s > f) : starts.reverse().find(s => s < f);
+  if (target !== undefined) { video.pause(); seek(target); }
+}
+$("play").onclick = toggle;
+$("rates").onclick = e => { if (e.target.dataset.v) { setRate(Number(e.target.dataset.v)); } };
+$("joints").onclick = e => {
+  if (!e.target.dataset.v) { return; }
+  joint = e.target.dataset.v; dirty = true;
+  document.querySelectorAll("#joints button").forEach(b => b.classList.toggle("on", b.dataset.v === joint));
+};
+$("reset").onclick = () => setView(0, last);
+document.addEventListener("keydown", e => {
+  if (!D || e.target === input) { return; }
+  const k = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && k === "z") { if (e.shiftKey) { step(redo, undo); } else { step(undo, redo); } }
+  else if ((e.ctrlKey || e.metaKey) && k === "y") { step(redo, undo); }
+  else if (e.ctrlKey || e.metaKey || e.altKey) { return; }
+  else if (/^(Digit|Numpad)[1-9]$/.test(e.code) && Number(e.code.slice(-1)) <= M.subtasks.length) { mark(Number(e.code.slice(-1)) - 1); }
+  else if (e.code === "Digit0" || e.code === "Numpad0" || k === "x") { markGap(); }
+  else if (e.code === "Space") { toggle(); }
+  else if (e.code === "ArrowRight") { video.pause(); seek(frame() + (e.shiftKey ? fps : 1)); }
+  else if (e.code === "ArrowLeft") { video.pause(); seek(frame() - (e.shiftKey ? fps : 1)); }
+  else if (k === "-" || k === "_") { setRate(RATES[Math.max(0, RATES.indexOf(video.playbackRate) - 1)]); }
+  else if (k === "=" || k === "+") { setRate(RATES[Math.min(RATES.length - 1, RATES.indexOf(video.playbackRate) + 1)]); }
+  else if (k === "q") { jump(-1); }
+  else if (k === "w") { jump(1); }
+  else if (k === "e" || k === "enter") { openEditor(segAt(frame())); }
+  else if (k === "[") { startHere(); }
+  else if (k === "]") { endHere(); }
+  else if (k === "delete" || k === "backspace") { const i = segAt(frame()); if (i >= 0 && segs[i].key !== null) { remove(i); } }
+  else { return; }
+  e.preventDefault();
+});
+
+function tick() {
+  if (D) {
+    const f = frame(), t = f * dt, current = segAt(f);
+    if (!video.paused && (t < view[0] || t > view[1])) { setView(t - (view[1] - view[0]) * 0.05, view[1] - view[0]); }
+    if (current !== shownSeg) { shownSeg = current; renderCaption(current); }
+    if (dirty || f !== drawnFrame) {
+      dirty = false; drawnFrame = f;
+      drawPlot(); drawOverview();
+      $("clock").innerHTML = `<b>${clock(t)}</b> / ${clock(last)} · frame ${f}`;
+      $("play").textContent = video.paused ? "▶" : "❚❚";
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+// ---------- loading ----------
+async function load(episode) {
+  if (D && D.episode === episode) { return; }
+  closeEditor(true);
+  if (saveTimer !== null) { await save(); }
+  video.pause();
+  const data = await (await fetch(`/api/episode/${episode}`)).json();
+  n = data.frames; last = (n - 1) * dt;
+  segs = [];
+  data.segments.forEach((s, i) => {
+    segs.push({start: s.start, key: M.subtasks.indexOf(s.class), text: s.subtask});
+    if (s.end < (i + 1 < data.segments.length ? data.segments[i + 1].start : n)) { segs.push({start: s.end, key: null, text: ""}); }
+  });
+  done = data.done; undo = []; redo = []; hover = null; drag = null; shownSeg = -2;
+  D = data;
+  video.src = `/clip/${episode}`; setRate(video.defaultPlaybackRate = Number(recall("labeler.rate")) || 1);
+  setView(0, last);
+  store("labeler.episode." + M.name, episode);
+  $("saved").textContent = "";
+  renderEpisodes(); renderList();
+  document.querySelector("#eps .on").scrollIntoView({inline: "nearest"});
+}
+async function start() {
+  M = await (await fetch("/api/meta")).json();
+  fps = M.fps; dt = 1 / fps;
+  M.landmark = M.joints.includes("gripper") ? "gripper" : M.joints[M.joints.length - 1]; joint = M.landmark;
+  document.title = `${M.name} · subtasks`; $("title").textContent = M.name;
+  used = M.subtasks.map(name => [name]);
+  M.texts.forEach(([name, text]) => { const key = M.subtasks.indexOf(name); if (key >= 0 && text !== name) { remember(key, text); } });
+  $("views").style.setProperty("--aspect", M.panes.length * 4 / 3);
+  M.panes.forEach((name, i) => {
+    const pane = document.createElement("div");
+    pane.className = "pane"; pane.style.left = `${100 * i / M.panes.length}%`; pane.style.width = `${100 / M.panes.length}%`;
+    pane.innerHTML = `<span>${name}</span>`;
+    $("views").appendChild(pane);
+  });
+  $("rates").innerHTML = RATES.map(r => `<button data-v="${r}">${r}×</button>`).join("");
+  $("joints").innerHTML = M.joints.map(j => `<button data-v="${j}" class="${j === joint ? "on" : ""}">${j.replace("_", " ")}</button>`).join("");
+  $("keys").innerHTML = M.subtasks.map((name, k) => `<button data-k="${k}"><kbd>${k + 1}</kbd><span class="sw" style="background:var(--s${k % 8 + 1})"></span><span class="t">${escapeHtml(name)}</span></button>`).join("") +
+    `<button data-k="gap" class="gap"><kbd>0</kbd><span class="sw" style="border:1px dashed var(--muted)"></span><span class="t">unlabelled up to here</span></button>`;
+  const saved = Number(recall("labeler.episode." + M.name)), firstOpen = M.episodes.find(e => !e.done) || M.episodes[0];
+  await load(M.episodes.some(e => e.episode === saved) && recall("labeler.episode." + M.name) !== null ? saved : firstOpen.episode);
+  requestAnimationFrame(tick);
+}
+video.onplay = video.onpause = video.onseeked = () => { dirty = true; };
+new ResizeObserver(() => { dirty = true; }).observe($("plotBox"));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { dirty = true; renderList(); });
+window.addEventListener("beforeunload", () => { if (saveTimer !== null) { save(); } });
+start();
+</script>

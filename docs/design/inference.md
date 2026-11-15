@@ -85,13 +85,14 @@ assembles the same clauses as training, with the steering defaults:
 | embodiment | `The robot is {a/an} {name}.` — rollouts render it from `cfg.env.robot.type` (`rebot_b601_follower` aliases to `Rebot B601`); offline batches from `embodiment_index` (unknown/-1 = no clause). ReBot training rows carry NO clause (`RoleAlignedBuffer` stamps `action_layout_id` only), so the hardware prompt's sentence is one the model never saw on ReBot frames — `probes/embodiment_swap.py` measures that gap |
 | control mode | `The control mode is joint space.` / `... end-effector space.` — read from `ACTION_LAYOUTS[action_layout_id].control_mode` (diverse v3, 2026-09-19); the rollout path stamps `action_layout_id` from `diverse.rebot_layout` (`probes.utils.identity_columns`), so deployment renders **joint** with no flag of its own; opens the ReBot prompt |
 | subtask | latest HL decode (absent until the first decode) |
+| gripper torque | `The gripper torque is {n} of {levels}.` — level of the last 4 control steps' gripper torque (`policy.gripper_torque`, [memory_prompts.md §1.1](memory_prompts.md)); absent when `levels` is 0 or the env gives no `gripper.torque` |
 | metadata | `{quality: 5, mistake: false}` — π0.7 "prompt for the best" |
 | history | live deque windows (when `memory.history_keys` set) |
 | advantage | `inference_advantage` — **null under skip_critic** (clause absent; a hardcoded 1.0 would be out-of-distribution against advantage-free training) |
 | summary | generation prompt only, never the action prompt |
 
 Clause order (`_build_robot_text`): embodiment, control mode, task, depth, subtask, state,
-history, metadata, question. Embodiment and control mode have no training dropout: both are
+gripper torque, history, metadata, question. Embodiment and control mode have no training dropout: both are
 known at inference, so hiding them would only teach the model to ignore them. The
 control-mode clause exists because MolmoAct rows (layout 7) are end-effector poses under the
 same "Franka" clause as DROID's and FMB's joint rows; every other layout, ReBot and YAM

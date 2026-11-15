@@ -58,6 +58,8 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 | `paths.py` | `WORKSPACE` and `QUALITY_V2` (the results folder of the class pass, `lerobot/annotation_data/quality_v2`). |
 | `rebot/` | A ReBot pass, start to finish (order below). `AGENT_BRIEF.md` is the brief the annotating and grading agents follow; review feedback is folded into it and into the rubrics. |
 | `rebot/task_sheet.py` | Writes `lerobot/docs/annotation_notes/rebot_tasks.md`: every task of the training mix with its subtask script, precision and contact per step, ready to paste into an inference config. |
+| `rebot/subtask_labeler.py` | Browser page to label a root's subtasks by hand (video + depth + position / velocity / torque, one key per subtask, free text). Writes `outputs/_annotation/passes/subtasks_<root>/labels/episode_<E>.json`; command in CHEAT_SHEET "Subtask labeler". |
+| `rebot/subtask_labels_root.py` | Builds a new root that carries the labels of `subtask_labeler` (subtask tables only, quality -1 = not graded). |
 | `quality_v2/` | The rubric v2 class pass, shared by every pool: class rules, side-by-side material, dense strips, grading batches, second read, label compiler, checks. |
 | `precision_contact/` | Frame grabbing, approach angle, row sheets and strips (used by `quality_v2`), and the text-rule priors for precision and contact. `AGENT_BRIEF.md` (+ `AGENT_BRIEF_diverse.md`) is the reviewer brief of the row pass. |
 | `atoms/` | Subtask-atom pipeline over the diverse corpus: propose, sheets, verdict, agent_check, assemble, manual editor, validator; its reviewer briefs. |

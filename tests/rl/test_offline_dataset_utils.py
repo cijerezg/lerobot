@@ -22,6 +22,8 @@ from lerobot.rl.offline_dataset_utils import (
     materialize_dataset_labels,
     resolve_task_strings,
 )
+from lerobot.rl.shared_config import GripperTorqueConfig
+from lerobot.utils.constants import OBS_EFFORT
 
 
 def _fake_dataset(tasks, task_indices, subtasks, subtask_indices, root, episode_indices=None):
@@ -185,6 +187,32 @@ def test_current_task_and_subtask_labels_overlay_cached_buffer():
     assert buffer.complementary_info["source_index"].tolist() == [1, 1, 1]
     raw = {"complementary_info": {"task_index": buffer.complementary_info["task_index"]}}
     assert resolve_task_strings(raw, vocabulary, "fallback", 3) == ["pick and place"] * 3
+
+
+def test_gripper_torque_levels_are_smoothed_within_each_episode():
+    dataset = _fake_dataset(["insert"], [0] * 6, [], None, "/tube", episode_indices=[0, 0, 0, 0, 1, 1])
+    torque = [0.0, 1.0, 1.0, 1.0, 0.0, 5.0]
+    dataset.hf_dataset = dataset.hf_dataset.add_column(OBS_EFFORT, [[9.0, value] for value in torque])
+    dataset.meta.features = {OBS_EFFORT: {"names": ["wrist_roll.torque", "gripper.torque"]}}
+    buffer = _fake_buffer(capacity=6)
+
+    materialize_dataset_labels(
+        buffer, dataset, dataset, source_index=0, gripper_torque=GripperTorqueConfig(levels=4, low=0.0, high=1.0)
+    )
+
+    # Smoothed: 0, 0.4, 0.7, 0.9 | 0 (episode 1 starts from its own first sample), 2.0 (clipped).
+    assert buffer.complementary_info["gripper_torque_level"].tolist() == [1, 2, 3, 4, 1, 4]
+
+
+def test_roots_without_effort_get_no_gripper_torque_column():
+    dataset = _fake_dataset(["insert"], [0, 0], [], None, "/old", episode_indices=[0, 0])
+    buffer = _fake_buffer(capacity=2)
+
+    materialize_dataset_labels(
+        buffer, dataset, dataset, source_index=0, gripper_torque=GripperTorqueConfig(levels=4, low=0.0, high=1.0)
+    )
+
+    assert "gripper_torque_level" not in buffer.complementary_info
 
 
 def test_depth_event_targets_overlay_cached_buffer(monkeypatch):

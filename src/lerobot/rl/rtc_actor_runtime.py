@@ -44,6 +44,12 @@ from lerobot.transport.utils import bytes_to_state_dict, python_object_to_bytes
 from lerobot.utils.action_smoothing import apply_butterworth_filter
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.gripper_torque import (
+    GRIPPER_TORQUE_KEY,
+    GRIPPER_TORQUE_WEIGHTS,
+    gripper_torque_levels,
+    smooth_gripper_torque,
+)
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import Transition, move_state_dict_to_device, move_transition_to_device
@@ -264,6 +270,8 @@ class RTCSharedState:
         self.policy_names: list[str] = []
         self.history_offsets: dict[str, list[int]] | None = None
         self.history_entries: deque | None = None
+        # Gripper torque of the last control steps, oldest first (the prompt level's input).
+        self.gripper_torques: deque = deque(maxlen=len(GRIPPER_TORQUE_WEIGHTS))
         # Current subtask: decoded by the high-level query, or walked by the operator
         # console through subtask_script (the rollout's steps in order, cursor 0 on
         # episode reset; empty = decode path). A script entry is (text, index) or
@@ -512,6 +520,18 @@ class RTCSharedState:
         with self.lock:
             if self.history_entries is not None:
                 self.history_entries.clear()
+
+    def push_gripper_torque(self, torque: float) -> None:
+        with self.lock:
+            self.gripper_torques.append(torque)
+
+    def clear_gripper_torques(self) -> None:
+        with self.lock:
+            self.gripper_torques.clear()
+
+    def gripper_torque_snapshot(self) -> list[float]:
+        with self.lock:
+            return list(self.gripper_torques)
 
     def history_snapshot(self) -> list[dict]:
         with self.lock:
@@ -842,6 +862,7 @@ def rtc_inference_worker(
                     robot_type=robot_type,
                     subtask=current_subtask if subtask_enabled else None,
                     metadata=cycle_metadata,
+                    gripper_torque_level=_gripper_torque_level(shared_state, cfg),
                 )
                 t_preproc_end = time.perf_counter()
 
@@ -1059,6 +1080,7 @@ def rtc_env_worker(
         transition = env_processor(transition)
 
         policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
+        _push_gripper_torque(shared_state, online_env)
         shared_state.update_observation(
             _obs_with_depth(policy_fmt_obs, transition[TransitionKey.OBSERVATION], cfg), False
         )
@@ -1099,6 +1121,7 @@ def rtc_env_worker(
                 action_processor.reset()
                 action_queue.clear()
                 shared_state.clear_history()
+                shared_state.clear_gripper_torques()
                 shared_state.clear_subtask_state()
                 shared_state.request_reset()
                 if not standalone:
@@ -1114,6 +1137,7 @@ def rtc_env_worker(
                 transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
                 transition = env_processor(transition)
                 policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
+                _push_gripper_torque(shared_state, online_env)
                 shared_state.update_observation(
                     _obs_with_depth(policy_fmt_obs, transition[TransitionKey.OBSERVATION], cfg), False
                 )
@@ -1405,6 +1429,7 @@ def rtc_env_worker(
                     rerun_queue.put_nowait((interaction_step, interaction_step / cfg.env.fps, obs_log, act_log))
             _t_rerun_end = time.perf_counter()
 
+            _push_gripper_torque(shared_state, online_env)
             shared_state.update_observation(
                 _obs_with_depth(next_policy_fmt_obs, new_transition[TransitionKey.OBSERVATION], cfg),
                 is_intervening,
@@ -1676,6 +1701,26 @@ def _warmup_observation(cfg, history_offsets: dict[str, list[int]] | None, actio
                 current[f"depth.{key.removeprefix('observation.depth.')}.depth"] = value.unsqueeze(0)
         obs.update(assemble_history_windows([], history_offsets, current, action_dim))
     return obs
+
+
+def _push_gripper_torque(shared_state: RTCSharedState, online_env) -> None:
+    """Add the gripper torque of the env's last reset/step to the prompt level's input."""
+    if not hasattr(online_env, "get_raw_observation"):
+        return
+    raw = online_env.get_raw_observation()
+    if GRIPPER_TORQUE_KEY in raw:
+        shared_state.push_gripper_torque(float(raw[GRIPPER_TORQUE_KEY]))
+
+
+def _gripper_torque_level(shared_state: RTCSharedState, cfg) -> int:
+    """Prompt level of the gripper torque over the last control steps; 0 = off or no reading yet."""
+    gripper_torque = getattr(cfg.policy, "gripper_torque", None)
+    torques = shared_state.gripper_torque_snapshot()
+    if gripper_torque is None or gripper_torque.levels <= 0 or not torques:
+        return 0
+    smoothed = smooth_gripper_torque(np.array(torques))[-1:]
+    level = gripper_torque_levels(smoothed, gripper_torque.levels, gripper_torque.low, gripper_torque.high)
+    return int(level[0])
 
 
 def _constant_inference_metadata(cfg) -> dict | None:
