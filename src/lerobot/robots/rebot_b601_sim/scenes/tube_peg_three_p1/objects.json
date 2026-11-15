@@ -1,0 +1,375 @@
+{
+ "layout": "tube_peg_three_p1",
+ "tier": "tube",
+ "note": "left pair far left, right pair in the middle, dark peg far right",
+ "generator": "scripts/sim_builders/tube_peg/build_tube_layouts.py",
+ "objects": {
+  "tube": {
+   "xy": [
+    0.44,
+    0.14
+   ],
+   "yaw_deg": 0
+  },
+  "tube_holder": {
+   "xy": [
+    0.34,
+    0.22
+   ],
+   "yaw_deg": 0
+  },
+  "tube_2": {
+   "xy": [
+    0.38,
+    -0.1
+   ],
+   "yaw_deg": 0
+  },
+  "tube_holder_2": {
+   "xy": [
+    0.48,
+    -0.06
+   ],
+   "yaw_deg": 90
+  },
+  "tube_3": {
+   "xy": [
+    0.4,
+    -0.26
+   ],
+   "yaw_deg": 0
+  },
+  "tube_holder_3": {
+   "xy": [
+    0.3,
+    -0.33
+   ],
+   "yaw_deg": 30
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "tube": 0.5,
+    "tube_holder": 0.53,
+    "tube_2": 0.5,
+    "tube_holder_2": 0.53,
+    "tube_3": 0.5,
+    "tube_holder_3": 0.53
+   },
+   "max_moved_mm": 0.53,
+   "contact_dist_mm": {
+    "tube": -0.34,
+    "tube_holder": -0.35,
+    "tube_2": -0.34,
+    "tube_holder_2": -0.35,
+    "tube_3": -0.34,
+    "tube_holder_3": -0.35
+   },
+   "worst_contact_dist_mm": -0.35
+  },
+  "scripted_insert": [
+   {
+    "tube": "tube",
+    "close_deg": 0.0,
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "lift_mm": 52.4,
+    "hold_deg": -23.3,
+    "hold_force_N": 10.0,
+    "hold_torque_Nm": 0.12,
+    "grip_shift_mm": 2.53,
+    "off_before_mm": 2.34,
+    "tube_rel_mm": [
+     0.9,
+     -0.4,
+     4.0
+    ],
+    "upright": 1.0,
+    "holder_moved_mm": 1.2,
+    "on_peg": true
+   },
+   {
+    "tube": "tube_2",
+    "close_deg": 0.0,
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "lift_mm": 54.2,
+    "hold_deg": -23.3,
+    "hold_force_N": 10.0,
+    "hold_torque_Nm": 0.12,
+    "grip_shift_mm": 2.47,
+    "off_before_mm": 1.7,
+    "tube_rel_mm": [
+     0.6,
+     0.7,
+     4.0
+    ],
+    "upright": 1.0,
+    "holder_moved_mm": 0.3,
+    "on_peg": true
+   },
+   {
+    "tube": "tube_3",
+    "close_deg": 0.0,
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "lift_mm": 52.4,
+    "hold_deg": -23.3,
+    "hold_force_N": 10.0,
+    "hold_torque_Nm": 0.12,
+    "grip_shift_mm": 2.93,
+    "off_before_mm": 3.04,
+    "tube_rel_mm": [
+     0.3,
+     0.6,
+     4.0
+    ],
+    "upright": 1.0,
+    "holder_moved_mm": 2.5,
+    "on_peg": true
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.1,
+     "cursor": 0,
+     "stage": "approach_1",
+     "reward": 0.0333,
+     "why": "reached approach_1"
+    },
+    {
+     "t": 3.1,
+     "cursor": 1,
+     "stage": "approach_1",
+     "reward": 0.0333,
+     "why": "stage approach_1"
+    },
+    {
+     "t": 3.84,
+     "cursor": 1,
+     "stage": "contact_1",
+     "reward": 0.0667,
+     "why": "reached contact_1"
+    },
+    {
+     "t": 5.1,
+     "cursor": 1,
+     "stage": "lifted_1",
+     "reward": 0.1333,
+     "why": "reached lifted_1"
+    },
+    {
+     "t": 5.1,
+     "cursor": 2,
+     "stage": "lifted_1",
+     "reward": 0.1333,
+     "why": "stage lifted_1"
+    },
+    {
+     "t": 7.24,
+     "cursor": 2,
+     "stage": "at_peg_1",
+     "reward": 0.2333,
+     "why": "reached at_peg_1"
+    },
+    {
+     "t": 7.24,
+     "cursor": 3,
+     "stage": "at_peg_1",
+     "reward": 0.2333,
+     "why": "stage at_peg_1"
+    },
+    {
+     "t": 9.8,
+     "cursor": 3,
+     "stage": "on_peg_1",
+     "reward": 0.2833,
+     "why": "reached on_peg_1"
+    },
+    {
+     "t": 11.34,
+     "cursor": 3,
+     "stage": "inserted_1",
+     "reward": 0.3333,
+     "why": "reached inserted_1"
+    },
+    {
+     "t": 11.34,
+     "cursor": 4,
+     "stage": "inserted_1",
+     "reward": 0.3333,
+     "why": "stage inserted_1"
+    },
+    {
+     "t": 15.8,
+     "cursor": 4,
+     "stage": "approach_2",
+     "reward": 0.3667,
+     "why": "reached approach_2"
+    },
+    {
+     "t": 15.8,
+     "cursor": 5,
+     "stage": "approach_2",
+     "reward": 0.3667,
+     "why": "stage approach_2"
+    },
+    {
+     "t": 16.47,
+     "cursor": 5,
+     "stage": "contact_2",
+     "reward": 0.4,
+     "why": "reached contact_2"
+    },
+    {
+     "t": 17.8,
+     "cursor": 5,
+     "stage": "lifted_2",
+     "reward": 0.4667,
+     "why": "reached lifted_2"
+    },
+    {
+     "t": 17.8,
+     "cursor": 6,
+     "stage": "lifted_2",
+     "reward": 0.4667,
+     "why": "stage lifted_2"
+    },
+    {
+     "t": 19.77,
+     "cursor": 6,
+     "stage": "at_peg_2",
+     "reward": 0.5667,
+     "why": "reached at_peg_2"
+    },
+    {
+     "t": 19.77,
+     "cursor": 7,
+     "stage": "at_peg_2",
+     "reward": 0.5667,
+     "why": "stage at_peg_2"
+    },
+    {
+     "t": 22.3,
+     "cursor": 7,
+     "stage": "on_peg_2",
+     "reward": 0.6167,
+     "why": "reached on_peg_2"
+    },
+    {
+     "t": 24.0,
+     "cursor": 7,
+     "stage": "inserted_2",
+     "reward": 0.6667,
+     "why": "reached inserted_2"
+    },
+    {
+     "t": 24.0,
+     "cursor": 8,
+     "stage": "inserted_2",
+     "reward": 0.6667,
+     "why": "stage inserted_2"
+    },
+    {
+     "t": 28.5,
+     "cursor": 8,
+     "stage": "approach_3",
+     "reward": 0.7,
+     "why": "reached approach_3"
+    },
+    {
+     "t": 28.5,
+     "cursor": 9,
+     "stage": "approach_3",
+     "reward": 0.7,
+     "why": "stage approach_3"
+    },
+    {
+     "t": 29.24,
+     "cursor": 9,
+     "stage": "contact_3",
+     "reward": 0.7333,
+     "why": "reached contact_3"
+    },
+    {
+     "t": 30.54,
+     "cursor": 9,
+     "stage": "lifted_3",
+     "reward": 0.8,
+     "why": "reached lifted_3"
+    },
+    {
+     "t": 30.54,
+     "cursor": 10,
+     "stage": "lifted_3",
+     "reward": 0.8,
+     "why": "stage lifted_3"
+    },
+    {
+     "t": 32.64,
+     "cursor": 10,
+     "stage": "at_peg_3",
+     "reward": 0.9,
+     "why": "reached at_peg_3"
+    },
+    {
+     "t": 32.64,
+     "cursor": 11,
+     "stage": "at_peg_3",
+     "reward": 0.9,
+     "why": "stage at_peg_3"
+    },
+    {
+     "t": 35.44,
+     "cursor": 11,
+     "stage": "on_peg_3",
+     "reward": 0.95,
+     "why": "reached on_peg_3"
+    },
+    {
+     "t": 36.74,
+     "cursor": 11,
+     "stage": "inserted_3",
+     "reward": 1.0,
+     "why": "reached inserted_3"
+    },
+    {
+     "t": 36.74,
+     "cursor": 12,
+     "stage": "inserted_3",
+     "reward": 1.0,
+     "why": "stage inserted_3"
+    }
+   ],
+   "raw": [
+    {
+     "level": 6,
+     "peg_offset_mm": 1.0,
+     "depth_mm": 18.0,
+     "lift_mm": 3.5,
+     "upright": 1.0,
+     "touched": false
+    },
+    {
+     "level": 6,
+     "peg_offset_mm": 0.9,
+     "depth_mm": 18.0,
+     "lift_mm": 3.5,
+     "upright": 1.0,
+     "touched": false
+    },
+    {
+     "level": 6,
+     "peg_offset_mm": 0.7,
+     "depth_mm": 18.0,
+     "lift_mm": 3.5,
+     "upright": 1.0,
+     "touched": false
+    }
+   ]
+  }
+ }
+}

@@ -241,3 +241,80 @@ def test_nail_predicates_and_cursor():
     s.poll()
     assert s.reward == 1.0 and SUCCESS.is_set()
     assert [e["cursor"] for e in s.events][-1] == 4
+
+
+# Tube: tube 10 mm tall standing on the table (as wide as the test gripper's opening), holder plate 4 mm with a capsule peg to 22 mm (scripts/sim_builders/tube_peg).
+TUBE_XML = f"""
+<mujoco>
+  <compiler angle="radian" />
+  <option gravity="0 0 0" />
+  <worldbody>
+    {GRIPPER}
+    <body name="tube" pos="0.3 0.1 0"><freejoint /><geom type="cylinder" size="0.0275 0.005" pos="0 0 0.005" mass="0.001" contype="4" conaffinity="1" /></body>
+    <body name="tube_holder" pos="0.4 -0.1 0"><freejoint />
+      <geom name="tube_holder_plate" type="box" size="0.025 0.02 0.002" pos="0 0 0.002" mass="0.03" contype="0" conaffinity="0" />
+      <geom name="tube_holder_peg" type="capsule" size="0.0028" fromto="0 0 0.004 0 0 0.0192" mass="0.003" contype="2" conaffinity="2" />
+    </body>
+  </worldbody>
+</mujoco>"""
+
+
+def test_tube_peg_scorer():
+    from lerobot.robots.rebot_b601_sim.tube_task import HOLD_S, tube_peg_scorer
+
+    m, d = load(TUBE_XML)
+    scorer = tube_peg_scorer(1)(m, d, lambda: 0.0)
+    q = int(m.jnt_qposadr[m.body_jntadr[m.body("tube").id]])
+
+    def step(tube, gripper, dt=0.0):
+        d.qpos[q : q + 3] = tube
+        d.mocap_pos[0] = gripper
+        d.time += dt
+        mujoco.mj_forward(m, d)
+        scorer.poll()
+        return scorer.stage_name, scorer.cursor
+
+    assert step((0.3, 0.1, 0), (1, 1, 1)) == (None, 0)
+    assert step((0.3, 0.1, 0), (0.3, 0.1, 0.045)) == ("approach", 1)
+    assert step((0.3, 0.1, 0), (0.3, 0.1, 0.005)) == ("contact", 1)
+    assert step((0.3, 0.1, 0.05), (0.3, 0.1, 0.055)) == ("lifted", 2)
+    assert 0.4 < scorer.dense < 0.7
+    assert step((0.4, -0.09, 0.05), (0.4, -0.09, 0.055)) == ("at_peg", 3)
+    assert step((0.4, -0.105, 0.006), (0.4, -0.105, 0.011)) == ("at_peg", 3)  # beside the peg: outside the bore
+    assert step((0.4, -0.1, 0.006), (0.4, -0.1, 0.011)) == ("on_peg", 3)
+    assert step((0.4, -0.1, 0.006), (1, 1, 1)) == ("on_peg", 3)
+    assert step((0.4, -0.1, 0.006), (1, 1, 1), dt=HOLD_S + 0.01) == ("inserted", 4)
+    assert scorer.reward == 1.0 and SUCCESS.is_set()
+
+
+def test_tube_peg_scorer_two_tubes_out_of_order():
+    from lerobot.robots.rebot_b601_sim.tube_task import HOLD_S, tube_peg_scorer
+
+    second = TUBE_XML.replace('name="tube"', 'name="tube_2"').replace("tube_holder", "tube_holder_2").replace('pos="0.3 0.1 0"', 'pos="0.3 0.3 0"').replace('pos="0.4 -0.1 0"', 'pos="0.4 0.3 0"')
+    bodies = second[second.index('<body name="tube_2"'):second.index("</worldbody>")]
+    m, d = load(TUBE_XML.replace("</worldbody>", bodies + "</worldbody>"))
+    scorer = tube_peg_scorer(2)(m, d, lambda: 0.0)
+    q = {name: int(m.jnt_qposadr[m.body_jntadr[m.body(name).id]]) for name in ("tube", "tube_2")}
+
+    def carry(name, start, peg):
+        for tube, gripper, dt in ((start, start, 0.0), ((*start[:2], 0.05), (*start[:2], 0.05), 0.0), ((*peg, 0.006), (*peg, 0.006), 0.0),
+                                  ((*peg, 0.006), (1, 1, 1), 0.0), ((*peg, 0.006), (1, 1, 1), HOLD_S + 0.01)):
+            d.qpos[q[name] : q[name] + 3] = tube
+            d.mocap_pos[0] = gripper
+            d.time += dt
+            mujoco.mj_forward(m, d)
+            scorer.poll()
+
+    carry("tube_2", (0.3, 0.3, 0), (0.4, 0.3))
+    assert scorer.reward == 0.0 and not SUCCESS.is_set()  # the second tube first: no credit yet
+    carry("tube", (0.3, 0.1, 0), (0.4, -0.1))
+    assert scorer.reward == 1.0 and scorer.cursor == 8 and SUCCESS.is_set()
+
+
+def test_tube_layouts_registered():
+    assert not set(tasks.TUBE_LAYOUTS) & set(LAYOUTS)
+    flags = task_for("tube_peg_left_p1").overrides()
+    assert len(TASKS["tube_peg_three"].eval_subtasks) == 13 and TASKS["tube_peg_three"].stages[-1] == ("inserted_3", 1.0, 12)
+    assert "--env.robot.gripper_force_cap=10.0" in flags
+    assert "--env.robot.joint_zero_offset_deg=[0.0, -3.43, 0.0, 0.0, 0.0, 0.0, 0.0]" in flags
+    assert "--policy.task=put the tube in the peg" in flags

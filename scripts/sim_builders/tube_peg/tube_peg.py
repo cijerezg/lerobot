@@ -35,7 +35,7 @@ def tube_body(name: str = "tube") -> str:
         pose = (f'pos="{(TUBE_R_IN + half_t) * np.cos(a):.6f} {(TUBE_R_IN + half_t) * np.sin(a):.6f} {TUBE_LEN / 2:.6f}" '
                 f'quat="{np.cos(a / 2):.6f} 0 0 {np.sin(a / 2):.6f}" size="{half_t:.6f} {half_w:.6f} {TUBE_LEN / 2:.6f}"')
         lines.append(f'      <geom name="{name}_bore_{i}" type="box" {pose} mass="0" group="3" contype="2" conaffinity="2" friction="0.4 0.005 0.0001" {CONTACT} />')
-        lines.append(f'      <geom name="{name}_vis_{i}" type="box" {pose} mass="0" group="2" contype="0" conaffinity="0" rgba="0.90 0.92 0.93 1" />')
+        lines.append(f'      <geom name="{name}_vis_{i}" type="box" {pose} mass="0" group="2" contype="0" conaffinity="0" rgba="0.95 0.45 0.10 1" />')
     for i in range(N_SEG // 2):
         a = 2 * np.pi * i / N_SEG
         lines.append(f'      <geom name="{name}_core_{i}" type="box" pos="0 0 {TUBE_LEN / 2:.6f}" quat="{np.cos(a / 2):.6f} 0 0 {np.sin(a / 2):.6f}" '
@@ -43,11 +43,11 @@ def tube_body(name: str = "tube") -> str:
     return "\n".join(lines) + "\n    </body>\n"
 
 
-def holder_body(name: str = "tube_holder") -> str:
+def holder_body(name: str = "tube_holder", peg_rgba: str = "0.80 0.88 0.92 0.75") -> str:
     """Body origin at the plate's bottom centre, peg along body z at the plate centre."""
     hx, hy, hz = PLATE
     return (f'    <body name="{name}" pos="0 0 0" quat="1 0 0 0">\n      <freejoint />\n'
             f'      <geom name="{name}_plate" type="box" size="{hx} {hy} {hz}" pos="0 0 {hz}" mass="{HOLDER_MASS * 0.9:.4f}" friction="0.8 0.005 0.0001" {CONTACT} rgba="0.80 0.88 0.92 0.55" />\n'
-            f'      <geom name="{name}_peg" type="capsule" size="{PEG_R:.4f}" fromto="0 0 {2 * hz} 0 0 {PEG_TOP - PEG_R:.4f}" mass="{HOLDER_MASS * 0.1:.4f}" contype="2" conaffinity="2" friction="0.4 0.005 0.0001" {CONTACT} rgba="0.80 0.88 0.92 0.75" />\n'
+            f'      <geom name="{name}_peg" type="capsule" size="{PEG_R:.4f}" fromto="0 0 {2 * hz} 0 0 {PEG_TOP - PEG_R:.4f}" mass="{HOLDER_MASS * 0.1:.4f}" contype="2" conaffinity="2" friction="0.4 0.005 0.0001" {CONTACT} rgba="{peg_rgba}" />\n'
             f'      <geom name="{name}_peg_fingers" type="capsule" size="{PEG_R:.4f}" fromto="0 0 {2 * hz} 0 0 {PEG_TOP - PEG_R:.4f}" mass="0" group="3" contype="8" conaffinity="1" friction="0.4 0.005 0.0001" {CONTACT} rgba="0.80 0.88 0.92 0.75" />\n'
             f"    </body>\n")

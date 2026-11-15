@@ -1,0 +1,143 @@
+{
+ "layout": "tube_peg_right_p1",
+ "tier": "tube",
+ "note": "middle right, peg near right, long carry toward the robot",
+ "generator": "scripts/sim_builders/tube_peg/build_tube_layouts.py",
+ "objects": {
+  "tube": {
+   "xy": [
+    0.4,
+    -0.08
+   ],
+   "yaw_deg": 0
+  },
+  "tube_holder": {
+   "xy": [
+    0.27,
+    -0.26
+   ],
+   "yaw_deg": 90
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "tube": 0.5,
+    "tube_holder": 0.53
+   },
+   "max_moved_mm": 0.53,
+   "contact_dist_mm": {
+    "tube": -0.34,
+    "tube_holder": -0.35
+   },
+   "worst_contact_dist_mm": -0.35
+  },
+  "scripted_insert": [
+   {
+    "tube": "tube",
+    "close_deg": 0.0,
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "lift_mm": 54.3,
+    "hold_deg": -23.3,
+    "hold_force_N": 10.0,
+    "hold_torque_Nm": 0.12,
+    "grip_shift_mm": 2.28,
+    "off_before_mm": 2.68,
+    "tube_rel_mm": [
+     0.0,
+     0.4,
+     4.0
+    ],
+    "upright": 1.0,
+    "holder_moved_mm": 2.5,
+    "on_peg": true
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.1,
+     "cursor": 0,
+     "stage": "approach",
+     "reward": 0.1,
+     "why": "reached approach"
+    },
+    {
+     "t": 3.1,
+     "cursor": 1,
+     "stage": "approach",
+     "reward": 0.1,
+     "why": "stage approach"
+    },
+    {
+     "t": 3.8,
+     "cursor": 1,
+     "stage": "contact",
+     "reward": 0.2,
+     "why": "reached contact"
+    },
+    {
+     "t": 5.1,
+     "cursor": 1,
+     "stage": "lifted",
+     "reward": 0.4,
+     "why": "reached lifted"
+    },
+    {
+     "t": 5.1,
+     "cursor": 2,
+     "stage": "lifted",
+     "reward": 0.4,
+     "why": "stage lifted"
+    },
+    {
+     "t": 7.3,
+     "cursor": 2,
+     "stage": "at_peg",
+     "reward": 0.7,
+     "why": "reached at_peg"
+    },
+    {
+     "t": 7.3,
+     "cursor": 3,
+     "stage": "at_peg",
+     "reward": 0.7,
+     "why": "stage at_peg"
+    },
+    {
+     "t": 10.0,
+     "cursor": 3,
+     "stage": "on_peg",
+     "reward": 0.85,
+     "why": "reached on_peg"
+    },
+    {
+     "t": 11.34,
+     "cursor": 3,
+     "stage": "inserted",
+     "reward": 1.0,
+     "why": "reached inserted"
+    },
+    {
+     "t": 11.34,
+     "cursor": 4,
+     "stage": "inserted",
+     "reward": 1.0,
+     "why": "stage inserted"
+    }
+   ],
+   "raw": [
+    {
+     "level": 6,
+     "peg_offset_mm": 0.4,
+     "depth_mm": 18.0,
+     "lift_mm": 3.5,
+     "upright": 1.0,
+     "touched": false
+    }
+   ]
+  }
+ }
+}

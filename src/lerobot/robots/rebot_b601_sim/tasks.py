@@ -25,6 +25,11 @@ hand-designed configurations per level, four hand-designed placements each (v2 2
 1-3, orange bottle = T107's name for the ROAR bottle, the bit after T056/T057 ("the bit", precision 5 top-pinch), the sequence
 tasks after T037 steps 1-6 (first object first; "the two bits" in any order), the fold task = T067 steps 1-5 ("Close the bit
 kit", also alone on the desk at L1 with the L3 time budget), the lid task = close_lid's T071 wiring on the twin's headphone case.
+
+Tube set (2026-11-15, scenes tube_peg_{left,right,two,three}_p1, scripts/sim_builders/tube_peg/README.md): one, two or three tubes, each
+with its own peg holder, on the twin desk for the v2 tube policy, tier ``tube``, scorer tube_task.py. Not in LAYOUTS (run with LAYOUTS="$(... tube_layouts)"). Task and
+subtask strings are the tube recordings' ("put the tube in the peg", "... on the left / right", "return home"); the layouts also
+set two robot fields (``Task.robot``): the finger force cap and the joint zero correction.
 """
 
 import json
@@ -36,11 +41,12 @@ from pathlib import Path
 from .easy_tasks import BottleBasketScorer, CloseLidScorer, LiftBottleScorer
 from .nail_task import NailTaskScorer
 from .scorer import TaskScorer
+from .tube_task import tube_peg_scorer
 from .twin_tasks import FoldKitScorer, pick_place_scorer, sequence_scorer
 
-TIERS = ("easy", "hard", "twin_l1", "twin_l2", "twin_l3", "twin_l4")
-TWIN_TIERS = TIERS[2:]
-TIER_TIME_S = {"twin_l1": 30.0, "twin_l2": 45.0, "twin_l3": 90.0, "twin_l4": 120.0}  # episode budget per twin tier (user 2026-10-30);
+TIERS = ("easy", "hard", "twin_l1", "twin_l2", "twin_l3", "twin_l4", "tube")
+TWIN_TIERS = TIERS[2:6]
+TIER_TIME_S = {"twin_l1": 30.0, "twin_l2": 45.0, "twin_l3": 90.0, "twin_l4": 120.0, "tube": 45.0}  # episode budget per twin tier (user 2026-10-30);
 # res600 run at 60 s: L1 successes finished by 25 s, L2 by 50 s (one), L4 sequences cannot finish in 60 s. Old tiers keep the config's value.
 SCENES_DIR = Path(__file__).resolve().parent / "scenes"
 
@@ -55,6 +61,7 @@ class Task:
     eval_subtask_contacts: tuple[str, ...]
     scorer: type[TaskScorer]
     time_s: float | None = None  # episode budget; None = the tier's (TIER_TIME_S)
+    robot: tuple[tuple[str, object], ...] = ()  # env.robot fields this layout sets (name, value)
 
     @property
     def stages(self) -> list[tuple[str, float, int]]:
@@ -67,7 +74,8 @@ class Task:
             f"--policy.eval_subtasks={json.dumps(list(self.eval_subtasks))}",
             f"--policy.eval_subtask_precisions={json.dumps(list(self.eval_subtask_precisions))}",
             f"--policy.eval_subtask_contacts={json.dumps(list(self.eval_subtask_contacts))}",
-        ] + ([f"--env.processor.reset.control_time_s={self.time_s or TIER_TIME_S[self.tier]}"] if self.time_s or self.tier in TIER_TIME_S else [])
+        ] + ([f"--env.processor.reset.control_time_s={self.time_s or TIER_TIME_S[self.tier]}"] if self.time_s or self.tier in TIER_TIME_S else []) + [
+            f"--env.robot.{name}={json.dumps(value)}" for name, value in self.robot]
 
 
 NAIL = dict(
@@ -183,6 +191,31 @@ TASKS.update({
     "twin_l4_three": _sequence_task("twin_l4", "Put the pill bottle, the cup and the tape roll in the basket", ("pill_bottle", "paper_cup", "tape_roll")),
 })
 
+# Tube set. Left / right as in the recordings' labels = the robot's own (left = +y = right in the top image: 14 of 16 "left" grasps
+# of the tube roots are at y > 0). The sides in script order as in the recordings: left, right, then the dark peg. Robot fields: the rigid tube stays in the pads only up to ~10 N per finger, and the real
+# grasp states put the uncorrected sim fingers 22-52 mm above the table (shoulder_lift zero, scripts/sim_builders/tube_peg/README.md).
+_TUBE_ROBOT = (("gripper_force_cap", 10.0), ("joint_zero_offset_deg", (0.0, -3.43, 0.0, 0.0, 0.0, 0.0, 0.0)))
+
+
+_TUBE_STEPS = {
+    "left": ("approach tube on the left", "grasp tube on the left", "move left tube to peg on the left", "insert tube in peg on the left"),
+    "right": ("approach tube on the right", "grasp tube on the right", "move right tube to peg on the right", "insert tube in peg on the right"),
+    "dark": ("approach tube at the dark peg", "grasp tube at the dark peg", "move tube to the dark peg", "insert tube in the dark peg"),
+}
+
+
+def _tube_task(*sides: str) -> Task:
+    """Tube i of the scene (``tube``, ``tube_2``, ...) is the one ``sides[i]`` names; 45 s per tube (the recordings take ~20 s each)."""
+    n = len(sides)
+    steps = tuple(step for side in sides for step in _TUBE_STEPS[side]) + ("return home",)
+    return Task(tier="tube", task="put the tube in the peg", sheet_id=None, eval_subtasks=steps, eval_subtask_precisions=(3, 3, 3, 3) * n + (1,),
+                eval_subtask_contacts=("na", "top-pinch", "na", "insert") * n + ("na",), scorer=tube_peg_scorer(n), time_s=45.0 * n, robot=_TUBE_ROBOT)
+
+
+TASKS.update({"tube_peg_left": _tube_task("left"), "tube_peg_right": _tube_task("right"),
+              "tube_peg_two": _tube_task("left", "right"), "tube_peg_three": _tube_task("left", "right", "dark")})
+TUBE_LAYOUTS = ("tube_peg_left", "tube_peg_right", "tube_peg_two", "tube_peg_three")
+
 # The eval set (run_sim_eval.sh): the twin levels in order; a layout runs through its placements twin_<...>_p<k> on disk (``variants``).
 LAYOUTS = tuple(name for name in TASKS if name.startswith("twin_"))
 
@@ -200,9 +233,9 @@ def variants(layout: str) -> list[str]:
     return sorted(names, key=lambda n: int(n[len(layout) + 2:]))
 
 
-def eval_layouts() -> list[str]:
-    """LAYOUTS with each layout replaced by its placements on disk; a layout without any is skipped (never run as a base)."""
-    return [name for layout in LAYOUTS for name in variants(layout)]
+def eval_layouts(layouts: tuple[str, ...] | None = None) -> list[str]:
+    """``layouts`` (default LAYOUTS) with each layout replaced by its placements on disk; a layout without any is skipped (never run as a base)."""
+    return [name for layout in (LAYOUTS if layouts is None else layouts) for name in variants(layout)]
 
 
 def task_for(scene: str) -> Task:
@@ -214,6 +247,8 @@ def main() -> None:
     one per line (run_sim_eval.sh)."""
     if sys.argv[1] == "layouts":
         print(" ".join(eval_layouts()))
+    elif sys.argv[1] == "tube_layouts":
+        print(" ".join(eval_layouts(TUBE_LAYOUTS)))
     elif sys.argv[1] == "overrides":
         print("\n".join(task_for(sys.argv[2]).overrides()))
 
