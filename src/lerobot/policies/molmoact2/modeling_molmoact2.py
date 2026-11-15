@@ -22,6 +22,7 @@ from torch.distributions import Beta
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
+from lerobot.utils.tip_target import TIP_DEPTH_KEY, TIP_TARGET_KEY
 
 from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
 from ..rtc.modeling_rtc import RTCProcessor
@@ -30,6 +31,18 @@ from .configuration_molmoact2 import MolmoAct2Config
 from .hand_block import HAND_ACTION_SLOTS, HAND_ACTION_WIDTH, HAND_DELTA_DIM
 from .hand_head import HandTokenRows, install_hand_expert_head, install_hand_token_rows
 from .hand_loss import block_mean_flow_loss, hand_fk_term, implied_clean_sample
+from .tip_target import (
+    TIP_HEADS,
+    TIP_LAYERS,
+    TIP_TEXT_LENGTH,
+    TIP_TOP_CAMERA,
+    TIP_WIDTH,
+    TIP_WRIST_CAMERA,
+    Adapter,
+    patch_points,
+    scaled_points,
+    tip_target_loss,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1790,6 +1803,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 device=device, dtype=model_dtype
             )
 
+        # Tip target adapter (tip_target.py): fresh weights like state_projector, trained by its own
+        # loss on the detached image tokens of the training forward.
+        self.tip_adapter: Adapter | None = None
+        self._tip_image_features = None
+        if self.config.tip_target:
+            d_text = int(self._hf_model().config.text_config.hidden_size)
+            self.tip_adapter = Adapter(
+                d_text, TIP_TEXT_LENGTH, image_width=d_text, width=TIP_WIDTH, layers=TIP_LAYERS, heads=TIP_HEADS
+            ).to(device=next(self.model.parameters()).device, dtype=model_dtype)
+
         self.future_visual = None
         if self.config.future_visual_loss.enabled:
             from .future_visual import FutureVisualObjective
@@ -1819,7 +1842,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 missing_keys = [key for key in missing_keys if not key.startswith("future_visual.")]
         # Separate hand parameters (hand_head.py): a checkpoint saved before they existed, or with
         # them off, initializes them afresh; one saved with them on loads fine without them.
-        for marker in (".hand_head.", "hand_token_rows."):
+        # The tip adapter (tip_target.py) follows the same rule.
+        for marker in (".hand_head.", "hand_token_rows.", "tip_adapter."):
             missing_keys = [key for key in missing_keys if marker not in key]
             unexpected_keys = [key for key in unexpected_keys if marker not in key]
         return missing_keys, unexpected_keys
@@ -2673,6 +2697,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             raise ValueError("MolmoAct2 joint flow training cannot combine inputs_embeds with visual inputs.")
         if inputs_embeds is None:
             inputs_embeds, _image_features = backbone.build_input_embeddings(input_ids, images, token_pooling)
+            self._tip_image_features = _image_features
 
         attention_mask = model_inputs.get("attention_mask")
         token_type_ids = model_inputs.get("token_type_ids")
@@ -3799,6 +3824,24 @@ class MolmoAct2Policy(PreTrainedPolicy):
             metrics["depth_gripper_event_loss"] = depth_event_loss.detach().float().mean().item()
             metrics["depth_gripper_close_bce"] = depth_event_head_bce[0].detach().float().item()
             metrics["depth_gripper_open_bce"] = depth_event_head_bce[1].detach().float().item()
+
+        if self.tip_adapter is not None and TIP_TARGET_KEY in batch:
+            # The adapter reads this forward's image tokens detached: its loss moves the adapter only.
+            target = batch[TIP_TARGET_KEY].float()
+            cameras = list(self.config.image_keys)
+            features = self._tip_image_features.detach().view(target.shape[0], len(cameras), 196, -1)
+            points = patch_points(batch[TIP_DEPTH_KEY])
+            adapter_dtype = self.tip_adapter.none.dtype
+            scores = self.tip_adapter(
+                features[:, cameras.index(TIP_WRIST_CAMERA)].to(adapter_dtype),
+                features[:, cameras.index(TIP_TOP_CAMERA)].to(adapter_dtype),
+                scaled_points(points).to(adapter_dtype),
+                self._backbone().transformer.wte(batch["tip_subtask_ids"]).detach().to(adapter_dtype),
+                batch["tip_subtask_mask"],
+            )
+            tip_loss, tip_metrics = tip_target_loss(scores.float(), target, points, reduction)
+            losses.append(tip_loss)
+            metrics.update(tip_metrics)
 
         if future_active:
             features = vision._lerobot_future_features

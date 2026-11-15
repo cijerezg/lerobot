@@ -27,7 +27,7 @@ def base_tensors(prefix):
 
 def subtask_embeddings(texts):
     """{text: the base model's input embeddings of its tokens, [tokens, width]}."""
-    tokenizer = AutoTokenizer.from_pretrained(BASE)
+    tokenizer = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
     table = base_tensors("model.transformer.wte.")["embedding"]
     return {t: table[tokenizer(t, add_special_tokens=False).input_ids].float() for t in texts}
 

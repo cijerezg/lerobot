@@ -36,6 +36,7 @@ from lerobot.utils.constants import (
     PRETRAINED_MODEL_DIR,
 )
 from lerobot.utils.motor_velocity import VELOCITY_KEY
+from lerobot.utils.tip_target import TIP_DEPTH_KEY, TIP_TARGET_KEY, tip_target_rows
 from lerobot.utils.transition import move_transition_to_device
 
 # Depths for the SO100/SO101 MolmoAct2 checkpoint. Adjust if you point this
@@ -253,6 +254,7 @@ _FORWARDED_COMPLEMENTARY = (
     "metadata_contact",
     "gripper_torque_level",
     VELOCITY_KEY,
+    TIP_TARGET_KEY,
     "state_dim_is_pad",
     "action_dim_is_pad",
     "action_layout_id",
@@ -488,6 +490,20 @@ class MolmoAct2Trainer(Trainer):
             if not pack_step.velocity_low:
                 pack_step.velocity_low = [float(v) for v in dataset_stats[OBS_VELOCITY]["q01"]]
                 pack_step.velocity_high = [float(v) for v in dataset_stats[OBS_VELOCITY]["q99"]]
+        if getattr(cfg.policy, "tip_target", False):
+            # The tip target range (q01 / q99 of the offsets in the wrist view, over the training
+            # roots) travels with the checkpoint's processor, like the velocity range.
+            pack_step = next(
+                step for step in result[0].steps if isinstance(step, MolmoAct2PackInputsProcessorStep)
+            )
+            if not pack_step.tip_target_low:
+                import numpy as np
+
+                rows = [tip_target_rows(Path(source.root)) for source in cfg.dataset.sources]
+                rows = np.concatenate([r for r in rows if r is not None])
+                offsets = rows[rows[:, 0] > 0, 1:4]
+                pack_step.tip_target_low = [float(v) for v in np.quantile(offsets, 0.01, axis=0)]
+                pack_step.tip_target_high = [float(v) for v in np.quantile(offsets, 0.99, axis=0)]
         self._preprocessor = result[0]  # cache for critic_value_for_logging
         self.sync_subtask_vocabulary(result[0], dataset, is_main_process)
         return result
@@ -561,7 +577,12 @@ class MolmoAct2Trainer(Trainer):
                 param.requires_grad = _is_actor_depth_parameter(name)
                 continue
 
-            if _is_actor_depth_parameter(name) or "state_projector" in name or _is_fresh_hand_parameter(name):
+            if (
+                _is_actor_depth_parameter(name)
+                or "state_projector" in name
+                or _is_fresh_hand_parameter(name)
+                or name.startswith("tip_adapter.")
+            ):
                 # Independent depth modules plus the fresh MEM state-history projector and the
                 # hand block's own parameters (hand_head.py) are always trainable. Without this
                 # whitelist they fall through to the unknown-parameter branch and are frozen.
@@ -649,24 +670,38 @@ class MolmoAct2Trainer(Trainer):
             or "state_projector" in name
             or name.startswith("future_visual.predictor.")
             or _is_fresh_hand_parameter(name)
+            or name.startswith("tip_adapter.")
         }
         token_ids = {id(p) for name, p in policy.named_parameters() if "hand_token_rows" in name}
+        tip_ids = {id(p) for name, p in policy.named_parameters() if name.startswith("tip_adapter.")}
         policy_group = next(g for g in groups if g["name"] == "policy")
         depth_params = [p for p in policy_group["params"] if id(p) in depth_ids]
         if depth_params:
             policy_group["params"] = [p for p in policy_group["params"] if id(p) not in depth_ids]
             depth_lr = cfg.policy.optimizer_lr if cfg.policy.depth_lr is None else cfg.policy.depth_lr
             token_lr = getattr(getattr(cfg.policy, "hand", None), "token_lr", None)
+            # Parameters with their own learning rate: second / third torch param group of "depth".
+            own: list = []
             token_params = [p for p in depth_params if id(p) in token_ids]
             if token_lr is not None and token_params:
-                others = [p for p in depth_params if id(p) not in token_ids]
-                params: list = [{"params": token_params, "lr": float(token_lr)}]
-                if others:
-                    params.insert(0, {"params": others, "lr": depth_lr})
-                groups.append({"name": "depth", "params": params, "lr": depth_lr})
+                own.append({"params": token_params, "lr": float(token_lr)})
                 logging.info(
                     f"[MolmoAct2Trainer] hand_token_rows lr={float(token_lr):g} (depth lr={depth_lr:g})"
                 )
+            tip_params = [p for p in depth_params if id(p) in tip_ids]
+            if tip_params:
+                from lerobot.policies.molmoact2.tip_target import TIP_LR
+
+                own.append({"params": tip_params, "lr": TIP_LR})
+                logging.info(
+                    f"[MolmoAct2Trainer] tip_adapter lr={TIP_LR:g}, "
+                    f"params={sum(p.numel() for p in tip_params):,}"
+                )
+            if own:
+                taken = {id(p) for group in own for p in group["params"]}
+                others = [p for p in depth_params if id(p) not in taken]
+                params: list = ([{"params": others, "lr": depth_lr}] if others else []) + own
+                groups.append({"name": "depth", "params": params, "lr": depth_lr})
             else:
                 groups.append({"name": "depth", "params": depth_params, "lr": depth_lr})
             actor_depth_count = sum(
@@ -1065,6 +1100,9 @@ class MolmoAct2Trainer(Trainer):
         if comp:
             pre_input[TransitionKey.COMPLEMENTARY_DATA] = comp
         batch = preprocessor(pre_input)
+        if getattr(cfg.policy, "tip_target", False):
+            batch[TIP_TARGET_KEY] = raw_comp[TIP_TARGET_KEY].float()
+            batch[TIP_DEPTH_KEY] = raw_comp["depth.wrist.depth"]
         if cfg.policy.depth_gripper_event_loss.enabled:
             from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
 
@@ -1194,8 +1232,15 @@ class MolmoAct2Trainer(Trainer):
         if hasattr(raw_policy, "critic"):
             critic_net: nn.Module = raw_policy.critic
             critic_param_ids = {id(p) for p in critic_net.parameters()}
+        # The tip adapter is clipped on its own: its gradient shares nothing with the policy's.
+        tip_adapter = getattr(raw_policy, "tip_adapter", None)
+        tip_params = list(tip_adapter.parameters()) if tip_adapter is not None else []
+        tip_param_ids = {id(p) for p in tip_params}
+        tip_frames = tip_target_frames = 0
         actor_params = [
-            p for p in raw_policy.parameters() if p.requires_grad and id(p) not in critic_param_ids
+            p
+            for p in raw_policy.parameters()
+            if p.requires_grad and id(p) not in critic_param_ids and id(p) not in tip_param_ids
         ]
 
         # Score every accumulation microbatch before normalizing weights over the
@@ -1348,6 +1393,16 @@ class MolmoAct2Trainer(Trainer):
             for source, destination in _HAND_TERM_KEYS.items():
                 if source in metrics:
                     accum[destination] = accum.get(destination, 0.0) + float(metrics[source]) / grad_accum
+            if "tip_frames" in metrics:
+                # Sums here, divided by the frame counts after the loop (policies/molmoact2/tip_target.py).
+                tip_frames += metrics["tip_frames"]
+                tip_target_frames += metrics["tip_target_frames"]
+                for name in ("loss", "none_accuracy"):
+                    accum[f"tip/{name}"] = accum.get(f"tip/{name}", 0.0) + metrics[f"tip_{name}"] * metrics["tip_frames"]
+                for name in ("peak_on_patch", "peak_within_one", "vector_error_cm"):
+                    accum[f"tip/{name}"] = (
+                        accum.get(f"tip/{name}", 0.0) + metrics[f"tip_{name}"] * metrics["tip_target_frames"]
+                    )
             accum["loss_action_aux"] += float(metrics.get("action_auxiliary_loss", 0.0)) / grad_accum
             accum["loss_discrete_ce"] += float(metrics.get("discrete_ce_loss", 0.0)) / grad_accum
             accum["loss_discrete_aux"] += float(metrics.get("discrete_auxiliary_loss", 0.0)) / grad_accum
@@ -1435,6 +1490,14 @@ class MolmoAct2Trainer(Trainer):
             )
 
         actor_grad_norm = runtime.clip_grad_norm_(actor_params, clip_norm).item()
+        if tip_params:
+            from lerobot.policies.molmoact2.tip_target import TIP_GRAD_CLIP_NORM
+
+            accum["tip/grad_norm"] = runtime.clip_grad_norm_(tip_params, TIP_GRAD_CLIP_NORM).item()
+            for name in ("loss", "none_accuracy"):
+                accum[f"tip/{name}"] /= max(tip_frames, 1)
+            for name in ("peak_on_patch", "peak_within_one", "vector_error_cm"):
+                accum[f"tip/{name}"] /= max(tip_target_frames, 1)
 
         # bf16 rounding telemetry, only with optimizer_stochastic_rounding (see _rounding_telemetry).
         rounding_optimizers = []

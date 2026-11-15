@@ -451,6 +451,10 @@ class MolmoAct2Config(PreTrainedConfig):
         default_factory=DiscreteActionAuxiliaryLossConfig
     )
     depth_gripper_event_loss: DepthGripperEventLossConfig = field(default_factory=DepthGripperEventLossConfig)
+    # Tip target (docs/notes/tip_target_adapter.md): the true target of the next gripper event as a
+    # prompt clause, and the tip adapter (tip_target.py) co-trained on the policy's image tokens to
+    # predict it from the wrist depth. The adapter's output is logged only.
+    tip_target: bool = False
     num_inference_steps: int | None = None
     mask_action_dim_padding: bool = True
     # EE mixture loss (docs/ee_mixture_loss/TODO.md): append the fingertip-pose block to the

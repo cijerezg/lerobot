@@ -30,20 +30,16 @@ for i, q in enumerate(state):
     rot[i] = frame(a, j)
     cam_p[i], cam_r[i] = arm.gripper.wrist(q)
 
-# events: (frames that aim at it, event frame, kind, subtask of the event's segment, placed)
-events = []
+# gripper events: one per grasp segment (the hold starts) and one per insert segment (the release starts)
+found = []
 for k, s in segs.iterrows():
     word = s.subtask.split()[0]
     same_ep = lambda j: 0 <= j < len(segs) and segs.episode_index[j] == s.episode_index
     after = segs.subtask[k + 1].split()[0] if same_ep(k + 1) else ""
-    if word == "grasp" and after in ("move", "insert"):
+    if word == "grasp":
         # the hold starts after the last frame the gripper was wider than the angle it leaves the segment with
         wide = np.flatnonzero(grip[s.from_index : s.to_index] < grip[s.to_index - 1] - SLACK_DEG)
-        event = s.from_index + (wide[-1] + 1 if len(wide) else 0)
-        start = k
-        while same_ep(start - 1) and segs.subtask[start - 1] == "approach" + s.subtask[len("grasp") :]:
-            start -= 1
-        events.append((segs.from_index[start], event, "grasp", s.subtask, True))
+        found.append((s.from_index + (wide[-1] + 1 if len(wide) else 0), "grasp", s.subtask, True))
     if word == "insert":
         start = k
         while same_ep(start - 1) and segs.subtask[start - 1].split()[0] == "move":
@@ -51,7 +47,18 @@ for k, s in segs.iterrows():
         a = segs.from_index[start]
         # the release starts after the last frame the gripper was still at the tightest angle of the carry
         event = a + np.flatnonzero(grip[a : s.to_index] >= grip[a : s.to_index].max() - SLACK_DEG)[-1]
-        events.append((a, event, "release", s.subtask, after != "grasp"))
+        found.append((event, "release", s.subtask, after != "grasp"))
+
+# every frame aims at the next event of its episode: an event's frames run from the event before it (or the episode's
+# first frame) up to it. Only the frames after an episode's last event have no target.
+# events: (first frame that aims at it, event frame, kind, subtask of the event's segment, placed)
+events = []
+first = df.groupby("episode_index")["index"].min()
+for event, kind, subtask, placed in sorted(found):
+    ep = df.episode_index[event]
+    a = max([e[1] for e in events if df.episode_index[e[1]] == ep], default=first[ep])
+    if event > a:
+        events.append((a, event, kind, subtask, placed))
 
 rows = pd.DataFrame({"index": df["index"], "episode_index": df.episode_index, "frame_index": df.frame_index, "subtask": ""})
 for _, s in segs.iterrows():
@@ -116,7 +123,8 @@ for a, event, kind, subtask, placed in events:
     cv2.putText(top, f"ep {df.episode_index[a]} fr {df.frame_index[a]} {subtask}"[:52], (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     cv2.putText(wrist, f"-{(event - i) / 30:.1f} s, {100 * rows.distance[i]:.1f} cm" + ("" if placed else ", regrasped after"), (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     tiles.append(np.hstack([cv2.resize(top, (640, 480)), wrist]))
-tiles += [np.zeros_like(tiles[0])] * (-len(tiles) % 3)
-sheet = np.vstack([np.hstack(tiles[k : k + 3]) for k in range(0, len(tiles), 3)])
-cv2.imwrite(out + "/check.jpg", cv2.resize(sheet, None, fx=0.4, fy=0.4))
+if tiles:
+    tiles += [np.zeros_like(tiles[0])] * (-len(tiles) % 3)
+    sheet = np.vstack([np.hstack(tiles[k : k + 3]) for k in range(0, len(tiles), 3)])
+    cv2.imwrite(out + "/check.jpg", cv2.resize(sheet, None, fx=0.4, fy=0.4))
 print("wrote", store + "/targets.parquet", store + "/provenance.json", out + "/check.jpg")

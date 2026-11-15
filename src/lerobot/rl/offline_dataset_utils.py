@@ -24,6 +24,7 @@ from lerobot.utils.gripper_torque import (
     smooth_gripper_torque,
 )
 from lerobot.utils.motor_velocity import VELOCITY_KEY, smooth_velocity
+from lerobot.utils.tip_target import TIP_TARGET_KEY, tip_target_rows
 
 
 @dataclass(frozen=True)
@@ -739,6 +740,7 @@ def materialize_dataset_labels(
     embodiment: str | None = None,
     gripper_torque=None,
     velocity: bool = False,
+    tip_target: bool = False,
 ) -> None:
     """Overlay current labels on heavy cache data without decoding video."""
     task_indices = _dataset_index_column(dataset, "task_index")
@@ -795,6 +797,12 @@ def materialize_dataset_labels(
         smoothed = _velocity_column(dataset)
         if smoothed is not None:
             _install_buffer_column(buffer, VELOCITY_KEY, smoothed, fill_value=float("nan"))
+    if tip_target:
+        # Every source carries the column; a root without targets carries NaN rows.
+        rows = tip_target_rows(dataset.root)
+        if rows is None:
+            rows = np.full((len(task_indices), 6), np.nan, dtype=np.float32)
+        _install_buffer_column(buffer, TIP_TARGET_KEY, torch.as_tensor(rows), fill_value=float("nan"))
     if require_depth_gripper_event_labels:
         from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
         from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
@@ -917,6 +925,7 @@ def load_additional_offline_buffers(
             embodiment=source.embodiment,
             gripper_torque=getattr(cfg.policy, "gripper_torque", None),
             velocity=getattr(cfg.policy, "velocity", False),
+            tip_target=getattr(cfg.policy, "tip_target", False),
         )
         buffer.dataset = dataset
         buffer.offline_source = source

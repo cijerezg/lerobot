@@ -31,6 +31,9 @@ from lerobot.utils.depth_gripper_events import (
     DEPTH_GRIPPER_EVENT_TARGET_KEYS,
     load_depth_gripper_event_targets,
 )
+from lerobot.utils.gripper_torque import GRIPPER_TORQUE_LEVEL_KEY
+from lerobot.utils.motor_velocity import VELOCITY_KEY
+from lerobot.utils.tip_target import TIP_TARGET_KEY, tip_target_rows
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -599,6 +602,34 @@ def depth_sidecar_key(root, depth_role: str) -> str:
     return depth_role
 
 
+_PROMPT_COLUMNS: dict[str, dict] = {}
+
+
+def prompt_columns(dataset, cfg) -> dict:
+    """The per-frame prompt columns the buffer installs for training, read once per root:
+    smoothed velocity, gripper torque level and tip target, each only when the policy has
+    it on and the root carries it."""
+    velocity = getattr(cfg.policy, "velocity", False)
+    torque = getattr(cfg.policy, "gripper_torque", None)
+    tip_target = getattr(cfg.policy, "tip_target", False)
+    if not (velocity or tip_target or (torque is not None and torque.levels > 0)):
+        return {}
+    root = str(dataset.root)
+    if root not in _PROMPT_COLUMNS:
+        from lerobot.rl.offline_dataset_utils import _gripper_torque_level_column, _velocity_column
+
+        columns = {}
+        if velocity:
+            columns[VELOCITY_KEY] = _velocity_column(dataset)
+        if torque is not None and torque.levels > 0:
+            columns[GRIPPER_TORQUE_LEVEL_KEY] = _gripper_torque_level_column(dataset, torque)
+        if tip_target:
+            rows = tip_target_rows(dataset.root)
+            columns[TIP_TARGET_KEY] = None if rows is None else torch.from_numpy(rows)
+        _PROMPT_COLUMNS[root] = {key: column for key, column in columns.items() if column is not None}
+    return _PROMPT_COLUMNS[root]
+
+
 def probe_frame_inputs(
     dataset,
     cfg,
@@ -611,7 +642,9 @@ def probe_frame_inputs(
     with_gripper_event_targets: bool = True,
 ) -> dict:
     """One frame in the deployment regime: observation + wrist depth + short-term
-    history + the subtask and metadata clauses the action prompt carries at rollout.
+    history + the subtask and metadata clauses the action prompt carries at rollout,
+    and the velocity / gripper torque / tip target clauses when the policy has them
+    (``prompt_columns``, as ``probe_complementary.*`` rows).
     ``with_gripper_event_targets`` adds the depth gripper-event loss targets when that
     loss is on; a probe that only reads the forward never needs them.
 
@@ -678,6 +711,9 @@ def probe_frame_inputs(
                 role = key.rsplit(".", 1)[-1].removesuffix("_is_pad")
                 if role not in roles:
                     del obs[key]
+
+    for key, column in prompt_columns(dataset, cfg).items():
+        obs[f"probe_complementary.{key}"] = column[global_idx][None]
 
     result = {
         "obs": obs,

@@ -48,6 +48,7 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import require_package
 from lerobot.utils.motor_velocity import VELOCITY_KEY
+from lerobot.utils.tip_target import TIP_TARGET_KEY
 
 from .action_layout import (
     JOINT_SLOTS,
@@ -63,6 +64,7 @@ from .anchor_encoding import (
     policy_action_with_anchor_to_transition,
 )
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
+from .tip_target import TIP_TEXT_LENGTH
 from .hand_block import (
     HAND_ACTION_SLOTS,
     HAND_ACTION_WIDTH,
@@ -306,6 +308,7 @@ def _build_robot_text(
     gripper_torque_level: int = 0,
     gripper_torque_levels: int = 0,
     velocity_string: str = "",
+    tip_target_clause: str = "",
 ) -> str:
     """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
 
@@ -354,7 +357,11 @@ def _build_robot_text(
 
     velocity_string: the smoothed motor velocities as state tokens, one per joint
     (_extract_velocity_strings, utils/motor_velocity.py), rendered right after the state
-    clause. Empty omits it, like the torque clause; no training dropout either."""
+    clause. Empty omits it, like the torque clause; no training dropout either.
+
+    tip_target_clause: the sentence about the target of the next gripper event
+    (_extract_tip_target_clauses, utils/tip_target.py), rendered after the torque clause.
+    Empty omits it (a source without targets); no training dropout."""
     embodiment_clause = (
         f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
     )
@@ -397,7 +404,7 @@ def _build_robot_text(
             metadata_clause += f" The contact is {contact_phrase_for(int(metadata['contact']))}."
     prompt = (
         f"{embodiment_clause}{control_mode_clause}The task is to {task}."
-        f"{depth_clause}{subtask_clause}{state_clause}{velocity_clause}{gripper_torque_clause}"
+        f"{depth_clause}{subtask_clause}{state_clause}{velocity_clause}{gripper_torque_clause}{tip_target_clause}"
         f"{history_clause}{history_images_clause}"
         f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
@@ -1397,6 +1404,10 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # it; empty = clause off.
     velocity_low: list[float] = field(default_factory=list)
     velocity_high: list[float] = field(default_factory=list)
+    # Tip target clause: q01 / q99 of the training data's target offset x, y, z in m, the
+    # range the state tokens divide. Pinned like the velocity range; empty = clause off.
+    tip_target_low: list[float] = field(default_factory=list)
+    tip_target_high: list[float] = field(default_factory=list)
     # Embodiment clause vocabulary: index → prompt name, pinned into the saved config
     # so a checkpoint renders through the vocabulary it trained with even after
     # lerobot/datasets/embodiment.py grows new robots. No dropout knob on purpose —
@@ -1518,6 +1529,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "gripper_torque_levels": self.gripper_torque_levels,
             "velocity_low": list(self.velocity_low),
             "velocity_high": list(self.velocity_high),
+            "tip_target_low": list(self.tip_target_low),
+            "tip_target_high": list(self.tip_target_high),
             "history_dropout": self.history_dropout,
             "history_stride_seconds": self.history_stride_seconds,
             "history_times_seconds": self.history_times_seconds,
@@ -2086,6 +2099,37 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             for row in unit
         ]
 
+    def _extract_tip_target_clauses(self, complementary: dict, batch_size: int) -> list[str]:
+        target = complementary.get(TIP_TARGET_KEY)
+        if target is None or not self.tip_target_low:
+            return [""] * batch_size
+        low = np.array(self.tip_target_low)
+        high = np.array(self.tip_target_high)
+        rows = torch.as_tensor(target).detach().cpu().double().numpy()
+        rows = np.broadcast_to(rows.reshape(-1, rows.shape[-1]), (batch_size, rows.shape[-1]))
+        # The state's QUANTILES scaling on x, y, z; a NaN row = a source without targets = no clause.
+        unit = 2.0 * (rows[:, 1:4] - low) / (high - low) - 1.0
+        return [
+            ""
+            if np.isnan(row).any()
+            else f" The target is at {_build_discrete_state_string(offset, self.num_state_tokens)} from the gripper tip."
+            if row[0] > 0
+            else " There is no target in the wrist camera view."
+            for row, offset in zip(rows, unit, strict=True)
+        ]
+
+    def _tip_subtask_tokens(self, subtask_texts: list[str | None]) -> dict[str, torch.Tensor]:
+        """The subtask text the tip adapter reads, as token ids padded to TIP_TEXT_LENGTH.
+
+        Tokenized on its own, before the training dropout of the prompt's subtask clause."""
+        ids = torch.zeros(len(subtask_texts), TIP_TEXT_LENGTH, dtype=torch.long)
+        mask = torch.zeros(len(subtask_texts), TIP_TEXT_LENGTH, dtype=torch.bool)
+        for row, text in enumerate(subtask_texts):
+            tokens = self.processor.tokenizer(text or "", add_special_tokens=False).input_ids[:TIP_TEXT_LENGTH]
+            ids[row, : len(tokens)] = torch.tensor(tokens, dtype=torch.long)
+            mask[row, : len(tokens)] = True
+        return {"tip_subtask_ids": ids, "tip_subtask_mask": mask}
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if self.prompt_mode == "subtask_generation":
             return self._pack_subtask_generation(transition)
@@ -2150,6 +2194,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             ]
         gripper_torque_level_list = self._extract_gripper_torque_levels(complementary, batch_size)
         velocity_strings = self._extract_velocity_strings(complementary, batch_size)
+        tip_target_clauses = self._extract_tip_target_clauses(complementary, batch_size)
         history_states = self._extract_history_states(complementary, batch_size)
         image_keys = self._resolve_image_keys(observation)
         history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
@@ -2223,6 +2268,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 gripper_torque_level=gripper_torque_level_list[batch_idx],
                 gripper_torque_levels=self.gripper_torque_levels,
                 velocity_string=velocity_strings[batch_idx],
+                tip_target_clause=tip_target_clauses[batch_idx],
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -2344,6 +2390,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         complementary.update(dict(inputs))
         complementary["action_dim_is_pad"] = action_dim_is_pad
+        if self.tip_target_low:
+            complementary.update(self._tip_subtask_tokens(subtask_texts))
         self._emit_state_values(complementary, history_states, history_on)
         if self.num_depth_tokens > 0:
             complementary["depth_token_id"] = torch.tensor(self._depth_token_id)

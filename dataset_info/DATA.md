@@ -1,6 +1,6 @@
 # Data record
 
-Generated 2026-11-14 22:00 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
+Generated 2026-11-15 09:13 by `uv run python lerobot/dataset_info/data_count.py` from `config_rl.yaml`. Do not edit by hand; rerun after every change to the data or the config.
 
 ## Training mix by sampling group
 
@@ -8,9 +8,10 @@ Share = fraction of all training samples. Usable = frames minus the usefulness c
 
 | group | share | episodes | frames | usable frames | hours |
 |---|---|---|---|---|---|
-| tube | 0.7237 | 16 | 34,836 | 34,836 | 0.32 |
-| tube2 | 0.2763 | 5 | 13,299 | 13,299 | 0.12 |
-| **ReBot sampled** | **1** | **21** | **48,135** | **48,135** | **0.45** |
+| tube | 0.603 | 15 | 34,266 | 34,266 | 0.32 |
+| tube2 | 0.234 | 5 | 13,299 | 13,299 | 0.12 |
+| tube3 | 0.1629 | 4 | 9,258 | 9,258 | 0.09 |
+| **ReBot sampled** | **1** | **24** | **56,823** | **56,823** | **0.53** |
 
 Diverse corpus: off.
 
@@ -18,14 +19,15 @@ Diverse corpus: off.
 
 | source | root | episodes | frames | hours | sampled eps | groups (episodes / frames) |
 |---|---|---|---|---|---|---|
-| tube | `outputs/data/rebot_teleop_2026-11-14-tube-annotated-v1` | 16 | 34,836 | 0.32 | 16 | tube 16 / 34,836 |
+| tube | `outputs/data/rebot_teleop_2026-11-14-tube-annotated-v2` | 15 | 34,266 | 0.32 | 15 | tube 15 / 34,266 |
 | tube2 | `outputs/data/rebot_teleop_2026-11-14-tube2-annotated-v1` | 5 | 13,299 | 0.12 | 5 | tube2 5 / 13,299 |
-| **total** | | **21** | **48,135** | **0.45** | | |
+| tube3 | `outputs/data/rebot_teleop_2026-11-15-tube3-annotated-v1` | 4 | 9,258 | 0.09 | 4 | tube3 4 / 9,258 |
+| **total** | | **24** | **56,823** | **0.53** | | |
 
 
 ## Validation
 
-None (`val_dataset_path: null`).
+`outputs/data/rebot_val_2026-11-15-tube-merged-v1`: 2 episodes, 2,448 frames, 0.02 h.
 
 ## Built, not in the config
 
@@ -39,14 +41,14 @@ From each root's `meta/episode_metadata.parquet`, groups with share > 0. Cycle =
 
 | object | grasp cycles | internal | external | episodes | frames | hours | variants (cycles) |
 |---|---|---|---|---|---|---|---|
-| tube | 49 | 49 | 0 | 21 | 46,103 | 0.43 |  |
+| tube | 60 | 60 | 0 | 24 | 54,634 | 0.51 |  |
 
 ## Subtasks by verb (sampled ReBot episodes)
 
 | verb | segments | frames | hours |
 |---|---|---|---|
-| grasp | 48 | 19,103 | 0.18 |
-| approach | 41 | 10,792 | 0.10 |
-| move | 40 | 5,684 | 0.05 |
-| insert | 40 | 10,524 | 0.10 |
-| return home | 10 | 2,032 | 0.02 |
+| grasp | 56 | 20,417 | 0.19 |
+| approach | 52 | 14,206 | 0.13 |
+| insert | 49 | 12,953 | 0.12 |
+| move | 48 | 7,058 | 0.07 |
+| return home | 11 | 2,189 | 0.02 |

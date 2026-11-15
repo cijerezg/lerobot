@@ -122,3 +122,27 @@ def test_state_follow_reads_the_state_cell_wherever_it_sits():
         )
         is None
     )
+
+
+def test_prompt_columns_follow_their_switch_or_stay_the_anchors():
+    obs = {
+        **OBS,
+        "probe_complementary.motor_velocity": torch.zeros(1, 7),
+        "probe_complementary.tip_target": torch.zeros(1, 6),
+        "probe_complementary.gripper_torque_level": torch.zeros(1, dtype=torch.long),
+    }
+    donor = {key: torch.ones_like(value) for key, value in obs.items()}
+
+    cube = isw.cube_from_spec("state,image,velocity,tip_target")
+    assert cube.letters == "SIVX" and cube.n_cells == 16
+    groups, fixed = isw._factor_keys(obs, cube)
+    assert groups["velocity"] == ["probe_complementary.motor_velocity"]
+    assert groups["tip_target"] == ["probe_complementary.tip_target"]
+    assert "probe_complementary.gripper_torque_level" in fixed
+    cell = isw._cell(obs, donor, cube.bit("tip_target"), groups, fixed, cube)
+    assert cell["probe_complementary.tip_target"].sum() > 0
+    assert cell["probe_complementary.motor_velocity"].sum() == 0
+    assert cell["probe_complementary.gripper_torque_level"].sum() == 0
+
+    groups, fixed = isw._factor_keys(obs, isw.cube_from_spec("state,image,depth"))
+    assert {"probe_complementary.motor_velocity", "probe_complementary.tip_target"} <= set(fixed)

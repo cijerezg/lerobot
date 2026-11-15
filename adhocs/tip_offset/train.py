@@ -36,7 +36,6 @@ frames = pd.concat(frames).reset_index(drop=True)
 wrist, top, points, surface = torch.cat(wrist), torch.cat(top), torch.cat(points), np.concatenate(surface)
 n = len(frames)
 has_target = torch.tensor(((frames.kind != "none") & frames.in_view).values).cuda()
-fk = frames[["x", "y", "z"]].values.astype(np.float32)
 
 # subtask text: the base model's token embeddings, padded to the longest
 texts = sorted(frames.subtask.unique())
@@ -74,7 +73,7 @@ def vector(weights, i):
     return ((w / w.sum(1, keepdim=True).clip(1e-9))[..., None] * points[i][..., :3].reshape(len(i), -1, 3)).sum(1)
 
 
-pred = pd.DataFrame(index=frames.index, columns=["group", "loss", "p_none", "peak", "x", "y", "z", "peak_x", "peak_y", "peak_z", "label_x", "label_y", "label_z"], dtype=float)
+pred = pd.DataFrame(index=frames.index, columns=["group", "loss", "p_none", "peak", "adapter_x", "adapter_y", "adapter_z", "peak_x", "peak_y", "peak_z", "label_x", "label_y", "label_z"], dtype=float)
 log = {}
 for g in range(args.groups) if args.only is None else [args.only]:
     train, held = torch.tensor(np.flatnonzero(group != g)).cuda(), torch.tensor(np.flatnonzero(group == g)).cuda()
@@ -133,18 +132,19 @@ said = (f.p_none < 0.5).values
 both = f[truth & said]
 tr, tc = np.floor(both.v * GRID / 480), np.floor(both.u * GRID / 640)
 off = np.maximum(np.abs(both.peak // GRID - tr), np.abs(both.peak % GRID - tc))
-cm = lambda a, b: 100 * np.linalg.norm(both[[a + c for c in "xyz"]].values - both[[b + c for c in "xyz"]].values, axis=1)
-q = lambda d: " / ".join(f"{v:.1f}" for v in np.nanpercentile(d, [50, 90]))
+xyz = lambda a: both[[a + c for c in "xyz"]].values.astype(float)
+q = lambda a, b: " / ".join(f"{v:.1f}" for v in np.nanpercentile(100 * np.linalg.norm(a - b, axis=1), [50, 90]))
+line = lambda name, a: f"  {name:28s}  {q(a, xyz('surface_')):>20s}    {q(a, xyz('')):>20s}"
 out = [
     f"held-out frames {len(f)}: {truth.sum()} with a target in the wrist view, {(~truth).sum()} without",
     f"target frames the adapter calls target: {(truth & said).sum() / truth.sum():.3f}",
     f"other frames the adapter calls no target: {(~truth & ~said).sum() / (~truth).sum():.3f}",
     f"peak on the target's patch: {(off == 0).mean():.3f}, within one patch: {(off <= 1).mean():.3f}, within two: {(off <= 2).mean():.3f}",
     "vector error cm, p50 / p90      to the depth point at the target pixel    to the tip at the event (FK)",
-    f"  adapter, all patches          {q(cm('', 'surface_')):>20s}    {q(cm('', '')[:0]) if False else q(100 * np.linalg.norm(both[['x', 'y', 'z']].values - fk[both.index], axis=1)):>20s}",
-    f"  adapter, peak patch only      {q(cm('peak_', 'surface_')):>20s}    {q(100 * np.linalg.norm(both[['peak_x', 'peak_y', 'peak_z']].values - fk[both.index], axis=1)):>20s}",
-    f"  the label's own weights       {q(cm('label_', 'surface_')):>20s}    {q(100 * np.linalg.norm(both[['label_x', 'label_y', 'label_z']].values - fk[both.index], axis=1)):>20s}",
-    f"  no adapter (zero vector)      {'':>20s}    {q(100 * np.linalg.norm(fk[both.index], axis=1)):>20s}",
+    line("adapter, all patches", xyz("adapter_")),
+    line("adapter, peak patch only", xyz("peak_")),
+    line("the label's own weights", xyz("label_")),
+    line("no adapter (zero vector)", 0 * xyz("")),
     "last epoch, train loss / held-out loss per group: " + ", ".join(f"{v[-1][0]:.2f} / {v[-1][1]:.2f}" for v in log.values()),
 ]
 print("\n".join(out))

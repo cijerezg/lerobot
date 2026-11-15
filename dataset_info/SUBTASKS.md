@@ -1,6 +1,6 @@
 # Subtasks
 
-Generated 2026-11-14 22:00 by `data_count.py` from `config_rl.yaml`, sampled ReBot episodes. Object and the per-object grasp cycles: DATA.md. Segments split into internal / external ReBot; return to home not listed.
+Generated 2026-11-15 09:13 by `data_count.py` from `config_rl.yaml`, sampled ReBot episodes. Object and the per-object grasp cycles: DATA.md. Segments split into internal / external ReBot; return to home not listed.
 
 ## By object
 
@@ -8,26 +8,26 @@ General subtask = verb + object, all wordings merged ("grasp the bit nearest the
 
 | object | general subtask | segments | internal | external | episodes | frames | hours | strings |
 |---|---|---|---|---|---|---|---|---|
-| **tube** | **all** | **169** | **169** | **0** | **21** | **46,103** | **0.43** | |
-| | grasp the tube | 48 | 48 | 0 | 21 | 19,103 | 0.18 | 3 |
-| | approach the tube | 41 | 41 | 0 | 20 | 10,792 | 0.10 | 3 |
-| | move the tube | 40 | 40 | 0 | 19 | 5,684 | 0.05 | 3 |
-| | insert the tube | 40 | 40 | 0 | 19 | 10,524 | 0.10 | 3 |
+| **tube** | **all** | **205** | **205** | **0** | **24** | **54,634** | **0.51** | |
+| | grasp the tube | 56 | 56 | 0 | 23 | 20,417 | 0.19 | 3 |
+| | approach the tube | 52 | 52 | 0 | 23 | 14,206 | 0.13 | 3 |
+| | insert the tube | 49 | 49 | 0 | 22 | 12,953 | 0.12 | 3 |
+| | move the tube | 48 | 48 | 0 | 22 | 7,058 | 0.07 | 3 |
 
 ## Every subtask string
 
 | object | subtask | segments | internal | external | episodes | frames |
 |---|---|---|---|---|---|---|
-| tube | grasp tube on the left | 18 | 18 | 0 | 16 | 7,093 |
-| tube | grasp tube on the right | 18 | 18 | 0 | 16 | 7,908 |
-| tube | approach tube on the left | 17 | 17 | 0 | 17 | 4,963 |
-| tube | insert tube in peg on the right | 16 | 16 | 0 | 15 | 4,276 |
-| tube | approach tube on the right | 15 | 15 | 0 | 15 | 3,721 |
-| tube | move right tube to peg on the right | 15 | 15 | 0 | 15 | 2,137 |
-| tube | insert tube in peg on the left | 14 | 14 | 0 | 14 | 3,663 |
-| tube | move left tube to peg on the left | 14 | 14 | 0 | 14 | 1,803 |
-| tube | grasp tube at the dark peg | 12 | 12 | 0 | 10 | 4,102 |
-| tube | move tube to the dark peg | 11 | 11 | 0 | 10 | 1,744 |
-| tube | insert tube in the dark peg | 10 | 10 | 0 | 10 | 2,585 |
-| tube | approach tube at the dark peg | 9 | 9 | 0 | 9 | 2,108 |
-|  | return home | 10 | 10 | 0 | 10 | 2,032 |
+| tube | approach tube on the left | 22 | 22 | 0 | 20 | 6,627 |
+| tube | grasp tube on the left | 21 | 21 | 0 | 18 | 7,639 |
+| tube | grasp tube on the right | 21 | 21 | 0 | 19 | 8,341 |
+| tube | insert tube in peg on the right | 19 | 19 | 0 | 18 | 5,156 |
+| tube | approach tube on the right | 18 | 18 | 0 | 18 | 4,622 |
+| tube | insert tube in peg on the left | 18 | 18 | 0 | 17 | 4,762 |
+| tube | move right tube to peg on the right | 18 | 18 | 0 | 18 | 2,659 |
+| tube | move left tube to peg on the left | 17 | 17 | 0 | 17 | 2,280 |
+| tube | grasp tube at the dark peg | 14 | 14 | 0 | 12 | 4,437 |
+| tube | move tube to the dark peg | 13 | 13 | 0 | 12 | 2,119 |
+| tube | approach tube at the dark peg | 12 | 12 | 0 | 12 | 2,957 |
+| tube | insert tube in the dark peg | 12 | 12 | 0 | 12 | 3,035 |
+|  | return home | 11 | 11 | 0 | 11 | 2,189 |

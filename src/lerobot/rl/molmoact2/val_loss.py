@@ -54,9 +54,11 @@ from lerobot.probes.utils import (
     sample_episodes_evenly,
     suppress_pack_dropout,
 )
+from lerobot.scripts.lerobot_memmap_buffer_cache import load_depth_png
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION
 from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
+from lerobot.utils.tip_target import TIP_DEPTH_KEY, TIP_TARGET_KEY
 
 
 def _CONSUMED_BY_PACK(key: str) -> bool:
@@ -116,6 +118,10 @@ class ValLoss:
         if len(samples) > n_frames:
             samples = [samples[i] for i in np.linspace(0, len(samples) - 1, n_frames, dtype=int)]
 
+        # The velocity / gripper torque / tip target prompt columns come with the frames
+        # (probe_frame_inputs); the tip adapter also needs the raw wrist depth.
+        tip_on = getattr(cfg.policy, "tip_target", False)
+
         identity = identity_columns(cfg)
         image_keys = [str(k) for k in (getattr(cfg.policy, "image_keys", None) or [])]
 
@@ -132,6 +138,12 @@ class ValLoss:
                     probe_frame_inputs(val_dataset, cfg, global_idx, chunk_size)
                     for _, _, global_idx in samples[start : start + batch_size]
                 ]
+                for frame in group:
+                    if tip_on:
+                        depth = load_depth_png(
+                            val_dataset.root, "wrist.depth", frame["episode_idx"], frame["frame_idx"]
+                        )
+                        frame[TIP_DEPTH_KEY] = torch.from_numpy(depth.astype(np.int32))
                 if future_on:
                     for frame in group:
                         anchor = frame["global_idx"]
@@ -228,6 +240,9 @@ class ValLoss:
         for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
             if key in frames[0]:
                 packed[key] = torch.stack([f[key] for f in frames]).float().cpu()
+        if TIP_DEPTH_KEY in frames[0]:
+            packed[TIP_TARGET_KEY] = prepared[TIP_TARGET_KEY].cpu()
+            packed[TIP_DEPTH_KEY] = torch.stack([f[TIP_DEPTH_KEY] for f in frames])
         return packed
 
     @torch.no_grad()
@@ -273,6 +288,21 @@ class ValLoss:
                     )
                     totals[destination] += float(metrics[source]) * metric_count
                     counts[destination] += metric_count
+                # Tip adapter numbers: means over the frames with a target row / with the target
+                # in the wrist view (policies/molmoact2/tip_target.py).
+                tip_keys = {
+                    "tip_loss": "tip_frames",
+                    "tip_none_accuracy": "tip_frames",
+                    "tip_peak_on_patch": "tip_target_frames",
+                    "tip_peak_within_one": "tip_target_frames",
+                    "tip_vector_error_cm": "tip_target_frames",
+                }
+                for source, frames_key in tip_keys.items():
+                    if source not in metrics:
+                        continue
+                    destination = f"val_{source}"
+                    totals[destination] = totals.get(destination, 0.0) + metrics[source] * metrics[frames_key]
+                    counts[destination] = counts.get(destination, 0) + metrics[frames_key]
         finally:
             policy.train(was_training)
 
