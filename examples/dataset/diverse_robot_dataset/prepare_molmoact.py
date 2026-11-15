@@ -437,7 +437,7 @@ def finalize(paths: Paths, verdicts_path: Path, review_prompt: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", required=True, choices=["molmoact_household", "molmoact_tabletop"])
-    parser.add_argument("--build-root", type=Path, default=Path("outputs/diverse_robot_dataset_v2_build"))
+    parser.add_argument("--build-root", type=Path, default=Path("outputs/data/diverse_robot_dataset_v2_build"))
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("scan")
     nomination = sub.add_parser("nominate")

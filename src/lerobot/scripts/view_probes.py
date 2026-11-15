@@ -14,7 +14,7 @@
 
 """Probe viewer: a local, dependency-free browser UI over a run's validation output.
 
-    python -m lerobot.scripts.view_probes outputs/<run>
+    python -m lerobot.scripts.view_probes outputs/runs/<run>
 
 Scans ``<run>/validation/step_*/<probe>/`` on every request, so a checkpoint
 that lands mid-session appears on refresh — nothing is baked in and there is no

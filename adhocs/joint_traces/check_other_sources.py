@@ -18,9 +18,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import median_filter
 
-EXTERNAL = "outputs/external_rebot_train-annotated-v9-tasks1"
-DIVERSE = "outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2"
-REFERENCE = ("outputs/rebot_2026-10-29-merged-v1", 3)  # pre-fix rollout
+EXTERNAL = "outputs/data/external_rebot_train-annotated-v9-tasks1"
+DIVERSE = "outputs/data/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2"
+REFERENCE = ("outputs/data/rebot_2026-10-29-merged-v1", 3)  # pre-fix rollout
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--n", type=int, default=4)

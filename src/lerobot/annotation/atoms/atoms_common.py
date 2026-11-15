@@ -18,11 +18,11 @@ import numpy as np
 from lerobot.annotation.paths import WORKSPACE as ROOT
 
 # v2 corpora point these at their own root and review tree through the environment.
-DATA_ROOT = ROOT / os.environ.get("DIVERSE_DATASET_ROOT", "outputs/diverse_robot_dataset")
+DATA_ROOT = ROOT / os.environ.get("DIVERSE_DATASET_ROOT", "outputs/data/diverse_robot_dataset")
 CORPUS = DATA_ROOT / "corpus"
 FMB = DATA_ROOT / "fmb"
 WORK = ROOT / os.environ.get("ATOMS_WORK_ROOT", "lerobot/annotation_data/atoms")
-REVIEW = ROOT / os.environ.get("ATOMS_REVIEW_ROOT", "outputs/_annotation/subtask_atoms_review")
+REVIEW = ROOT / os.environ.get("ATOMS_REVIEW_ROOT", "outputs/annotation/subtask_atoms_review")
 # Sources whose state is an end-effector pose (xyz metres, Euler, gripper), not joints.
 EE_SOURCES = {"molmoact"}
 DISP_MIN_M = 0.03  # xyz displacement below which a closed run never lifted anything

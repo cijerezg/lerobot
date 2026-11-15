@@ -44,7 +44,7 @@ reference scene, case / large / small clipper move 0.1 / 0.2 / 0.2 mm (same as t
 ## Renders
 
 `scripts/render_room.py` (mujoco.Renderer 640x480, no composite, robot posed from the recorded state of
-`outputs/rebot_teleop_2026-10-29-cut-v1` ep 0): `renders/side_by_side_f{0,300,2400,4200}.jpg` = real top | sim top | real wrist | sim wrist,
+`outputs/data/rebot_teleop_2026-10-29-cut-v1` ep 0): `renders/side_by_side_f{0,300,2400,4200}.jpg` = real top | sim top | real wrist | sim wrist,
 `renders/side_by_side_all.jpg` all four rows, `renders/sim_{top,wrist}_f*.jpg`, `renders/real_*.png` the real frames,
 `renders/ref_vs_room_{ext,wrist}.jpg` old scene vs room at park. Poses: f0 park (wall ahead), f300 and f2400 looking
 over the left edge at the floor and the wall corner, f4200 looking up at the wall.

@@ -45,7 +45,7 @@ pooled within-group residual standard deviation, and a mean exponential per grou
 It does not fit statistics to validation. Raw scalar training advantages are saved
 so the probe can recompute group normalizers correctly for a temperature sweep.
 
-The prepared run writes to `outputs/molmoact2_awr_beta1_bootstrap_20260927`.
+The prepared run writes to `outputs/runs/molmoact2_awr_beta1_bootstrap_20260927`.
 Its changed terminal rule is recorded in calibration provenance, so the old
 subtask-terminal calibration cannot be reused. A normal launch recalibrates
 automatically; to run calibration alone, use:

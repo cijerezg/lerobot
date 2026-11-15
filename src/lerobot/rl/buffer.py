@@ -32,6 +32,7 @@ from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STATE, REWARD
+from lerobot.utils.motor_velocity import VELOCITY_KEY
 from lerobot.utils.transition import Transition
 
 logger = logging.getLogger(__name__)
@@ -1805,7 +1806,7 @@ def concatenate_batch_transitions(
              # right_val shape: (right_len, ...)
              # padding shape: (left_len, ...) + right_val.shape[1:]
              shape = (left_len,) + right_val.shape[1:]
-             fill_value = -1 if key.endswith("_index") else 0
+             fill_value = -1 if key.endswith("_index") else float("nan") if key == VELOCITY_KEY else 0
              padding = torch.full(shape, fill_value, dtype=right_val.dtype, device=right_val.device)
              left_info[key] = torch.cat([padding, right_val], dim=0)
 
@@ -1816,7 +1817,7 @@ def concatenate_batch_transitions(
              # Wait! 'left_info' is a mutable reference to the dictionary in 'left_batch_transitions'.
              # Since we haven't modified 'left_info[key]' yet in this loop, 'left_val' IS the original tensor from the left batch.
              shape = (right_len,) + left_val.shape[1:]
-             fill_value = -1 if key.endswith("_index") else 0
+             fill_value = -1 if key.endswith("_index") else float("nan") if key == VELOCITY_KEY else 0
              padding = torch.full(shape, fill_value, dtype=left_val.dtype, device=left_val.device)
              left_info[key] = torch.cat([left_val, padding], dim=0)
 

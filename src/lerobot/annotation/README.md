@@ -8,7 +8,7 @@ Everything that defines or produces a label lives in this folder.
 |---|---|
 | Every annotation script | here |
 | Every rubric, label spec and vocabulary | here (`rubrics/`, `vocab.py`) |
-| Results: inventories, label files, sheets, strips, review pages, reports, logs | outside the repo: `outputs/_annotation/` (a pass: `outputs/_annotation/passes/<pass>_<date>/`) |
+| Results: inventories, label files, sheets, strips, review pages, reports, logs | outside the repo: `outputs/annotation/` (a pass: `outputs/annotation/passes/<pass>_<date>/`) |
 | Stores that later passes read: class files and references, atom proposals, measured approach angles, rubric case evidence | `lerobot/annotation_data/` (in the repo folder, outside `src/`, not committed) |
 | Labels of record | ReBot: dataset `meta/` tables; diverse: JSONL sidecars in each `corpus/` and `fmb/` store under `outputs/` |
 
@@ -58,7 +58,7 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 | `paths.py` | `WORKSPACE` and `QUALITY_V2` (the results folder of the class pass, `lerobot/annotation_data/quality_v2`). |
 | `rebot/` | A ReBot pass, start to finish (order below). `AGENT_BRIEF.md` is the brief the annotating and grading agents follow; review feedback is folded into it and into the rubrics. |
 | `rebot/task_sheet.py` | Writes `lerobot/docs/annotation_notes/rebot_tasks.md`: every task of the training mix with its subtask script, precision and contact per step, ready to paste into an inference config. |
-| `rebot/subtask_labeler.py` | Browser page to label a root's subtasks by hand (video + depth + position / velocity / torque, one key per subtask, free text). Writes `outputs/_annotation/passes/subtasks_<root>/labels/episode_<E>.json`; command in CHEAT_SHEET "Subtask labeler". |
+| `rebot/subtask_labeler.py` | Browser page to label a root's subtasks by hand (video + depth + position / velocity / torque, one key per subtask, free text). Writes `outputs/annotation/passes/subtasks_<root>/labels/episode_<E>.json`; command in CHEAT_SHEET "Subtask labeler". |
 | `rebot/subtask_labels_root.py` | Builds a new root that carries the labels of `subtask_labeler` (subtask tables only, quality -1 = not graded). |
 | `quality_v2/` | The rubric v2 class pass, shared by every pool: class rules, side-by-side material, dense strips, grading batches, second read, label compiler, checks. |
 | `precision_contact/` | Frame grabbing, approach angle, row sheets and strips (used by `quality_v2`), and the text-rule priors for precision and contact. `AGENT_BRIEF.md` (+ `AGENT_BRIEF_diverse.md`) is the reviewer brief of the row pass. |
@@ -75,7 +75,7 @@ Tests: `tests/annotation/`.
 
 To annotate a ReBot root, an agent needs only this page: it names what to read, the order of work and when to stop.
 
-A pass is one results folder, `<work> = outputs/_annotation/passes/<pass>_<date>/`. Everything specific to the pass is data in it:
+A pass is one results folder, `<work> = outputs/annotation/passes/<pass>_<date>/`. Everything specific to the pass is data in it:
 
 | File in `<work>` | Content |
 |---|---|
@@ -92,12 +92,12 @@ uv run python -m $M.rebot.inventory <work> <root> [--episodes E ...] --kind roll
 uv run python -m $M.rebot.traces <work>
 uv run python -m $M.rebot.sheets <root> <work>/review/<IDX> <episode> --step 60 --tag overview
 # 2. cut only (no labels yet): <work>/plan.json -> root
-uv run python -m $M.rebot.build_root <work> --out outputs/<root> --plan
+uv run python -m $M.rebot.build_root <work> --out outputs/data/<root> --plan
 #    rollouts: browser review page (video + remove spans) -> plan.json -> build_root --plan + verify_root (CHEAT_SHEET "Rollout review")
 uv run python -m $M.rebot.rollout_review outputs/train/<date>/<run> ...
 # 3. labelled pass: check the label files, build the staging root, class the segments, render the class material
 uv run python -m $M.rebot.validate_labels <work> 0 1 2 ...
-uv run python -m $M.rebot.build_root <work> --out outputs/<staging> --split all
+uv run python -m $M.rebot.build_root <work> --out outputs/data/<staging> --split all
 uv run python -m $M.rebot.classify <work>
 uv run python -m $M.quality_v2.material --work <work>
 uv run python -m $M.quality_v2.dense <class_slug> <uid> <from> <to>          # on demand, while grading
@@ -107,17 +107,17 @@ uv run python -m $M.quality_v2.compile_labels --pool <pool> --deterministic-reso
 uv run python -m $M.quality_v2.check_mistake_owner <pool>                     # also check_precision_chain, check_references, blind_agreement
 uv run python -m $M.rebot.idle_scan <work>                                   # writes idle_cuts.json; build_root applies it
 # 5. final root: build, tables, speed, gripper events, verify (each step refuses to overwrite)
-uv run python -m $M.rebot.build_root <work> --out outputs/<root> --split train
-uv run python -m $M.rebot.finalize <work> outputs/<root>
-uv run python -m $M.speed.rebot_speed_pass outputs/<root>                   # trace + per-segment table + frame-level runs (the trained label)
-uv run python -m $M.rebot.manual_speed <work> outputs/<root>
-uv run python -m $M.gripper_events.depth_gripper_event_annotate --data-dir outputs/<root> --rule relative_travel
-uv run python -m $M.rebot.verify_root outputs/<root>
+uv run python -m $M.rebot.build_root <work> --out outputs/data/<root> --split train
+uv run python -m $M.rebot.finalize <work> outputs/data/<root>
+uv run python -m $M.speed.rebot_speed_pass outputs/data/<root>                   # trace + per-segment table + frame-level runs (the trained label)
+uv run python -m $M.rebot.manual_speed <work> outputs/data/<root>
+uv run python -m $M.gripper_events.depth_gripper_event_annotate --data-dir outputs/data/<root> --rule relative_travel
+uv run python -m $M.rebot.verify_root outputs/data/<root>
 # 6. review videos for the user (labels burned in)
-uv run python -m $M.review.render_review_videos --rebot-root outputs/<root> --out <work>/review_videos
+uv run python -m $M.review.render_review_videos --rebot-root outputs/data/<root> --out <work>/review_videos
 # 7. optional: merge finished roots into one (videos and depth hardlinked, tables re-indexed), then verify
-uv run python -m $M.rebot.merge_roots outputs/<root_a> outputs/<root_b> --out outputs/<merged>
-uv run python -m $M.rebot.verify_root outputs/<merged>
+uv run python -m $M.rebot.merge_roots outputs/data/<root_a> outputs/data/<root_b> --out outputs/data/<merged>
+uv run python -m $M.rebot.verify_root outputs/data/<merged>
 ```
 
 ### How a pass is run
@@ -179,12 +179,12 @@ Do not use git. Do not change training configs or publish/adopt a replacement da
 - Read the principles and channel rubrics listed above, including quality sections 4-6, 8 and 9. Read the source
   metadata before interpreting its frames or state. Routine annotation calls are the annotator's responsibility.
 - Resolve the actual diverse roots from the current training configuration and store metadata. The existing class
-  pass points to `outputs/diverse_robot_dataset_v3/{corpus,fmb}`; this is a discovery pointer, not proof that those
+  pass points to `outputs/data/diverse_robot_dataset_v3/{corpus,fmb}`; this is a discovery pointer, not proof that those
   are still the active roots. Include train, validation and test while preserving their existing split membership.
 - Inventory unique source episodes, source family, split, native rate, retained intervals, camera availability,
   state/action schema and label provenance. Do not count multiple views, atoms or derived copies as new episodes.
   The families are DROID, DROID success, MolmoAct, RoboChallenge, UR7e, YAM and FMB; verify against the actual inventory.
-- Create a new results folder `outputs/_annotation/passes/diverse_annotation_audit_<date>/` (unique suffix if needed), or resume its
+- Create a new results folder `outputs/annotation/passes/diverse_annotation_audit_<date>/` (unique suffix if needed), or resume its
   recorded progress. `audit.md` is the ledger: roots and provenance, inventory, sampling policy, seed and picks per
   round, evidence paths, issues and severity, fixes/sweeps, validation and unresolved work. Record pre-fix counts;
   fixing a round does not make its original error count zero. Keep episode decisions in `checks/` there.

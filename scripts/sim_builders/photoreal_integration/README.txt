@@ -3,7 +3,7 @@ Approved visuals integrated into LeRobot — 2026-10-18
 The four packaged nail scenes now use the accepted clippers, textured clutter,
 and connected headphone cases. The normal command needs no new flags:
 
-  lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
+  lerobot/scripts/run_sim_eval.sh outputs/runs/<run>/checkpoints/<step>/pretrained_model
 
 Changes: four scene.xml files, 287 copied meshes/textures under
 scenes/assets/photoreal/, package-data patterns in lerobot/pyproject.toml,

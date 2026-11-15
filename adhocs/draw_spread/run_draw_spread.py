@@ -1,8 +1,8 @@
 """Draw-spread study: 64 flow draws per anchor along train and val episodes, clean and under input noise.
 
     uv run python lerobot/adhocs/draw_spread/run_draw_spread.py --config_path=config_rl_validate.yaml \
-        --policy.pretrained_path=outputs/rebot-internal-only-20261021/checkpoints/001200/pretrained_model \
-        --out_dir=outputs/draw_spread/internal1200_2026-11-07
+        --policy.pretrained_path=outputs/runs/rebot-internal-only-20261021/checkpoints/001200/pretrained_model \
+        --out_dir=outputs/analysis/draw_spread/internal1200_2026-11-07
 
 Per anchor (every ``anchor_seconds`` along the episode, snapped to the image stride) and per setting
 (clean, state noise, image noise) the prefix (ViT + LLM) runs once, its KV cache is expanded to
@@ -58,20 +58,20 @@ K_REF = 32  # cross-episode neighbours (by state, within the pool) that form the
 # Roots of the 8 probed training episodes (all in the internal-only 10-21 run's sources): one per root, the
 # episode whose length is the root's median.
 DEFAULT_TRAIN_ROOTS = (
-    "outputs/rebot_all-annotated-v14-tasks2",
-    "outputs/rebot_main_additions-annotated-v3",
-    "outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
-    "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1",
-    "outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1",
-    "outputs/rebot_2026-10-14-annotated-v4",
-    "outputs/rebot_2026-10-16-annotated-v1",
-    "outputs/rebot_2026-10-21-annotated-v1",
+    "outputs/data/rebot_all-annotated-v14-tasks2",
+    "outputs/data/rebot_main_additions-annotated-v3",
+    "outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1",
+    "outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1",
+    "outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1",
+    "outputs/data/rebot_2026-10-14-annotated-v4",
+    "outputs/data/rebot_2026-10-16-annotated-v1",
+    "outputs/data/rebot_2026-10-21-annotated-v1",
 )
 
 
 @dataclass
 class DrawSpreadConfig(TrainRLServerPipelineConfig):
-    out_dir: str = "outputs/draw_spread/internal1200_2026-11-07"
+    out_dir: str = "outputs/analysis/draw_spread/internal1200_2026-11-07"
     train_roots: str = ""  # comma-separated root[:episode]; empty = DEFAULT_TRAIN_ROOTS with the median-length episode
     n_draws: int = 64
     anchor_seconds: float = 1.0

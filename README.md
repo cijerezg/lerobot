@@ -63,12 +63,12 @@ Generate the cache once per dataset:
 ```bash
 python -m lerobot.scripts.lerobot_memmap_buffer_cache \
     --root /path/to/local/dataset \
-    --cache-dir outputs/buffer_cache \
+    --cache-dir outputs/cache/buffer_cache \
     --image-storage-dtype uint8 \
     --image-storage-size 480 640
 ```
 
-You can also pass `repo-id` instead of `root` if the dataset is on the HF hub. Then point the YAML at it with `buffer_cache_dir: outputs/buffer_cache`. More on edge cases in [the usage guide](docs/guide/usage.md#buffer-caching).
+You can also pass `repo-id` instead of `root` if the dataset is on the HF hub. Then point the YAML at it with `buffer_cache_dir: outputs/cache/buffer_cache`. More on edge cases in [the usage guide](docs/guide/usage.md#buffer-caching).
 
 #### Config file
 

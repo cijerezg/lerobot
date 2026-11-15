@@ -125,8 +125,8 @@ Literature reports. Not design, not status.
    (`config_rl.yaml`) and run outputs (`outputs/`) sit
    at the workspace root next to this clone and are not in git. The in-package
    [`src/lerobot/rl/config_rl.yaml`](../src/lerobot/rl/config_rl.yaml) is the template.
-   Scratch: per-pass annotation work goes under `outputs/_annotation/passes/<pass>_<date>/`,
-   other scratch under `outputs/scratch/<topic>_<date>/`. Anything that code, configs or docs
+   Scratch: per-pass annotation work goes under `outputs/annotation/passes/<pass>_<date>/`,
+   other scratch under `outputs/analysis/<topic>_<date>/`. Anything that code, configs or docs
    come to depend on is moved into the repo (`lerobot/dataset_info/manifests`,
    `lerobot/annotation_data`, `lerobot/scripts`, `lerobot/docs`) the same day. `migration/`
    now holds only frozen inputs of the published reports under `reports/` and gets no new files.

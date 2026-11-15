@@ -1,7 +1,7 @@
 """spread_vs_error with both axes divided by the motion size: rms of the demo chunk, floored at its 10th
 percentile over all anchors so tiny motions do not blow the ratios up.
 
-    uv run python lerobot/adhocs/draw_spread/followup_spread_vs_error_relative.py outputs/draw_spread/internal1200_2026-11-07
+    uv run python lerobot/adhocs/draw_spread/followup_spread_vs_error_relative.py outputs/analysis/draw_spread/internal1200_2026-11-07
 """
 import sys
 import numpy as np, pandas as pd

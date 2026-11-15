@@ -1,5 +1,5 @@
 """Metric basket measurement from the 2026-10-21 teleop wrist depth (D405) + sim FK camera pose.
-Frames: ep 0 frames 6000 and 6030 of outputs/rebot_teleop_2026-10-21-cut-v1 (basket fully in the wrist view).
+Frames: ep 0 frames 6000 and 6030 of outputs/data/rebot_teleop_2026-10-21-cut-v1 (basket fully in the wrist view).
 Run from the workspace root: MUJOCO_GL=egl PYTHONSAFEPATH=1 uv run python lerobot/scripts/sim_builders/easy_envs/bottle_basket/measure_basket.py
 """
 import json, sys
@@ -8,7 +8,7 @@ import cv2, mujoco, numpy as np, pandas as pd
 from lerobot.robots.rebot_b601_sim.rebot_b601_sim import to_qpos, DEPTH_UNITS_M
 
 WS = Path(__file__).resolve().parents[5]
-DS = WS / "outputs/rebot_teleop_2026-10-21-cut-v1"
+DS = WS / "outputs/data/rebot_teleop_2026-10-21-cut-v1"
 OUT = Path(__file__).resolve().parents[1] / "basket_reference"
 SCENE = WS / "lerobot/src/lerobot/robots/rebot_b601_sim/scenes/clippers_only/scene.xml"
 FRAMES = [6030, 6060, 6000]

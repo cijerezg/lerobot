@@ -11,17 +11,17 @@ import numpy as np, pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
 OUT = Path("lerobot/adhocs/object_coverage")
-ROOTS = """outputs/rebot_all-annotated-v14-tasks2
-outputs/rebot_main_additions-annotated-v3
-outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1
-outputs/rebot_additions_2026-10-04-annotated-v12-tasks1
-outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1
-outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1
-outputs/rebot_oldval_train-2026-10-14-v1
-outputs/rebot_2026-10-14-annotated-v4
-outputs/rebot_2026-10-16-annotated-v1
-outputs/rebot_2026-10-17-merged-v1
-outputs/rebot_2026-10-21-annotated-v1""".split()
+ROOTS = """outputs/data/rebot_all-annotated-v14-tasks2
+outputs/data/rebot_main_additions-annotated-v3
+outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1
+outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1
+outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1
+outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1
+outputs/data/rebot_oldval_train-2026-10-14-v1
+outputs/data/rebot_2026-10-14-annotated-v4
+outputs/data/rebot_2026-10-16-annotated-v1
+outputs/data/rebot_2026-10-17-merged-v1
+outputs/data/rebot_2026-10-21-annotated-v1""".split()
 
 # object key -> (regex on the clause, one-per-episode)
 OBJECTS = {

@@ -4,7 +4,7 @@
     uv run python -m lerobot.annotation.atoms.verdict check --episode E | --source S | --all
     uv run python -m lerobot.annotation.atoms.verdict show --episode E
 
-A verdict is outputs/_annotation/subtask_atoms_review/verdicts/<episode_id>.json:
+A verdict is outputs/annotation/subtask_atoms_review/verdicts/<episode_id>.json:
 
 {
   "episode_id": "...", "reviewer": "...",

@@ -1,14 +1,14 @@
 """Review recorded inference episodes in the browser and cut them into a training root.
 
-    uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/<root>] [--port 7871]
+    uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/data/<root>] [--port 7871]
 
 Renders one review video per episode (top | wrist, burned-in t = episode seconds, red INTERVENTION tag) into
-outputs/_annotation/rollout_review_<date>/videos when missing, then opens http://127.0.0.1:<port>. In the page: pick an episode,
+outputs/annotation/rollout_review_<date>/videos when missing, then opens http://127.0.0.1:<port>. In the page: pick an episode,
 play it (space; 1x / 2x / 4x; arrows seek 1 s, shift+arrows 10 s), press [ at the start and ] at the end of every stretch
 to REMOVE (or type the spans: "15-31, 36-43, 50-"), then Save. Save writes <work>/plan.json, builds the root with
 build_root --plan (every kept span becomes its own episode, so no episode has a jump inside it; boundaries are snapped
 to multiples of 3 frames so the depth phase survives), runs verify_root and writes the README ledger. The output path is --out, the path
-in the page, or outputs/rebot_rollouts_<date>-cut-v<N> with the first free N. Episodes without marks are kept whole;
+in the page, or outputs/data/rebot_rollouts_<date>-cut-v<N> with the first free N. Episodes without marks are kept whole;
 untick an episode to leave it out of the root.
 """
 
@@ -199,9 +199,9 @@ def plan_entries(row, remove, why):
 
 def default_out(date):
     n = 1
-    while (WORKSPACE / f"outputs/rebot_rollouts_{date}-cut-v{n}").exists():
+    while (WORKSPACE / f"outputs/data/rebot_rollouts_{date}-cut-v{n}").exists():
         n += 1
-    return f"outputs/rebot_rollouts_{date}-cut-v{n}"
+    return f"outputs/data/rebot_rollouts_{date}-cut-v{n}"
 
 
 def build(work, out, plan):
@@ -362,12 +362,12 @@ def serve(rows, work, out, port):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("runs", nargs="+", help="outputs/train/<date>/<run> directories")
-    ap.add_argument("--out", help="root to build; default outputs/rebot_rollouts_<date>-cut-v<N>")
-    ap.add_argument("--work", help="default outputs/_annotation/rollout_review_<date>")
+    ap.add_argument("--out", help="root to build; default outputs/data/rebot_rollouts_<date>-cut-v<N>")
+    ap.add_argument("--work", help="default outputs/annotation/rollout_review_<date>")
     ap.add_argument("--port", type=int, default=7871)
     args = ap.parse_args()
     date = Path(args.runs[0]).resolve().parent.name
-    work = WORKSPACE / (args.work or f"outputs/_annotation/rollout_review_{date}")
+    work = WORKSPACE / (args.work or f"outputs/annotation/rollout_review_{date}")
     rows = inventory(args.runs, work)
     for r in rows:
         print(

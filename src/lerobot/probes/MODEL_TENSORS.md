@@ -2,7 +2,7 @@
 
 This note defines exactly where the MolmoAct2 probes read the model. Layer indices in
 probe artifacts are **zero-based**: `L31` identifies the 32nd block; the selected capture view specifies its input or output. The dimensions
-below are from the local `outputs/MolmoAct2/config.json`; code should still obtain them
+below are from the local `outputs/models/MolmoAct2/config.json`; code should still obtain them
 from the loaded model rather than hard-code them.
 
 ## One layer pair

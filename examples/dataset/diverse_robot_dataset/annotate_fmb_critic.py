@@ -432,8 +432,8 @@ def finalize_production(
         "path": "git ef8f2dbb2:pi07_wiki/annotation_rubric.md",
         "superseded_by": "annotation/rubrics/quality_mistake_rubric_v2.md",
         "golden_reference_datasets": [
-            "outputs/rebot_val-annotated-v3",
-            "outputs/rebot_shirts_bin-annotated-v2",
+            "outputs/data/rebot_val-annotated-v3",
+            "outputs/data/rebot_shirts_bin-annotated-v2",
         ],
         "quality_scope": (
             "one integer 1-5 constant over each unchanged source-native primitive interval"
@@ -539,17 +539,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--corpus-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb"),
+        default=Path("outputs/data/diverse_robot_dataset/fmb"),
     )
     parser.add_argument(
         "--review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/review"),
+        default=Path("outputs/data/diverse_robot_dataset_build/fmb/pilot/review"),
     )
     parser.add_argument(
         "--sheet-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/quality_mistake_review"),
+        default=Path("outputs/data/diverse_robot_dataset_build/fmb/pilot/quality_mistake_review"),
     )
     parser.add_argument(
         "--labels",
@@ -561,12 +561,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pilot-review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/review"),
+        default=Path("outputs/data/diverse_robot_dataset_build/fmb/pilot/review"),
     )
     parser.add_argument(
         "--production-review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset_build/fmb/production/review"),
+        default=Path("outputs/data/diverse_robot_dataset_build/fmb/production/review"),
     )
     parser.add_argument(
         "--production-labels",
@@ -579,7 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dense-manifest",
         type=Path,
         default=Path(
-            "outputs/diverse_robot_dataset_build/fmb/production/quality_mistake_review/"
+            "outputs/data/diverse_robot_dataset_build/fmb/production/quality_mistake_review/"
             "dense_metric_flags/manifest.json"
         ),
     )

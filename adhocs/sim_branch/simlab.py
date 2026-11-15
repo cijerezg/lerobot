@@ -28,7 +28,7 @@ from lerobot.robots.rebot_b601_sim.easy_tasks import LID, LID_HINGE, body_surfac
 from lerobot.robots.rebot_b601_sim.rebot_b601_sim import DEPTH_UNITS_M, GRIPPER_DEG_OPEN, RebotB601Sim
 
 HERE = Path(__file__).resolve().parent
-OUT = Path("outputs/llm_corrections_sim_2026-11-09")
+OUT = Path("outputs/analysis/llm_corrections_sim_2026-11-09")
 ROLLOUTS = OUT / "rollouts/validation/step_00000000/sim"
 H, W = 480, 640
 

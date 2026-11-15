@@ -50,14 +50,14 @@ gripper 1:1; `p` again holds the follower while the leader is driven onto it (0.
 A crash or Ctrl-C mid-episode leaves `<root>/recovery/episode-XXXXXX.pkl` (state, action, task per frame) next to the
 images. Rebuild those episodes into a new root (needs images on disk, so not with `--dataset.streaming_encoding=true`):
 
-uv run python -m lerobot.scripts.recover_episodes --root ~/.cache/huggingface/lerobot/cijerezg/<run> --out outputs/<run>-recovered
+uv run python -m lerobot.scripts.recover_episodes --root ~/.cache/huggingface/lerobot/cijerezg/<run> --out outputs/data/<run>-recovered
 
 ## New dataset prep (once per dataset)
 
 Anchor action stats (`--chunk-size` = `policy.chunk_size`):
 
 uv run --no-project --python .venv/bin/python python -m lerobot.scripts.compute_delta_stats \
-    --root outputs/rebot_dataset_dummy_v1 \
+    --root outputs/data/rebot_dataset_dummy_v1 \
     --encoding anchor \
     --chunk-size 30
 
@@ -65,8 +65,8 @@ Memmap buffer cache (`--image-stride` = `policy.image_stride`, mismatch is a har
 
 uv run --no-project --python .venv/bin/python python -m lerobot.scripts.lerobot_memmap_buffer_cache \
     --repo-id cijerezg/rebot_dataset_dummy_v1 \
-    --data-dir outputs/rebot_dataset_dummy_v1 \
-    --cache-dir outputs/buffer_cache-rebot-dummy-v1 \
+    --data-dir outputs/data/rebot_dataset_dummy_v1 \
+    --cache-dir outputs/cache/buffer_cache-rebot-dummy-v1 \
     --image-storage-dtype uint8 \
     --image-stride 3
 
@@ -102,33 +102,44 @@ uv run rerun "$(ls -dt outputs/train/$(date +%F)/*rebot-sim-nail* | head -1)/rer
 
 Every layout on one checkpoint (what the chase runs on the DGX): `<run>/validation/step_<step>/sim/<layout>/{rerun.rrd,subtask_events.json}` + `sim/summary.md` (staged reward per episode, per-scene and per-tier means; `sim_nail/` dirs are the pre-2026-10-22 nail-only eval). `LAYOUTS="twin_l1_tape_basket_right_p1 twin_l2_pill_case_p1"` and `SIM_EVAL_ARGS="--env.robot.episodes=1 --env.processor.reset.control_time_s=20"` for a short run:
 
-lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
+lerobot/scripts/run_sim_eval.sh outputs/runs/<run>/checkpoints/<step>/pretrained_model
 
 Two checkpoints side by side in one rerun viewer (A top row, B bottom row, shared time axis: wrist, top, depth, joints, subtask events). Paths: checkpoint step dir, `validation/step_X`, `sim`, layout dir or `.rrd`; `--layout ep2` picks the layout, `--save x.rrd` writes the merged file instead of opening the viewer:
 
-uv run python -m lerobot.scripts.compare_sim outputs/<run_a>/checkpoints/<step> outputs/<run_b>/checkpoints/<step> [--layout ep0] [--label a --label b]
+uv run python -m lerobot.scripts.compare_sim outputs/runs/<run_a>/checkpoints/<step> outputs/runs/<run_b>/checkpoints/<step> [--layout ep0] [--label a --label b]
 
 ## Rollout review (cut recorded inference episodes into a training root)
 
-One command: renders a review video per episode (missing ones only) into `outputs/_annotation/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Every kept stretch becomes its own episode (no jump inside an episode, so no action chunk or history window runs across a cut). Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
+One command: renders a review video per episode (missing ones only) into `outputs/annotation/rollout_review_<date>/videos`, opens a browser page (http://127.0.0.1:7871). Pick an episode, play (space; 1x/2x/4x; arrows 1 s, shift 10 s), `[` at the start and `]` at the end of each stretch to remove (or type spans: `15-31, 36-43, 50-`), set the output root (default `outputs/data/rebot_rollouts_<date>-cut-v<N>`), Save = plan.json + build_root + verify_root + README. Every kept stretch becomes its own episode (no jump inside an episode, so no action chunk or history window runs across a cut). Unmarked episodes are kept whole; untick to leave one out. Several runs at once is fine.
 
-uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/<root>]
+uv run python -m lerobot.annotation.rebot.rollout_review outputs/train/<date>/<run> [<run> ...] [--out outputs/data/<root>]
 
 ## Subtask labeler (label a root's subtasks by hand)
 
-One command: renders one clip per episode (top | wrist | wrist depth; missing ones only) into `outputs/_annotation/passes/subtasks_<root>/clips`, opens a browser page (http://127.0.0.1:7872) with the clip over the position / velocity / torque traces of one joint. Keys `1`-`9` end that subtask at the playhead (it covers the stretch since the previous boundary) and open its text for a free edit (Enter keeps, Esc drops the edit, up/down = earlier texts); `0` = unlabelled up to here; space, arrows = one frame (shift 1 s), `-` `=` rate (0.25x-4x), `Q` `W` previous / next boundary, `E` edit, `[` `]` subtask starts / ends here, Del removes, Ctrl+Z undo. Every change is saved at once to `labels/episode_<E>.json` (`segments: [{start, end, class, subtask}]`, end exclusive); the labels found at launch are copied to `labels_history/`. The root is only read.
+One command: renders one clip per episode (top | wrist | wrist depth; missing ones only) into `outputs/annotation/passes/subtasks_<root>/clips`, opens a browser page (http://127.0.0.1:7872) with the clip over the position / velocity / torque traces of one joint. Keys `1`-`9` end that subtask at the playhead (it covers the stretch since the previous boundary) and open its text for a free edit (Enter keeps, Esc drops the edit, up/down = earlier texts); `0` = unlabelled up to here; space, arrows = one frame (shift 1 s), `-` `=` rate (0.25x-4x), `Q` `W` previous / next boundary, `E` edit, `[` `]` subtask starts / ends here, Del removes, Ctrl+Z undo. Every change is saved at once to `labels/episode_<E>.json` (`segments: [{start, end, class, subtask}]`, end exclusive); the labels found at launch are copied to `labels_history/`. The root is only read.
 
-uv run python -m lerobot.annotation.rebot.subtask_labeler outputs/<root> --subtasks "approach tube" "grasp tube" "move tube to peg" "insert tube in peg" "return home" [--work <folder>] [--port 7872] [--no-open]
+uv run python -m lerobot.annotation.rebot.subtask_labeler outputs/data/<root> --subtasks "approach tube" "grasp tube" "move tube to peg" "insert tube in peg" "return home" [--work <folder>] [--port 7872] [--no-open]
 
 Labels -> a new root with the subtask tables (every episode whole, quality -1 = not graded; no precision / contact / speed tables):
 
-uv run python -m lerobot.annotation.rebot.subtask_labels_root outputs/_annotation/passes/subtasks_<root> --out outputs/<new root>
+uv run python -m lerobot.annotation.rebot.subtask_labels_root outputs/annotation/passes/subtasks_<root> --out outputs/data/<new root>
+
+## Tip-offset targets (depth adapter targets of a subtask-labelled root)
+
+Per frame, the vector from the gripper tip to the next grasp / release point, in the tool frame (forward kinematics + subtask labels; `lerobot/adhocs/tip_offset/README.md`). Writes `lerobot/annotation_data/tip_offset/<root>/targets.parquet` + `provenance.json`, and the check sheet `outputs/analysis/tip_offset/<root>/check.jpg`. The root is only read. Run once per new labelled root.
+
+uv run python lerobot/adhocs/tip_offset/build.py outputs/data/<root>
+
+3D view of episodes (arm, wrist depth cloud, arrow to the target: green = inside the wrist image, red = outside; about 10 s and 300 MB per episode), then open one or several:
+
+uv run python lerobot/adhocs/tip_offset/view.py outputs/data/<root> --episodes 0,5      # or all
+uv run rerun outputs/analysis/tip_offset/<root>/episode_000.rrd [episode_005.rrd]
 
 ## Merge annotated roots
 
 Merges finished ReBot roots into one new root: videos and depth are hardlinked, tables re-indexed. Run verify_root after.
 
-uv run python -m lerobot.annotation.rebot.merge_roots outputs/<root_a> outputs/<root_b> --out outputs/<merged>
+uv run python -m lerobot.annotation.rebot.merge_roots outputs/data/<root_a> outputs/data/<root_b> --out outputs/data/<merged>
 
 ## Data record
 
@@ -148,19 +159,19 @@ The Action Inspector's flow samples played on the MuJoCo reBot, one mp4 per anch
 
 ```bash
 uv run python -m lerobot.probes.action_trace_probe --config config_rl_validate.yaml \
-    --policy.pretrained_path outputs/<run>/checkpoints/<step>/pretrained_model \
-    --dataset.root outputs/rebot_val_2026-10-14-v1 \
-    --probe_parameters.output_dir outputs/probe_runs/<name> \
+    --policy.pretrained_path outputs/runs/<run>/checkpoints/<step>/pretrained_model \
+    --dataset.root outputs/data/rebot_val_2026-10-14-v1 \
+    --probe_parameters.output_dir outputs/runs/<run>/probes/<step>/<name> \
     --probe_parameters.trace_frames "<ep:frame,ep:frame,...>"
 # trace_frames = explicit anchors, snapped to the image stride (the 2026-10-15 grasp anchor list is no longer on disk)
 # other flags: --execute, --anchors, --episodes, --out
-uv run python -m lerobot.probes.action_trace_sim --records outputs/probe_runs/<name>/action_trace/action_trace_records.npz --time-scale 2
-# -> outputs/probe_runs/<name>/action_trace_sim/anchor*.mp4, visible in view_probes
+uv run python -m lerobot.probes.action_trace_sim --records outputs/runs/<run>/probes/<step>/<name>/action_trace/action_trace_records.npz --time-scale 2
+# -> outputs/runs/<run>/probes/<step>/<name>/action_trace_sim/anchor*.mp4, visible in view_probes
 ```
 
 ## Representation trajectories
 
-Uses `policy.pretrained_path` in `config_rl.yaml`. Captures separate image/state/action groups, real and constant prompts, then writes `trajectories.html` plus per-panel `panels/*.js` under `outputs/probe/validation/step_<checkpoint>/representations/` (or the configured probe output directory). Keep that directory together; the page loads panels and camera previews from it.
+Uses `policy.pretrained_path` in `config_rl.yaml`. Captures separate image/state/action groups, real and constant prompts, then writes `trajectories.html` plus per-panel `panels/*.js` under `outputs/analysis/probe/validation/step_<checkpoint>/representations/` (or the configured probe output directory). Keep that directory together; the page loads panels and camera previews from it.
 
 ```bash
 .venv/bin/python -m lerobot.probes.representations --config config_rl.yaml
@@ -179,8 +190,8 @@ folders. Two checkpoints from the same run work as separate comparison slots:
 
 ```bash
 uv run python -m lerobot.scripts.compare_probes \
-    outputs/<run>/validation/step_00000400 \
-    outputs/<run>/validation/step_00000800 \
+    outputs/runs/<run>/validation/step_00000400 \
+    outputs/runs/<run>/validation/step_00000800 \
     --label=step-400 --label=step-800
 ```
 
@@ -203,11 +214,11 @@ Refresh reloads newly written probe output.
 
 Run one checkpoint's probe suite on the DGX and pull results to `outputs/remote_val/<run>-<step>/`. Syncs code + config_rl.yaml; datasets/stats/cache must already be on the DGX.
 
-lerobot/scripts/remote_validate.sh outputs/molmoact2_offline_rebot_v4/checkpoints/000400
+lerobot/scripts/remote_validate.sh outputs/runs/molmoact2_offline_rebot_v4/checkpoints/000400
 
 Reattach to a detached run:
 
-lerobot/scripts/remote_validate.sh --attach outputs/molmoact2_offline_rebot_v4/checkpoints/000400
+lerobot/scripts/remote_validate.sh --attach outputs/runs/molmoact2_offline_rebot_v4/checkpoints/000400
 
 Flags: `--dry-run`, `--keep-checkpoint`, `--force-delete`, `--out DIR`, `--config PATH`, `--host`, `--sim` (the MuJoCo tiered eval, `run_sim_eval.sh` + `config_rl_sim.yaml`, instead of the probe suite; results in the same `validation/step_<step>/` as `sim/`).
 
@@ -215,19 +226,19 @@ Flags: `--dry-run`, `--keep-checkpoint`, `--force-delete`, `--out DIR`, `--confi
 
 Probes the newest unprobed checkpoint on the DGX until training exits or STOP. State in `<run>/validation/.chase/`.
 
-setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> > /dev/null 2>&1 &
+setsid nohup lerobot/scripts/chase_validate.sh outputs/runs/<run> > /dev/null 2>&1 &
 
 Sim eval instead of the probes (flags after `--` go to remote_validate.sh):
 
-setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> -- --sim > /dev/null 2>&1 &
+setsid nohup lerobot/scripts/chase_validate.sh outputs/runs/<run> -- --sim > /dev/null 2>&1 &
 
 Probes and then the sim eval in one pass per checkpoint (both land in validation/step_<step>/; the sim shows up as the "Sim Nail" probe in compare_probes):
 
-setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> -- --with-sim > /dev/null 2>&1 &
+setsid nohup lerobot/scripts/chase_validate.sh outputs/runs/<run> -- --with-sim > /dev/null 2>&1 &
 
 Stop after the pass in flight:
 
-touch outputs/<run>/validation/.chase/STOP
+touch outputs/runs/<run>/validation/.chase/STOP
 
 Probe a checkpoint by hand while the chase is up:
 

@@ -1,5 +1,5 @@
 """Compare twin eval runs: per level and per configuration, success rate, mean staged reward, mean dense value, carried time, drops.
-usage (LeRobot root): uv run python lerobot/scripts/sim_builders/digital_twin/envs/twin_compare.py outputs/twin_eval_res600_2026-10-30 [outputs/twin_eval_<other> ...] [--md out.md]
+usage (LeRobot root): uv run python lerobot/scripts/sim_builders/digital_twin/envs/twin_compare.py outputs/analysis/twin_eval_res600_2026-10-30 [outputs/analysis/twin_eval_<other> ...] [--md out.md]
 Pairing: the same 64 placements in every run; the last column of a two-run table is the per-level mean difference of the dense value over
 the common placements with a sign test p-value (episodes paired by placement index)."""
 import json, pathlib, sys, statistics as st

@@ -27,7 +27,7 @@ Tool transform from the flange: `xyz = (0, 0, 0.1558)`, `rpy = (0, 0, -pi/2)`.
 
 Status: both the coupling thickness (about 10 mm, adds to 0.1558) and the mounting yaw of the gripper on
 the DROID flange are unverified. The DROID `cartesian_position` shards that would settle the TCP offset
-are no longer on disk (`outputs/diverse_robot_dataset/droid/staging` was removed); the yaw can be read off
+are no longer on disk (`outputs/data/diverse_robot_dataset/droid/staging` was removed); the yaw can be read off
 the DROID wrist-camera frames. The lowest-fingertip check in the roundtrip report is the only evidence
 so far, and DROID tables sit at unknown heights relative to the base, so it is weak for this robot.
 
@@ -46,7 +46,7 @@ DH table: `annotation/precision_contact/panda_fk.py`. Robotiq geometry: google-d
 
 `uv run python lerobot/scripts/kinematics_roundtrip.py`, 200 recorded frames per source spread over the
 episodes, `q -> fk -> ik(seed = q + noise) -> q'`, noise 5 deg (ReBot) or 0.1 rad (Panda). Output in
-`outputs/kinematics_roundtrip/` (roundtrip.md, roundtrip.json, render\_<source>.png); the 2026-10-09
+`outputs/analysis/kinematics_roundtrip/` (roundtrip.md, roundtrip.json, render\_<source>.png); the 2026-10-09
 output folder is no longer on disk, the table below is its record.
 
 | source        | converged | same joints | pose err mm med / max | rot err deg med / max | joint err deg med / max                 |

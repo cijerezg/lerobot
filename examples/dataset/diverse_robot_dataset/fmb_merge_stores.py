@@ -7,8 +7,8 @@ The v1 single-object store and the v2 multi-object store are each written by
 was given. A union store hardlinks both episode collections, concatenates episodes.jsonl, keeps
 both corpus.json / source_manifest.json under suffixed names, and rebuilds the views.
 
-    fmb_merge_stores.py --into outputs/diverse_robot_dataset_v2/fmb \
-        --store outputs/diverse_robot_dataset/fmb --store outputs/diverse_robot_dataset_v2_build/fmb_multi/store
+    fmb_merge_stores.py --into outputs/data/diverse_robot_dataset_v2/fmb \
+        --store outputs/data/diverse_robot_dataset/fmb --store outputs/data/diverse_robot_dataset_v2_build/fmb_multi/store
 """
 
 from __future__ import annotations

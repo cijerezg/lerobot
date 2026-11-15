@@ -10,7 +10,7 @@ tool offset), is rendered as the global camera frame next to the FK skeleton wit
 (no global-camera extrinsics exist for any source, so the fingertip cannot be projected into the image).
 
 From the workspace root:
-  uv run python lerobot/scripts/kinematics_roundtrip.py --out outputs/kinematics_roundtrip
+  uv run python lerobot/scripts/kinematics_roundtrip.py --out outputs/analysis/kinematics_roundtrip
 """
 
 from __future__ import annotations
@@ -32,9 +32,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 from lerobot.model.fk import get_chain, solve_ik  # noqa: E402
 from lerobot.model.fk.chain import rotation_log  # noqa: E402
 
-REBOT_ROOT = "outputs/rebot_training_mix_2026-10-04/clothing_train"
-FMB_ROOT = "outputs/diverse_robot_dataset_v3/fmb"
-CORPUS_ROOT = "outputs/diverse_robot_dataset_v3/corpus"
+REBOT_ROOT = "outputs/data/rebot_training_mix_2026-10-04/clothing_train"
+FMB_ROOT = "outputs/data/diverse_robot_dataset_v3/fmb"
+CORPUS_ROOT = "outputs/data/diverse_robot_dataset_v3/corpus"
 N_FRAMES = 200
 N_RENDER = 20
 SEED_NOISE = {"deg": 5.0, "rad": 0.1}
@@ -352,7 +352,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--out", default="outputs/kinematics_roundtrip")
+    parser.add_argument("--out", default="outputs/analysis/kinematics_roundtrip")
     parser.add_argument("--sources", nargs="+", default=["rebot", "fmb", "droid", "droid_success"])
     parser.add_argument("--no-render", action="store_true")
     args = parser.parse_args()

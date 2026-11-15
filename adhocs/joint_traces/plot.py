@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # rollout roots recorded before the RTC window fix (2026-11-09)
-ROOTS = [f"outputs/rebot_2026-{d}-annotated-v1" for d in ["10-23", "10-24", "10-26", "10-27", "10-28", "10-28b"]]
+ROOTS = [f"outputs/data/rebot_2026-{d}-annotated-v1" for d in ["10-23", "10-24", "10-26", "10-27", "10-28", "10-28b"]]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--roots", nargs="+", default=ROOTS)

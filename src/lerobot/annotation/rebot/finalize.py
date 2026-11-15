@@ -2,7 +2,7 @@
 and the compiled class-pass labels (QUALITY_V2/classes/labels_<pool>.jsonl, staging-root frames). Pool, dataset
 name and staging root come from <work>/pass.json. Refuses tables already present.
 
-    uv run python -m lerobot.annotation.rebot.finalize <work> outputs/<root>
+    uv run python -m lerobot.annotation.rebot.finalize <work> outputs/data/<root>
 
 Tables (rubric v2 section 10 + the loader tables):
   quality_spans.parquet      raw stretch + writer headroom (critiques 1 s before / 0.5 s after, clipped to the

@@ -2,7 +2,7 @@
 
     uv run python lerobot/examples/dataset/diverse_robot_dataset/molmoact_review/render_terminal.py --component household --episodes 7333 3355 [--seconds 2] [--end-s 9.5]
 
-Sheets go to outputs/_annotation/diverse_v3_review/<component>/terminal_claude/ (the review sheets and the build tree are never touched).
+Sheets go to outputs/annotation/diverse_v3_review/<component>/terminal_claude/ (the review sheets and the build tree are never touched).
 """
 import argparse
 import sys
@@ -19,8 +19,8 @@ parser.add_argument('--episodes', nargs='+', type=int, required=True)
 parser.add_argument('--seconds', type=float, default=2.0)
 parser.add_argument('--end-s', type=float, help='Optional end time for an event detail window')
 args = parser.parse_args()
-paths = Paths(f'molmoact_{args.component}', ROOT / 'outputs/diverse_robot_dataset_v3_build')
-output = ROOT / 'outputs/_annotation/diverse_v3_review' / args.component / 'terminal_claude'
+paths = Paths(f'molmoact_{args.component}', ROOT / 'outputs/data/diverse_robot_dataset_v3_build')
+output = ROOT / 'outputs/annotation/diverse_v3_review' / args.component / 'terminal_claude'
 info = read_json(paths.metadata_root / 'meta/info.json')
 rows = {int(r['episode_index']): r for r in episode_rows(paths.metadata_root)}
 for index in args.episodes:

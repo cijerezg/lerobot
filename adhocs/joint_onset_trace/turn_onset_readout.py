@@ -3,8 +3,8 @@ negative, keep it flat (within 5 deg) or turn it positive by the end of the 1 s 
 operator turned (turn_onset_frames.csv). Also summarizes the robot-run baseline the same way.
 
     uv run python lerobot/adhocs/joint_onset_trace/turn_onset_readout.py \
-        outputs/probe_runs/turn_onset_2026-10-17/oct07 outputs/probe_runs/turn_onset_2026-10-17/oct14 \
-        outputs/probe_runs/turn_onset_2026-10-17/oct16
+        outputs/analysis/turn_onset_2026-10-17/oct07 outputs/analysis/turn_onset_2026-10-17/oct14 \
+        outputs/analysis/turn_onset_2026-10-17/oct16
 """
 import sys
 from pathlib import Path
@@ -14,7 +14,7 @@ import pandas as pd
 
 HERE = Path(__file__).parent
 FLAT = 5.0
-BASELINE = "outputs/probe_runs/clippers_trace_2026-10-17"
+BASELINE = "outputs/analysis/clippers_trace_2026-10-17"
 ROLL = 5
 
 

@@ -423,12 +423,12 @@ One-time pre-decode:
 python -m lerobot.scripts.lerobot_memmap_buffer_cache \
     --repo-id your/dataset \
     --root /path/to/local/dataset \
-    --cache-dir outputs/buffer_cache \
+    --cache-dir outputs/cache/buffer_cache \
     --image-storage-dtype uint8 \
     --image-storage-size 480 640
 ```
 
-Then set `buffer_cache_dir: outputs/buffer_cache` in the YAML. If you skip this step, the first training run will populate the cache for you (slow); subsequent runs are fast.
+Then set `buffer_cache_dir: outputs/cache/buffer_cache` in the YAML. If you skip this step, the first training run will populate the cache for you (slow); subsequent runs are fast.
 
 ### Cache every dataset
 
@@ -456,7 +456,7 @@ Probes are diagnostic scripts that run alongside training and report on policy h
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `probe_parameters.output_dir` | str | `"outputs/probe"` | Probe output directory. |
+| `probe_parameters.output_dir` | str | `"outputs/analysis/probe"` | Probe output directory. |
 | `probe_parameters.mode` | str | `"all"` | `"collect"` (compute + save), `"plot"` (re-render from saved data), or `"all"`. |
 | `probe_parameters.max_episodes` | int\|null | `5` | Episodes per probe run. |
 | `probe_parameters.n_frames_per_episode` | int | `128` | Frames sampled per episode. |

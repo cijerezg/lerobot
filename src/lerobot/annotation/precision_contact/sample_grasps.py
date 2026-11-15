@@ -154,18 +154,18 @@ def pick(recs, n, rng):
 def main():
     rng = random.Random(SEED); all_recs = []
     # 1. own teleop
-    all_recs += rebot_root("outputs/rebot_all-annotated-v1", "own", segs_from_metadata("outputs/rebot_all-annotated-v1"))
+    all_recs += rebot_root("outputs/data/rebot_all-annotated-v1", "own", segs_from_metadata("outputs/data/rebot_all-annotated-v1"))
     # 2. model rollouts
-    all_recs += rebot_root("outputs/rebot_rollouts-annotated-v2", "model", segs_from_metadata("outputs/rebot_rollouts-annotated-v2"))
-    for r in ["outputs/rebot_inference_2026-09-20-v1", "outputs/rebot_inference_2026-09-17-v1"]:
+    all_recs += rebot_root("outputs/data/rebot_rollouts-annotated-v2", "model", segs_from_metadata("outputs/data/rebot_rollouts-annotated-v2"))
+    for r in ["outputs/data/rebot_inference_2026-09-20-v1", "outputs/data/rebot_inference_2026-09-17-v1"]:
         all_recs += rebot_root(r, "model", segs_from_windows(r))
     # 3. external ReBot operators
-    for p in sorted(glob.glob("outputs/rebot_public_annotated_v1/*/*")):
+    for p in sorted(glob.glob("outputs/data/rebot_public_annotated_v1/*/*")):
         segs = segs_from_metadata(p)
         if len(segs): all_recs += rebot_root(p, "ext", segs)
     print("rebot-style records:", len(all_recs), "missing video:", sum(1 for r in all_recs if r.get("missing_video")), sorted({r["root"] for r in all_recs if r.get("missing_video")}), flush=True)
     # 4. diverse (tiles rendered lazily, only for the sampled ones)
-    div = diverse("outputs/diverse_robot_dataset_v3/corpus", "diverse") + diverse("outputs/diverse_robot_dataset_v3/fmb", "fmb")
+    div = diverse("outputs/data/diverse_robot_dataset_v3/corpus", "diverse") + diverse("outputs/data/diverse_robot_dataset_v3/fmb", "fmb")
     print("diverse grasp atoms:", len(div), flush=True)
 
     groups = {}

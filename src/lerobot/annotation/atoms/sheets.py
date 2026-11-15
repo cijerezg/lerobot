@@ -4,8 +4,8 @@
     uv run python -m lerobot.annotation.atoms.sheets dense --episode E --from-s 10 --to-s 20 [--stride-s 0.5]
 
 Frames are extracted with ffmpeg (select filter, one pass per video) into
-outputs/_annotation/subtask_atoms_review/frames/<episode>/<camera>/f%06d.jpg and reused.
-Sheets go to outputs/_annotation/subtask_atoms_review/sheets/<source>/<episode>_<k>.jpg.
+outputs/annotation/subtask_atoms_review/frames/<episode>/<camera>/f%06d.jpg and reused.
+Sheets go to outputs/annotation/subtask_atoms_review/sheets/<source>/<episode>_<k>.jpg.
 """
 
 from __future__ import annotations

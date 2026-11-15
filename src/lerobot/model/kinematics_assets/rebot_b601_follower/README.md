@@ -84,7 +84,7 @@ The chosen chain reproduces pinocchio on the same URDF to 1e-15 (see `lerobot/sc
 
 `uv run python lerobot/scripts/kinematics_roundtrip.py`, 200 recorded frames per source spread over the
 episodes, `q -> fk -> ik(seed = q + noise) -> q'`, noise 5 deg (ReBot) or 0.1 rad (Panda). Output in
-`outputs/kinematics_roundtrip/` (roundtrip.md, roundtrip.json, render\_<source>.png); the 2026-10-09
+`outputs/analysis/kinematics_roundtrip/` (roundtrip.md, roundtrip.json, render\_<source>.png); the 2026-10-09
 output folder is no longer on disk, the table below is its record.
 
 | source | converged | same joints | pose err mm med / max | rot err deg med / max | joint err deg med / max |

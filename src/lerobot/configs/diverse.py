@@ -33,7 +33,7 @@ class DiverseCollectionConfig:
     """
 
     enabled: bool = False
-    root: str = "outputs/diverse_robot_dataset"
+    root: str = "outputs/data/diverse_robot_dataset"
     # None falls back to the run's buffer_cache_dir.
     cache_dir: str | None = None
     # Outer split between the two groups. 1.0 / 1.0 is the plan's 50/50: equal expected

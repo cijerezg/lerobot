@@ -3,8 +3,8 @@
     uv run python -m lerobot.annotation.atoms.assemble [--allow-missing]
 
 Writes (never in place, new files only):
-  outputs/diverse_robot_dataset/corpus/subtask_atoms.jsonl + subtask_atoms_info.json
-  outputs/diverse_robot_dataset/fmb/subtask_atoms.jsonl    + subtask_atoms_info.json
+  outputs/data/diverse_robot_dataset/corpus/subtask_atoms.jsonl + subtask_atoms_info.json
+  outputs/data/diverse_robot_dataset/fmb/subtask_atoms.jsonl    + subtask_atoms_info.json
 """
 
 from __future__ import annotations

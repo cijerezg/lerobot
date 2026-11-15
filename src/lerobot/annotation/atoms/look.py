@@ -3,10 +3,10 @@
     uv run python -m lerobot.annotation.atoms.look --episode E --frames 100 120 140
     uv run python -m lerobot.annotation.atoms.look --episode E --from-s 10 --to-s 13 --stride-s 0.5
 
-Writes outputs/_annotation/subtask_atoms_review/sheets/closeup/<episode>_<frames>.jpg (path printed):
+Writes outputs/annotation/subtask_atoms_review/sheets/closeup/<episode>_<frames>.jpg (path printed):
 one column per frame, external camera on top, wrist below, any third camera under that,
 each tile 520 px wide (the contact sheets use 256 px). Frames decode at 640 px width into
-outputs/_annotation/subtask_atoms_review/frames_hd/ and are reused.
+outputs/annotation/subtask_atoms_review/frames_hd/ and are reused.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """Bounded synthetic smoke against local trained ViT weights; writes no checkpoint.
 
 From the workspace root:
-  .venv/bin/python lerobot/scripts/smoke_future_visual.py --base outputs/MolmoAct2 \
-    --checkpoint outputs/molmoact2_rebot_nohistory_v1/checkpoints/001200/pretrained_model/model.safetensors
+  .venv/bin/python lerobot/scripts/smoke_future_visual.py --base outputs/models/MolmoAct2 \
+    --checkpoint outputs/runs/molmoact2_rebot_nohistory_v1/checkpoints/001200/pretrained_model/model.safetensors
 """
 
 import argparse

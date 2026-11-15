@@ -20,8 +20,8 @@ in the normalized anchor-encoded action space of the flow loss. Four input-noise
 ## Run
 
     uv run python lerobot/adhocs/draw_spread/run_draw_spread.py --config_path=config_rl_validate.yaml \
-        --policy.pretrained_path=outputs/rebot-internal-only-20261021/checkpoints/001200/pretrained_model \
-        --out_dir=outputs/draw_spread/internal1200_2026-11-07
+        --policy.pretrained_path=outputs/runs/rebot-internal-only-20261021/checkpoints/001200/pretrained_model \
+        --out_dir=outputs/analysis/draw_spread/internal1200_2026-11-07
 
 Flags: `--smoke=3` (3 anchors per episode, two training roots), `--skip_reference=true` (reuse
 `out_dir/reference.npz`), `--noise_settings=state1,state3,image0.02,image0.05`, `--n_draws`, `--anchor_seconds`,

@@ -116,8 +116,8 @@ controls or a sweep of solver settings.
 PYTHONPATH=lerobot/src OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 \
   .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
   --config_path=config_rl_validate.yaml \
-  --policy.pretrained_path=outputs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
-  --inv_out=outputs/probe_runs/flow_noise_pca_diverse_v1_1200/results \
+  --policy.pretrained_path=outputs/runs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
+  --inv_out=outputs/runs/rebot-diverse-v1-2026-10-04/probes/001200/flow_noise_pca/results \
   --inv_noise_pca --inv_pca_points=150 --inv_num_steps=20 --inv_refine=4
 ```
 
@@ -140,7 +140,7 @@ To refresh the PCA page from all completed contexts without running the model:
 
 ```bash
 PYTHONPATH=lerobot/src .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
-  --inv_out=outputs/probe_runs/flow_noise_pca_diverse_v1_1200/results --inv_noise_pca --inv_analyze_only
+  --inv_out=outputs/runs/rebot-diverse-v1-2026-10-04/probes/001200/flow_noise_pca/results --inv_noise_pca --inv_analyze_only
 ```
 
 ### Fixed-frame action interpolation
@@ -165,7 +165,7 @@ noise recovery RMS. Generation is not a guarantee of task success.
 PYTHONPATH=lerobot/src OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 \
   .venv/bin/python lerobot/scripts/probes/flow_inversion.py \
   --config_path=config_rl_validate.yaml \
-  --policy.pretrained_path=outputs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
+  --policy.pretrained_path=outputs/runs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
   --inv_out=<new-output-directory> --inv_generated_actions \
   --inv_interpolation_episodes=0,1,6 --inv_interpolation_batch_size=10 \
   --inv_num_steps=20 --inv_refine=4
@@ -201,7 +201,7 @@ noise seeds, and actual matching discrepancies are shown in the report.
 
 The recorded pool contains own-ReBot validation chunks at 3-frame intervals,
 excluding each anchor's 60-frame neighborhood. The generated pool reuses the nine
-saved actions from `outputs/probe_runs/flow_generated_interpolation_rebot_1200`.
+saved actions from `outputs/analysis/flow_generated_interpolation_rebot_1200`.
 Selection greedily takes three distinct pairs with the smallest worst relative
 endpoint-distance mismatch over the three anchors, without using inversion
 outcomes. Selected recorded windows do not overlap. The current completed run's

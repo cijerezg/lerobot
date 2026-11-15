@@ -12,7 +12,7 @@ the original paths as a record.
 
 ## Files
 
-- `build_probe_root.py`: the inference episode as a probe root (`outputs/rebot_rollouts_2026-10-20-probe-v1`),
+- `build_probe_root.py`: the inference episode as a probe root (`outputs/data/rebot_rollouts_2026-10-20-probe-v1`),
   subtask windows = the online subtasks. Copied from migration/rollout_review_2026-10-17/build_probe_root.py.
 - `deployed_prompt.py`: the deployed metadata clause (quality/mistake/speed + the step's precision and contact).
 - `reps_episode.py`: representations probe restricted to `--dataset.root` (the stock sampling plan would also take

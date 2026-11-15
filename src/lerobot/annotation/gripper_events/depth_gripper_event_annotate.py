@@ -9,7 +9,7 @@ script never reads robot state or any semantic annotation.
 Example:
 
     python depth_gripper_event_annotate.py \
-        --data-dir outputs/rebot_socks_basket-annotated-v2
+        --data-dir outputs/data/rebot_socks_basket-annotated-v2
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ episode instead, through the stock diverse buffers). Everything else is the stoc
 cache/<group>.npy).
 
     uv run python lerobot/adhocs/intervention_episode_reps/reps_episode.py --config config_rl.yaml \
-        --dataset.root outputs/rebot_rollouts_2026-10-20-probe-v1 \
+        --dataset.root outputs/data/rebot_rollouts_2026-10-20-probe-v1 \
         --probe_parameters.output_dir migration/inference_review_2026-10-20/reps_probe \
         --probe_parameters.repr_stride_s 0.5 --probe_parameters.repr_constant_text false \
         --probe_parameters.repr_max_frames 600 --probe_parameters.repr_layers 8,14,20,28,32 \

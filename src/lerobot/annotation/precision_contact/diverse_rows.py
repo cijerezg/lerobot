@@ -1,6 +1,6 @@
 """Contact-sheet rows for the diverse half of the precision + contact pass (2026-09-25). Nothing is labelled.
 
-One row per atom of outputs/diverse_robot_dataset_v3/{corpus,fmb}/subtask_atoms.jsonl, in file order.
+One row per atom of outputs/data/diverse_robot_dataset_v3/{corpus,fmb}/subtask_atoms.jsonl, in file order.
 move / return are derived (no sheet row). Sheets are drawn by the ReBot renderer
 (precision_contact/render_rows.py render_sheet); this file only builds the rows.
 
@@ -24,7 +24,7 @@ Differences from the ReBot rows:
   move        precision_from_row = the next atom of the episode (parent interval, atom order)
 
 Usage (workspace root): uv run python -m lerobot.annotation.precision_contact.diverse_rows
-Output: outputs/_annotation/precision_contact_diverse_2026-09-25/rows.jsonl, summary.txt, sheets/<root>/<verb>_<k>.jpg. Arguments: root short names to render
+Output: outputs/annotation/precision_contact_diverse_2026-09-25/rows.jsonl, summary.txt, sheets/<root>/<verb>_<k>.jpg. Arguments: root short names to render
 (default all); --sample N renders only the first N sheets per (root, verb).
 """
 import json, math, os, re, sys
@@ -35,7 +35,7 @@ from pathlib import Path
 from lerobot.annotation.paths import WORKSPACE  # noqa: E402
 
 REPO = WORKSPACE
-HERE = REPO / "outputs/_annotation/precision_contact_diverse_2026-09-25"  # results folder of the 09-25 pass
+HERE = REPO / "outputs/annotation/precision_contact_diverse_2026-09-25"  # results folder of the 09-25 pass
 _argv = sys.argv; sys.argv = sys.argv[:1]
 from lerobot.annotation.precision_contact import render_rows as rr  # noqa: E402  (chdir to REPO, render_sheet, classify, onset constants)
 sys.argv = _argv
@@ -44,7 +44,7 @@ from lerobot.annotation.precision_contact import sample_contacts as sc  # noqa: 
 from lerobot.annotation.precision_contact import diverse_angles as da  # noqa: E402
 from lerobot.annotation.precision_contact.precision_prior import precision_prior  # noqa: E402
 
-CORPUS = Path("outputs/diverse_robot_dataset_v3")
+CORPUS = Path("outputs/data/diverse_robot_dataset_v3")
 SHEETS = HERE / "sheets"
 EXTRA_CONTACT = {"scrub", "stir", "spread", "water", "unfold", "flatten", "straighten", "tilt"}
 DERIVED = {"move", "return"}

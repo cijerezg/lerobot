@@ -41,7 +41,7 @@ from lerobot.rl.data_sources.diverse_actor_buffer import (  # noqa: E402
     DiverseSampleSpec,
 )
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/data/diverse_robot_dataset_v3"
 SOURCE_WORDS = ("droid", "robochallenge", "fmb", "ur7e", "rebot", "arx5", "yam")
 
 

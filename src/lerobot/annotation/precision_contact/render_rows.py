@@ -28,7 +28,7 @@ Contact prior: contact_prior.classify() (text rules).
 Precision prior: no text-rule script exists; left null for the next step.
 
 Usage (repo root): .venv/bin/python -m lerobot.annotation.precision_contact.render_rows [short ...]
-Output: outputs/_annotation/precision_contact_annotation_2026-09-25/rows.jsonl, summary.txt, sheets/<root>/<verb>_<k>.jpg
+Output: outputs/annotation/precision_contact_annotation_2026-09-25/rows.jsonl, summary.txt, sheets/<root>/<verb>_<k>.jpg
 """
 import glob, json, os, re, sys
 from collections import Counter, defaultdict
@@ -44,12 +44,12 @@ import cv2, numpy as np, pandas as pd  # noqa: E402
 from lerobot.annotation.precision_contact import sample_grasps as sg  # noqa: E402  approach_angle (FK)
 from lerobot.annotation.precision_contact import sample_contacts as sc  # noqa: E402  grab_many
 
-HERE = Path("outputs/_annotation/precision_contact_annotation_2026-09-25"); SHEETS = HERE / "sheets"
-ROOTS = [("bits", "outputs/rebot_bits-annotated-v2"), ("pushbook", "outputs/rebot_push-book-annotated-v1"),
-         ("rebot_all", "outputs/rebot_all-annotated-v1"),
-         ("additions", "outputs/rebot_cache_ready_2026-09-21/main_additions_train"),
-         ("external", "outputs/rebot_cache_ready_2026-09-21/external_rebot_train"),
-         ("validation", "outputs/rebot_cache_ready_2026-09-21/validation_all")]
+HERE = Path("outputs/annotation/precision_contact_annotation_2026-09-25"); SHEETS = HERE / "sheets"
+ROOTS = [("bits", "outputs/data/rebot_bits-annotated-v2"), ("pushbook", "outputs/data/rebot_push-book-annotated-v1"),
+         ("rebot_all", "outputs/data/rebot_all-annotated-v1"),
+         ("additions", "outputs/data/rebot_cache_ready_2026-09-21/main_additions_train"),
+         ("external", "outputs/data/rebot_cache_ready_2026-09-21/external_rebot_train"),
+         ("validation", "outputs/data/rebot_cache_ready_2026-09-21/validation_all")]
 TILE_W, TILE_H = 256, 192; ROWS_PER_SHEET = 6
 HEAD_H, STRIP_H = 22, 34
 CONTACT_VERBS = {"push", "press", "strike", "pry", "pour", "drag", "fold", "wipe"}

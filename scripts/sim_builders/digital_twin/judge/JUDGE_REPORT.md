@@ -60,13 +60,13 @@ bash lerobot/scripts/spark_judge_smoke.sh dgx-ip        # /v1/models, one JSON a
 Scoring a recorded episode (workstation, LeRobot root):
 
 ```bash
-S=outputs/rebot-mix40_20_40-resume1200-20261027/validation/step_00000600/sim/bottle_basket_v1
+S=outputs/runs/rebot-mix40_20_40-resume1200-20261027/validation/step_00000600/sim/bottle_basket_v1
 uv run python -m lerobot.rewards.vlm_judge.score_episode --sim-dir $S --episode 1 --task bottle_basket \
     --out lerobot/scripts/sim_builders/digital_twin/judge/runs/bb_v1_ep1.gemma.json          # default endpoint http://dgx-ip:8011/v1, model google/gemma-4-31B-it
 uv run python -m lerobot.rewards.vlm_judge.compare_to_scorer --timeline lerobot/scripts/sim_builders/digital_twin/judge/runs/bb_v1_ep1.gemma.json --events $S/subtask_events.json
 uv run python -m lerobot.rewards.robometer.score_episode --sim-dir $S --episode 1 --task bottle_basket \
     --out lerobot/scripts/sim_builders/digital_twin/judge/runs/bb_v1_ep1.robometer.json       # http://dgx-ip:8012
-uv run python -m lerobot.rewards.vlm_judge.score_episode --root outputs/rebot_teleop_2026-10-29-cut-v1 --episode 0 --task "basket:pill bottle" --t-from 0 --t-to 60 --out ...
+uv run python -m lerobot.rewards.vlm_judge.score_episode --root outputs/data/rebot_teleop_2026-10-29-cut-v1 --episode 0 --task "basket:pill bottle" --t-from 0 --t-to 60 --out ...
 ```
 
 `--model Qwen/Qwen3-VL-32B-Instruct` when the qwen server is up; `--max-queries N` for a smoke run; `--period` (0.5 s)
@@ -104,7 +104,7 @@ counts a failure).
 
 ## 4. Calibration procedure (against the hand-written scorers)
 
-1. Pick episodes with scorer events: `outputs/rebot-mix40_20_40-resume1200-20261027/validation/step_00000600/sim/`
+1. Pick episodes with scorer events: `outputs/runs/rebot-mix40_20_40-resume1200-20261027/validation/step_00000600/sim/`
    has 8 episodes per layout with `subtask_events.json` and 30 fps top/wrist videos (bottle_basket_v1 ep 1, 7 and
    v2 ep 3-5, v5 ep 0, 2, 4-6 are successes; close_lid_v2/v4 ep 3 closed). Take ~10 basket, ~10 lid, ~10 clipper
    episodes spanning final stages.
@@ -171,7 +171,7 @@ counts a failure).
 - Memory split on the Spark: gemma 0.60 (~73 GB), assigner 0.25 (~30 GB); start gemma first.
 - Not wired into rtc_actor_runtime yet: wait for the calibration numbers (seam unchanged, `AssignerRunner.cursor` in, `latest.cursor` out).
 - 10-30 late (user): EVERYTHING runs on the Spark (sims, scoring, assigner, models). Client defaults = localhost (8011 / 8013 / 8012);
-  lerobot/src, lerobot/scripts and the two twin eval runs (outputs/twin_eval_{res600,internal1200}_2026-10-30, 6.4 GB) rsynced to the
+  lerobot/src, lerobot/scripts and the two twin eval runs (outputs/analysis/twin_eval_{res600,internal1200}_2026-10-30, 6.4 GB) rsynced to the
   Spark; the workstation only pushes code. The vllm processes stay (judge-venv torch 2.13 vs the fork venv torch 2.12), on localhost.
 
 ## Revision 2026-11-04: assigner dropped

@@ -1,4 +1,4 @@
-"""Per-checkpoint read-out of the sweep in outputs/probe_runs/ckpt_sweep_2026-10-17/<step>/{reach,oct07,oct14,oct16}.
+"""Per-checkpoint read-out of the sweep in outputs/analysis/ckpt_sweep_2026-10-17/<step>/{reach,oct07,oct14,oct16}.
 
 Training onset frames (24, operator direction known): seeds with / flat / against the operator's roll direction,
 the model's median roll turn as a fraction of the operator's, and per joint the median |model - operator| at the
@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 HERE = Path(__file__).parent
-SWEEP = Path(sys.argv[1] if len(sys.argv) > 1 else "outputs/probe_runs/ckpt_sweep_2026-10-17")
+SWEEP = Path(sys.argv[1] if len(sys.argv) > 1 else "outputs/analysis/ckpt_sweep_2026-10-17")
 FLAT, ROLL = 5.0, 5
 JOINTS = ["pan", "lift", "elbow", "wflex", "yaw", "roll", "grip"]
 onsets = pd.read_csv(HERE / "turn_onset_frames.csv")

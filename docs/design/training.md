@@ -328,7 +328,7 @@ match training.
 | Key | Value | Meaning |
 |---|---|---|
 | `dataset.sources` | socks_basket / shirts_bin / two_container | merged corpus, 38 eps / 165,740 frames; `repo_id` is `cijerezg/rebot-all-v1` and sources[0] supplies norm stats |
-| `val_dataset_path` | `outputs/rebot_val-annotated-v2` | 3 held-out eps, one per task family |
+| `val_dataset_path` | `outputs/data/rebot_val-annotated-v2` | 3 held-out eps, one per task family |
 | `val_freq` / `val_loss_frames` | 400 / 128 | probe pass = save cadence; held-out losses every `log_freq` |
 | `skip_critic` | true | plain BC + prompt conditioning |
 | `batch_size` × `gradient_accumulation_steps` | 32 × 4 = **128** | effective batch (several in-file comments still say 2/64 — wrong) |

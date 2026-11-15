@@ -33,9 +33,9 @@ stacked; an existing clip is reused). Needs `ffmpeg` and the column `observation
 
 ## Findings
 
-`outputs/rebot_teleop_2026-11-14-tube-cut-v3` (16 episodes, 34,836 frames), scored against the subtask labels
+`outputs/data/rebot_teleop_2026-11-14-tube-cut-v3` (16 episodes, 34,836 frames), scored against the subtask labels
 (in hand = move + insert segments, 10,963 frames; free = approach + return, 9,335 frames; grasp segments not
-scored). Scripts: `outputs/scratch/gripper_torque_filter_2026-11-14/{sweep,why,latch}.py`.
+scored). Scripts: `outputs/analysis/gripper_torque_filter_2026-11-14/{sweep,why,latch}.py`.
 
 | rule | in-hand frames high | free frames high | carries (of 27) at least 80 % high | level changes | stretches < 0.5 s |
 |---|---|---|---|---|---|

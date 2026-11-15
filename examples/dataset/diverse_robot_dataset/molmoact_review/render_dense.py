@@ -2,7 +2,7 @@
 
     uv run python lerobot/examples/dataset/diverse_robot_dataset/molmoact_review/render_dense.py --component household --episode 7333 --camera wrist --start 8 --end 14 --stride 0.33
 
-Sheets go to outputs/_annotation/diverse_v3_review/<component>/dense_claude/ (the review sheets and the build tree are never touched).
+Sheets go to outputs/annotation/diverse_v3_review/<component>/dense_claude/ (the review sheets and the build tree are never touched).
 """
 import argparse
 import math
@@ -24,8 +24,8 @@ parser.add_argument('--columns', type=int, default=4)
 parser.add_argument('--tile-width', type=int, default=400)
 parser.add_argument('--per-page', type=int, default=12)
 args = parser.parse_args()
-paths = Paths(f'molmoact_{args.component}', ROOT / 'outputs/diverse_robot_dataset_v3_build')
-output = ROOT / 'outputs/_annotation/diverse_v3_review' / args.component / 'dense_claude'
+paths = Paths(f'molmoact_{args.component}', ROOT / 'outputs/data/diverse_robot_dataset_v3_build')
+output = ROOT / 'outputs/annotation/diverse_v3_review' / args.component / 'dense_claude'
 info = read_json(paths.metadata_root / 'meta/info.json')
 row = next(r for r in episode_rows(paths.metadata_root) if int(r['episode_index']) == args.episode)
 camera = f'observation.images.{args.camera}'

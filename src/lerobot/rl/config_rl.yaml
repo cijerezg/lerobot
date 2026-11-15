@@ -1,6 +1,6 @@
 # Training mix 2026-09-21: 40% native (old + additions), 20% external, 40% diverse.
 # Prepared for explicit launch; deployment itself does not start training.
-offline_output_dir: outputs/molmoact2_rebot_mix_20260921
+offline_output_dir: outputs/runs/molmoact2_rebot_mix_20260921
 batch_size: 32
 dataset:
   repo_id: cijerezg/rebot-all-v1
@@ -8,27 +8,27 @@ dataset:
   max_episodes: null
   sources:
   - name: rebot_all-annotated-v1
-    root: outputs/rebot_all-annotated-v1
+    root: outputs/data/rebot_all-annotated-v1
     weight: 312418
     sampling_group: main
     normalization_source: true
   - name: main_additions_train
-    root: outputs/rebot_cache_ready_2026-09-21/main_additions_train
+    root: outputs/data/rebot_cache_ready_2026-09-21/main_additions_train
     weight: 26134
     sampling_group: main
     normalization_source: false
   - name: external_rebot_train
-    root: outputs/rebot_cache_ready_2026-09-21/external_rebot_train
+    root: outputs/data/rebot_cache_ready_2026-09-21/external_rebot_train
     weight: 189478
     sampling_group: external_rebot
     normalization_source: false
   video_backend: pyav
-buffer_cache_dir: outputs/buffer_cache-rebot-annot-v2
+buffer_cache_dir: outputs/cache/buffer_cache-rebot-annot-v2
 cache_policy: require
 diverse:
   enabled: true
-  root: outputs/diverse_robot_dataset_v3
-  cache_dir: outputs/buffer_cache-diverse-v3
+  root: outputs/data/diverse_robot_dataset_v3
+  cache_dir: outputs/cache/buffer_cache-diverse-v3
   rebot_weight: 0.6
   weight: 0.4
   group_weight: sqrt_episodes
@@ -45,7 +45,7 @@ diverse:
     main: 0.4
     external_rebot: 0.2
 skip_critic: true
-val_dataset_path: outputs/rebot_cache_ready_2026-09-21/validation_all
+val_dataset_path: outputs/data/rebot_cache_ready_2026-09-21/validation_all
 val_split: 0.0
 val_freq: 0
 val_on_start: false
@@ -53,11 +53,11 @@ val_loss_frames: 128
 policy:
   type: molmoact2_rl
   task: lean the cushion against the wall
-  pretrained_path: outputs/molmoact2_rebot_diverse_v3_probes_20260919/checkpoints/001200/pretrained_model
-  base_path: outputs/MolmoAct2
+  pretrained_path: outputs/runs/molmoact2_rebot_diverse_v3_probes_20260919/checkpoints/001200/pretrained_model
+  base_path: outputs/models/MolmoAct2
   action_mode: both
   inference_action_mode: continuous
-  discrete_action_tokenizer: outputs/MolmoAct-FAST-tokenizer
+  discrete_action_tokenizer: outputs/models/MolmoAct-FAST-tokenizer
   knowledge_insulation: true
   train_action_expert_only: false
   freeze_embedding: true
@@ -309,7 +309,7 @@ policy:
   repo_id: cijerezg/rebot-all-v1
   image_storage_dtype: uint8
   image_storage_size: null
-output_dir: outputs/molmoact2_rebot_mix_20260921
+output_dir: outputs/runs/molmoact2_rebot_mix_20260921
 job_name: rebot_mix_20260921
 resume: false
 seed: 42
@@ -381,7 +381,7 @@ probe_parameters:
   depth_event_leads_s: 0.5,1,2,3
   depth_event_shift_s: '1.0'
   depth_event_z_offset_mm: 30.0
-  output_dir: outputs/probe
+  output_dir: outputs/analysis/probe
   mode: all
   max_episodes: 8
   n_frames_per_episode: 32

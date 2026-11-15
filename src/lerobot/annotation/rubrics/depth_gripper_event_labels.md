@@ -121,10 +121,10 @@ Generate labels independently for all four roots:
 
 | split | root | episodes | frames |
 |---|---|---:|---:|
-| train | `outputs/rebot_socks_basket-annotated-v2` | 15 | 68,635 |
-| train | `outputs/rebot_shirts_bin-annotated-v2` | 9 | 30,822 |
-| train | `outputs/rebot_two_container-annotated-v2` | 14 | 66,283 |
-| validation | `outputs/rebot_val-annotated-v2` | 3 | 14,021 |
+| train | `outputs/data/rebot_socks_basket-annotated-v2` | 15 | 68,635 |
+| train | `outputs/data/rebot_shirts_bin-annotated-v2` | 9 | 30,822 |
+| train | `outputs/data/rebot_two_container-annotated-v2` | 14 | 66,283 |
+| validation | `outputs/data/rebot_val-annotated-v2` | 3 | 14,021 |
 
 Episode boundaries come from
 `meta/episodes/chunk-*/file-*.parquet`, using `dataset_from_index` and
@@ -314,7 +314,7 @@ whose gripper never opens past -90: bits open only to -30..-90, so v1 read whole
 
 Read-only comparison of closed intervals v1 -> v2: bits 14 -> 76, bottle-train-v2 33 -> 48, socks-v3 121 -> 124,
 shirts-v3 74 -> 73, two_container-v3 136 -> 143, rollouts-v2 116 -> 115
-(prototype script removed 2026-10-06; the rule is `annotation/rebot/motion.closed_intervals`). Only `outputs/rebot_bits-annotated-v2` carries v2
+(prototype script removed 2026-10-06; the rule is `annotation/rebot/motion.closed_intervals`). Only `outputs/data/rebot_bits-annotated-v2` carries v2
 sidecars (user decision: bits only for now). Its info has `thresholds_degrees: null` + `travel_degrees: 25`, so a
 consolidation with v1 leaves is refused by `depth_event_labels_info.py`, and `probes/depth_event_probe.py` (which re-derives
 the closed state from the absolute thresholds) cannot run on it until the other roots move to v2.

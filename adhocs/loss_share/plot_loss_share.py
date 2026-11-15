@@ -1,6 +1,6 @@
 """Figures for run_loss_share.py: shares per checkpoint and per-frame distributions.
 
-    uv run python lerobot/adhocs/loss_share/plot_loss_share.py outputs/loss_share/corr10_2026-11-12
+    uv run python lerobot/adhocs/loss_share/plot_loss_share.py outputs/analysis/loss_share/corr10_2026-11-12
 """
 import glob
 import os

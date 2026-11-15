@@ -50,15 +50,15 @@ Speed: `speed_hybrid_v1` bucket 1 (slowest) to 5 (fastest), 1 s smoothed joint m
 
 | source | root | episodes | tasks | segments |
 |---|---|---|---|---|
-| internal_main | `outputs/rebot_all-annotated-v14-tasks2` | 90 | 46 | 1221 |
-| internal_additions | `outputs/rebot_main_additions-annotated-v3` | 22 | 9 | 111 |
-| internal_bits_kit | `outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1` | 18 | 15 | 247 |
-| internal_oct04 | `outputs/rebot_additions_2026-10-04-annotated-v12-tasks1` | 26 | 14 | 162 |
-| internal_oct07 | `outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1` | 5 | 4 | 55 |
-| internal_oct08 | `outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1` | 13 | 11 | 74 |
-| internal_oldval | `outputs/rebot_oldval_train-2026-10-14-v1` | 2 | 2 | 20 |
-| internal_oct14 | `outputs/rebot_2026-10-14-annotated-v4` | 13 | 8 | 132 |
-| external_rebot_train | `outputs/external_rebot_train-annotated-v9-tasks1` | 241 | 47 | 1294 |
+| internal_main | `outputs/data/rebot_all-annotated-v14-tasks2` | 90 | 46 | 1221 |
+| internal_additions | `outputs/data/rebot_main_additions-annotated-v3` | 22 | 9 | 111 |
+| internal_bits_kit | `outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1` | 18 | 15 | 247 |
+| internal_oct04 | `outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1` | 26 | 14 | 162 |
+| internal_oct07 | `outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1` | 5 | 4 | 55 |
+| internal_oct08 | `outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1` | 13 | 11 | 74 |
+| internal_oldval | `outputs/data/rebot_oldval_train-2026-10-14-v1` | 2 | 2 | 20 |
+| internal_oct14 | `outputs/data/rebot_2026-10-14-annotated-v4` | 13 | 8 | 132 |
+| external_rebot_train | `outputs/data/external_rebot_train-annotated-v9-tasks1` | 241 | 47 | 1294 |
 
 ## Task index
 
@@ -226,7 +226,7 @@ Speed: `speed_hybrid_v1` bucket 1 (slowest) to 5 (fastest), 1 s smoothed joint m
 
 ### T001 Grasp the black sock farther from the robot and move it to the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 49. Table: episode 49 (1374 frames, mean quality 1.8).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 49. Table: episode 49 (1374 frames, mean quality 1.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -252,7 +252,7 @@ eval_subtask_contacts: [cloth-pinch, na, cloth-pinch, na, cloth-pinch, na]
 
 ### T002 Move the shirt to the bin, then put it in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 8. Table: episode 8 (2634 frames, mean quality 3.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 8. Table: episode 8 (2634 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -284,7 +284,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T003 Put the beige shirt and the navy shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 48. Table: episode 48 (2229 frames, mean quality 3.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 48. Table: episode 48 (2229 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -318,7 +318,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T004 Put the black sock and the white sock in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 82, 83, 84. Table: episode 83 (2160 frames, mean quality 3.7).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 82, 83, 84. Table: episode 83 (2160 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -376,7 +376,7 @@ Episode 82 (2541 frames, mean quality 3.6)
 
 ### T005 Put the black sock in the basket and the white sock in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 53. Table: episode 53 (1926 frames, mean quality 3.4).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 53. Table: episode 53 (1926 frames, mean quality 3.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -404,7 +404,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, na]
 
 ### T006 Put the black sock in the bin, the white sock in the basket and the shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 4. Table: episode 4 (3411 frames, mean quality 3.6).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 4. Table: episode 4 (3411 frames, mean quality 3.6).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -442,7 +442,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, cloth-pinch, na,
 
 ### T007 Put the green shirt in the bin, the sock and the white shirt in the basket, and the navy shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 41. Table: episode 41 (5949 frames, mean quality 3.4).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 41. Table: episode 41 (5949 frames, mean quality 3.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -490,7 +490,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T008 Put the grey shirt and the brown shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 18. Table: episode 18 (3894 frames, mean quality 3.2).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 18. Table: episode 18 (3894 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -548,7 +548,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T009 Put the grey shirt and the navy shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 86. Table: episode 86 (3324 frames, mean quality 3.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 86. Table: episode 86 (3324 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -594,7 +594,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T010 Put the navy shirt and the grey shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 22. Table: episode 22 (2097 frames, mean quality 3.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 22. Table: episode 22 (2097 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -628,7 +628,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T011 Put the red shirt in the basket and the brown shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 50. Table: episode 50 (5997 frames, mean quality 3.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 50. Table: episode 50 (5997 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -696,7 +696,7 @@ eval_subtask_contacts: [cloth-pinch, na, na, drop, cloth-pinch, na, drop, cloth-
 
 ### T012 Put the shirt and the socks in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 7. Table: episode 7 (5643 frames, mean quality 2.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 7. Table: episode 7 (5643 frames, mean quality 2.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -730,7 +730,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T013 Put the shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 10, 12, 17, 87, 88, 89. Table: episode 87 (1017 frames, mean quality 4.8).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 10, 12, 17, 87, 88, 89. Table: episode 87 (1017 frames, mean quality 4.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -815,7 +815,7 @@ Episode 17 (1986 frames, mean quality 3.3)
 
 ### T014 Put the shirt in the bin and the socks in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 5, 11, 57, 61, 62, 67, 68. Table: episode 68 (2583 frames, mean quality 4.1).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 5, 11, 57, 61, 62, 67, 68. Table: episode 68 (2583 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1003,7 +1003,7 @@ Episode 11 (2895 frames, mean quality 3.0)
 
 ### T015 Put the shirt in the bin and the white sock and the black sock in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 6. Table: episode 6 (3144 frames, mean quality 4.3).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 6. Table: episode 6 (3144 frames, mean quality 4.3).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1037,7 +1037,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T016 Put the shirt in the bin, then in the basket, then grasp the black sock
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 52. Table: episode 52 (4503 frames, mean quality 2.8).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 52. Table: episode 52 (4503 frames, mean quality 2.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1091,7 +1091,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T017 Put the shirts in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 20, 21, 23, 24, 25. Table: episode 24 (1749 frames, mean quality 3.7).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 20, 21, 23, 24, 25. Table: episode 24 (1749 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1226,7 +1226,7 @@ Episode 21 (5214 frames, mean quality 3.1)
 
 ### T018 Put the shirts in the bin and the socks in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 1, 56, 58, 59, 60, 64, 65, 66, 69. Table: episode 64 (3465 frames, mean quality 3.9).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 1, 56, 58, 59, 60, 64, 65, 66, 69. Table: episode 64 (3465 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1532,7 +1532,7 @@ Episode 1 (6768 frames, mean quality 3.2)
 
 ### T019 Put the sock and the shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 16. Table: episode 16 (2775 frames, mean quality 3.7).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 16. Table: episode 16 (2775 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1566,7 +1566,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T020 Put the sock and the shirts in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 43. Table: episode 43 (8007 frames, mean quality 3.3).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 43. Table: episode 43 (8007 frames, mean quality 3.3).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1632,7 +1632,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, set-down, cloth-
 
 ### T021 Put the sock in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 3, 13, 44. Table: episode 3 (948 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 3, 13, 44. Table: episode 3 (948 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1676,7 +1676,7 @@ Episode 44 (1254 frames, mean quality 3.5)
 
 ### T022 Put the sock in the basket and the shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 45. Table: episode 45 (1770 frames, mean quality 3.7).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 45. Table: episode 45 (1770 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1704,7 +1704,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, na]
 
 ### T023 Put the sock in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 14. Table: episode 14 (1119 frames, mean quality 3.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 14. Table: episode 14 (1119 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1724,7 +1724,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop]
 
 ### T024 Put the sock in the bin and grasp the navy shirt
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 47. Table: episode 47 (954 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 47. Table: episode 47 (954 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1746,7 +1746,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch]
 
 ### T025 Put the sock on the navy shirt in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 46. Table: episode 46 (1101 frames, mean quality 3.8).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 46. Table: episode 46 (1101 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -1768,7 +1768,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, na]
 
 ### T026 Put the socks in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40. Table: episode 28 (4656 frames, mean quality 4.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40. Table: episode 28 (4656 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2145,7 +2145,7 @@ Episode 31 (4104 frames, mean quality 3.4)
 
 ### T027 Put the socks in the basket and the shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 63. Table: episode 63 (2148 frames, mean quality 3.8).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 63. Table: episode 63 (2148 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2179,7 +2179,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T028 Put the socks in the bin and the shirts in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 54. Table: episode 54 (5952 frames, mean quality 3.2).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 54. Table: episode 54 (5952 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2249,7 +2249,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T029 Put the white shirt, the grey shirt and the brown shirt in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 19. Table: episode 19 (4227 frames, mean quality 3.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 19. Table: episode 19 (4227 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2307,7 +2307,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T030 Put the white sock and the black sock in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 55, 85. Table: episode 55 (1779 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 55, 85. Table: episode 55 (1779 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2352,7 +2352,7 @@ Episode 85 (1944 frames, mean quality 3.6)
 
 ### T031 Put the white sock in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 2, 9. Table: episode 9 (750 frames, mean quality 4.7).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 2, 9. Table: episode 9 (750 frames, mean quality 4.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2386,7 +2386,7 @@ Episode 2 (1020 frames, mean quality 2.0)
 
 ### T032 Put the white sock in the basket and the black sock in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 51. Table: episode 51 (1989 frames, mean quality 3.1).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 51. Table: episode 51 (1989 frames, mean quality 3.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2414,7 +2414,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, na]
 
 ### T033 Put the white sock, the plain black sock and the green shirt in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 0. Table: episode 0 (4065 frames, mean quality 3.1).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 0. Table: episode 0 (4065 frames, mean quality 3.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2448,7 +2448,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T034 Put the white socks and the brown shirt in the bin, then grasp the black sock
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 42. Table: episode 42 (4074 frames, mean quality 3.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `clothing`, episodes 42. Table: episode 42 (4074 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2484,7 +2484,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T035 Put the cup and the pill bottle in the basket and the spray bottle in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 76. Table: episode 76 (3144 frames, mean quality 4.1).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 76. Table: episode 76 (3144 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2518,7 +2518,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, side-pinch, na, drop, side-pinch, n
 
 ### T036 Put the cup and the spray bottle in the bin and the pill bottle in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 75. Table: episode 75 (3180 frames, mean quality 3.9).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 75. Table: episode 75 (3180 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2552,7 +2552,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, top-pinch, na, drop, side-pinch, na
 
 ### T037 Put the cup and the tape roll in the basket and the bottles in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 79. Table: episode 79 (4239 frames, mean quality 2.9).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 79. Table: episode 79 (4239 frames, mean quality 2.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2594,7 +2594,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, rim-pinch, na, drop, side-pinch, na
 
 ### T038 Put the cup in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 15. Table: episode 15 (1632 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 15. Table: episode 15 (1632 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2616,7 +2616,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, na]
 
 ### T039 Put the cup in the basket and the other objects in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 77. Table: episode 77 (3192 frames, mean quality 4.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 77. Table: episode 77 (3192 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2656,7 +2656,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, rim-pinch, na, drop, side-pinch, na
 
 ### T040 Put the cup in the basket and the pill bottle and the tape roll in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 80. Table: episode 80 (2517 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 80. Table: episode 80 (2517 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2688,7 +2688,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, side-pinch, na, drop, rim-pinch, na
 
 ### T041 Put the cup, the pill bottle and the spray bottle in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 71. Table: episode 71 (2871 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 71. Table: episode 71 (2871 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2722,7 +2722,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, top-pinch, na, drop, side-pinch, na
 
 ### T042 Put the cup, the spray bottle and the pill bottle in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 72. Table: episode 72 (2880 frames, mean quality 3.5).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 72. Table: episode 72 (2880 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2756,7 +2756,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, side-pinch, na, drop, top-pinch, na
 
 ### T043 Put the pill bottle, the cup and the spray bottle in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 73. Table: episode 73 (2385 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 73. Table: episode 73 (2385 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2790,7 +2790,7 @@ eval_subtask_contacts: [side-pinch, na, drop, rim-pinch, na, drop, side-pinch, n
 
 ### T044 Put the pill bottle, the spray bottle and the cup in the basket
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 70, 78. Table: episode 70 (2613 frames, mean quality 4.4).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 70, 78. Table: episode 70 (2613 frames, mean quality 4.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2844,7 +2844,7 @@ Episode 78 (2895 frames, mean quality 3.7)
 
 ### T045 Put the spray bottle and the cup in the basket and the pill bottle in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 74. Table: episode 74 (2622 frames, mean quality 3.9).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 74. Table: episode 74 (2622 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2878,7 +2878,7 @@ eval_subtask_contacts: [side-pinch, na, drop, rim-pinch, na, drop, side-pinch, n
 
 ### T046 Put the spray bottle, the cup and the tape roll in the bin
 
-Source `internal_main` (`outputs/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 81. Table: episode 81 (2685 frames, mean quality 4.0).
+Source `internal_main` (`outputs/data/rebot_all-annotated-v14-tasks2`), group `rigid`, episodes 81. Table: episode 81 (2685 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2912,7 +2912,7 @@ eval_subtask_contacts: [side-pinch, na, drop, side-pinch, na, drop, rim-pinch, n
 
 ### T047 Put socks in basket
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `clothing`, episodes 5. Table: episode 5 (5337 frames, mean quality 3.8).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `clothing`, episodes 5. Table: episode 5 (5337 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -2970,7 +2970,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T048 Pick up the green eraser and place it in the brown basket.
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 6, 7, 8, 9, 10, 11. Table: episode 9 (909 frames, mean quality 4.8).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 6, 7, 8, 9, 10, 11. Table: episode 9 (909 frames, mean quality 4.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3046,7 +3046,7 @@ Episode 7 (1026 frames, mean quality 2.2)
 
 ### T049 Pick up the green eraser and place it in the gray basket.
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 12, 13, 14. Table: episode 12 (444 frames, mean quality 5.0).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 12, 13, 14. Table: episode 12 (444 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3092,7 +3092,7 @@ Episode 13 (564 frames, mean quality 3.2)
 
 ### T050 Put a sugar cube in the cup
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 15, 16, 17, 18, 19, 20, 21. Table: episode 15 (333 frames, mean quality 5.0).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 15, 16, 17, 18, 19, 20, 21. Table: episode 15 (333 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3176,7 +3176,7 @@ Episode 18 (540 frames, mean quality 4.0)
 
 ### T051 Put the pill bottle and the deck of cards in the basket
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 4. Table: episode 4 (3264 frames, mean quality 3.4).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 4. Table: episode 4 (3264 frames, mean quality 3.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3204,7 +3204,7 @@ eval_subtask_contacts: [side-pinch, na, drop, top-pinch, na, drop, na]
 
 ### T052 Put the sock in the bin and the cup in the basket
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 2. Table: episode 2 (1596 frames, mean quality 3.2).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 2. Table: episode 2 (1596 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3230,7 +3230,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, rim-pinch, na, drop]
 
 ### T053 Put the spray bottle and the pill bottle in the basket
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 1. Table: episode 1 (1707 frames, mean quality 3.6).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 1. Table: episode 1 (1707 frames, mean quality 3.6).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3258,7 +3258,7 @@ eval_subtask_contacts: [side-pinch, na, drop, top-pinch, na, drop, na]
 
 ### T054 Put the tape roll in the basket
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 0. Table: episode 0 (1227 frames, mean quality 3.0).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 0. Table: episode 0 (1227 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3278,7 +3278,7 @@ eval_subtask_contacts: [rim-pinch, na, drop]
 
 ### T055 Put the tape roll in the bin
 
-Source `internal_additions` (`outputs/rebot_main_additions-annotated-v3`), group `rigid`, episodes 3. Table: episode 3 (2187 frames, mean quality 2.5).
+Source `internal_additions` (`outputs/data/rebot_main_additions-annotated-v3`), group `rigid`, episodes 3. Table: episode 3 (2187 frames, mean quality 2.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3300,7 +3300,7 @@ eval_subtask_contacts: [rim-pinch, na, drop, na]
 
 ### T056 Put a bit in the open lid of the box
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 9. Table: episode 9 (5520 frames, mean quality 2.4).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 9. Table: episode 9 (5520 frames, mean quality 2.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3324,7 +3324,7 @@ eval_subtask_contacts: [top-pinch, top-pinch, top-pinch, na, drop]
 
 ### T057 Put five bits in the empty compartment of the box and reach for the last bit
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 2. Table: episode 2 (5502 frames, mean quality 4.1).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 2. Table: episode 2 (5502 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3370,7 +3370,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, top-pinch, na,
 
 ### T058 Put nine bits in the empty compartment of the box
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 4. Table: episode 4 (8322 frames, mean quality 4.0).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 4. Table: episode 4 (8322 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3440,7 +3440,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, top-pinch, na,
 
 ### T059 Put seven bits from the table in the compartment with the gray bits
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 7. Table: episode 7 (9519 frames, mean quality 4.0).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 7. Table: episode 7 (9519 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3498,7 +3498,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, top-pinch, na,
 
 ### T060 Put seven bits in the compartment with the bits
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 5. Table: episode 5 (9228 frames, mean quality 3.9).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 5. Table: episode 5 (9228 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3558,7 +3558,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, top-pinch, na,
 
 ### T061 Put the bit in the compartment with the blue bits
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 10. Table: episode 10 (4230 frames, mean quality 3.7).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 10. Table: episode 10 (4230 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3578,7 +3578,7 @@ eval_subtask_contacts: [top-pinch, na, drop]
 
 ### T062 Put the bits in the empty compartment and the sock in the bin
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 8. Table: episode 8 (10578 frames, mean quality 4.1).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 8. Table: episode 8 (10578 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3660,7 +3660,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, top-pinch, na,
 
 ### T063 Put the bits in the empty compartment of the box
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 0, 3. Table: episode 3 (7452 frames, mean quality 3.7).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 0, 3. Table: episode 3 (7452 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3735,7 +3735,7 @@ Episode 0 (4242 frames, mean quality 3.7)
 
 ### T064 Put the bits in their compartments
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 11, 12. Table: episode 11 (4653 frames, mean quality 3.2).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 11, 12. Table: episode 11 (4653 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3792,7 +3792,7 @@ Episode 12 (4371 frames, mean quality 2.8)
 
 ### T065 Put the four bits in the empty compartment of the component box
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 1. Table: episode 1 (4437 frames, mean quality 4.4).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 1. Table: episode 1 (4437 frames, mean quality 4.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3832,7 +3832,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, top-pinch, na,
 
 ### T066 Put two bits in the empty compartment of the box and grasp a third bit
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 6. Table: episode 6 (2685 frames, mean quality 4.1).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `bits_clippers`, episodes 6. Table: episode 6 (2685 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3860,7 +3860,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, top-pinch]
 
 ### T067 Close the bit kit and the headphone case
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 16. Table: episode 16 (2496 frames, mean quality 4.1).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 16. Table: episode 16 (2496 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3890,7 +3890,7 @@ eval_subtask_contacts: [cloth-pinch, drop, cloth-pinch, set-down, press, rim-pin
 
 ### T068 Close the bit kit, move the headphone case next to it and close it
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 13, 14. Table: episode 13 (3432 frames, mean quality 3.6).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 13, 14. Table: episode 13 (3432 frames, mean quality 3.6).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3947,7 +3947,7 @@ Episode 14 (3786 frames, mean quality 3.3)
 
 ### T069 Close the headphone case and the bit kit and push them together
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 17. Table: episode 17 (4080 frames, mean quality 3.5).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 17. Table: episode 17 (4080 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3981,7 +3981,7 @@ eval_subtask_contacts: [handle-grasp, handle-grasp, handle-grasp, handle-grasp, 
 
 ### T070 Fold the flap with the bits over the middle of the bit kit
 
-Source `internal_bits_kit` (`outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 15. Table: episode 15 (1914 frames, mean quality 2.5).
+Source `internal_bits_kit` (`outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1`), group `cases_kit_box_push`, episodes 15. Table: episode 15 (1914 frames, mean quality 2.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -3999,7 +3999,7 @@ eval_subtask_contacts: [cloth-pinch, cloth-pinch]
 
 ### T071 Close the headphone case lid
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 0, 2, 3. Table: episode 0 (1317 frames, mean quality 4.0).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 0, 2, 3. Table: episode 0 (1317 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4043,7 +4043,7 @@ Episode 3 (1788 frames, mean quality 3.6)
 
 ### T072 Close the headphone case lid and put the spray bottle in the basket
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 1. Table: episode 1 (3036 frames, mean quality 2.9).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 1. Table: episode 1 (3036 frames, mean quality 2.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4073,7 +4073,7 @@ eval_subtask_contacts: [rim-pinch, rim-pinch, rim-pinch, rim-pinch, side-pinch, 
 
 ### T073 Close the headphone case lid, close the box lid and lay the box flat
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 4. Table: episode 4 (3177 frames, mean quality 3.2).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 4. Table: episode 4 (3177 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4103,7 +4103,7 @@ eval_subtask_contacts: [rim-pinch, rim-pinch, rim-pinch, rim-pinch, cloth-pinch,
 
 ### T074 Lift the box lid
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 22, 23. Table: episode 23 (666 frames, mean quality 3.0).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 22, 23. Table: episode 23 (666 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4130,7 +4130,7 @@ Episode 22 (489 frames, mean quality 1.0)
 
 ### T075 Push the books off the box
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 19, 21. Table: episode 19 (645 frames, mean quality 3.0).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 19, 21. Table: episode 19 (645 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4160,7 +4160,7 @@ Episode 21 (1521 frames, mean quality 2.5)
 
 ### T076 Push the books off the box and open its flap
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 20. Table: episode 20 (642 frames, mean quality 3.8).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `cases_kit_box_push`, episodes 20. Table: episode 20 (642 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4182,7 +4182,7 @@ eval_subtask_contacts: [push, push, cloth-pinch, push]
 
 ### T077 Open the pill bottle and pour the pills into the box
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 10, 11, 12, 14, 15, 16, 17. Table: episode 11 (2712 frames, mean quality 4.9).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 10, 11, 12, 14, 15, 16, 17. Table: episode 11 (2712 frames, mean quality 4.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4300,7 +4300,7 @@ Episode 16 (2574 frames, mean quality 3.6)
 
 ### T078 Open the pill bottle and pour the pills into the cup
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 8. Table: episode 8 (2748 frames, mean quality 3.0).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 8. Table: episode 8 (2748 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4328,7 +4328,7 @@ eval_subtask_contacts: [side-pinch, side-pinch, side-pinch, na, tilt-pour, drop,
 
 ### T079 Open the pill bottle, pour the pills into the cup and put both on the towel
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 9. Table: episode 9 (3285 frames, mean quality 3.8).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 9. Table: episode 9 (3285 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4368,7 +4368,7 @@ eval_subtask_contacts: [side-pinch, side-pinch, na, drop, side-pinch, na, tilt-p
 
 ### T080 Open the pill bottle, pour the pills into the cup and put the cup on the towel
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 6, 7. Table: episode 6 (3750 frames, mean quality 3.8).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 6, 7. Table: episode 6 (3750 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4431,7 +4431,7 @@ Episode 7 (3600 frames, mean quality 3.4)
 
 ### T081 Put the wall plug in its compartment, then pour the pills into the box
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 13. Table: episode 13 (3738 frames, mean quality 3.9).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `pills_caps`, episodes 13. Table: episode 13 (3738 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4471,7 +4471,7 @@ eval_subtask_contacts: [top-pinch, na, drop, top-pinch, na, drop, push, side-pin
 
 ### T082 Grasp the pill bottle
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `rigid`, episodes 24, 25. Table: episode 24 (975 frames, mean quality 2.0).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `rigid`, episodes 24, 25. Table: episode 24 (975 frames, mean quality 2.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4498,7 +4498,7 @@ Episode 25 (1299 frames, mean quality 2.0)
 
 ### T083 Open the box and put the pill bottle in the box
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `rigid`, episodes 5. Table: episode 5 (2181 frames, mean quality 3.7).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `rigid`, episodes 5. Table: episode 5 (2181 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4524,7 +4524,7 @@ eval_subtask_contacts: [pry, push, side-pinch, na, drop, na]
 
 ### T084 Put the dental floss on the cutting board
 
-Source `internal_oct04` (`outputs/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `rigid`, episodes 18. Table: episode 18 (591 frames, mean quality 3.5).
+Source `internal_oct04` (`outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1`), group `rigid`, episodes 18. Table: episode 18 (591 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4546,7 +4546,7 @@ eval_subtask_contacts: [top-pinch, na, drop, na]
 
 ### T085 Put the nail clippers in the clipper case
 
-Source `internal_oct07` (`outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `bits_clippers`, episodes 0, 1. Table: episode 0 (2742 frames, mean quality 4.0).
+Source `internal_oct07` (`outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `bits_clippers`, episodes 0, 1. Table: episode 0 (2742 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4596,7 +4596,7 @@ Episode 1 (3063 frames, mean quality 3.6)
 
 ### T086 Put the nail clippers in the clipper case, close the headphone case and put the bit in the gray compartment
 
-Source `internal_oct07` (`outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `bits_clippers`, episodes 2. Table: episode 2 (4350 frames, mean quality 4.2).
+Source `internal_oct07` (`outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `bits_clippers`, episodes 2. Table: episode 2 (4350 frames, mean quality 4.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4636,7 +4636,7 @@ eval_subtask_contacts: [top-pinch, na, insert, top-pinch, na, insert, top-pinch,
 
 ### T087 Put the nail clippers in the clipper case and pour the pills into its lid
 
-Source `internal_oct07` (`outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `excluded`, episodes 4. Table: episode 4 (5277 frames, mean quality 3.5).
+Source `internal_oct07` (`outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `excluded`, episodes 4. Table: episode 4 (5277 frames, mean quality 3.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4676,7 +4676,7 @@ eval_subtask_contacts: [top-pinch, na, insert, top-pinch, insert, top-pinch, na,
 
 ### T088 Put the nail clippers in the clipper case, close the bit kit and push the headphone case off the box
 
-Source `internal_oct07` (`outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `excluded`, episodes 3. Table: episode 3 (4692 frames, mean quality 3.2).
+Source `internal_oct07` (`outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1`), group `excluded`, episodes 3. Table: episode 3 (4692 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4714,7 +4714,7 @@ eval_subtask_contacts: [top-pinch, na, set-down, top-pinch, push, top-pinch, na,
 
 ### T089 Grasp the shaker bottle
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 1. Table: episode 1 (1572 frames, mean quality 1.0).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 1. Table: episode 1 (1572 frames, mean quality 1.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4730,7 +4730,7 @@ eval_subtask_contacts: [side-pinch]
 
 ### T090 Stand the pill bottle upright
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 10. Table: episode 10 (3873 frames, mean quality 2.7).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 10. Table: episode 10 (3873 frames, mean quality 2.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4758,7 +4758,7 @@ eval_subtask_contacts: [top-pinch, set-down, top-pinch, set-down, top-pinch, set
 
 ### T091 Stand the pill bottle upright and stand the water bottle upright
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 11. Table: episode 11 (3063 frames, mean quality 3.8).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 11. Table: episode 11 (3063 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4782,7 +4782,7 @@ eval_subtask_contacts: [top-pinch, set-down, top-pinch, set-down, na]
 
 ### T092 Stand the shaker bottle upright
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 5. Table: episode 5 (2040 frames, mean quality 1.7).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 5. Table: episode 5 (2040 frames, mean quality 1.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4802,7 +4802,7 @@ eval_subtask_contacts: [rim-pinch, set-down, rim-pinch]
 
 ### T093 Stand the shaker bottle upright and grasp the lid
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 2. Table: episode 2 (1515 frames, mean quality 2.7).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 2. Table: episode 2 (1515 frames, mean quality 2.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4822,7 +4822,7 @@ eval_subtask_contacts: [rim-pinch, set-down, top-pinch]
 
 ### T094 Stand the shaker bottle upright and move the lid to the shaker bottle
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 3. Table: episode 3 (2424 frames, mean quality 2.8).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 3. Table: episode 3 (2424 frames, mean quality 2.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4844,7 +4844,7 @@ eval_subtask_contacts: [rim-pinch, set-down, handle-grasp, na]
 
 ### T095 Stand the shaker bottle upright and put the lid on the shaker bottle
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 0, 4. Table: episode 0 (1881 frames, mean quality 4.2).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 0, 4. Table: episode 0 (1881 frames, mean quality 4.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4888,7 +4888,7 @@ Episode 4 (3282 frames, mean quality 3.4)
 
 ### T096 Stand the water bottle upright and close the bit kit
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 6, 7. Table: episode 6 (1980 frames, mean quality 3.2).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 6, 7. Table: episode 6 (1980 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4933,7 +4933,7 @@ Episode 7 (6528 frames, mean quality 2.7)
 
 ### T097 Stand the water bottle upright and close the headphone case lid
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 8. Table: episode 8 (3036 frames, mean quality 4.0).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 8. Table: episode 8 (3036 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4957,7 +4957,7 @@ eval_subtask_contacts: [top-pinch, set-down, rim-pinch, rim-pinch, na]
 
 ### T098 Stand the water bottle upright and stand the pill bottle upright
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 12. Table: episode 12 (2796 frames, mean quality 3.0).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `bottles_lids`, episodes 12. Table: episode 12 (2796 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -4981,7 +4981,7 @@ eval_subtask_contacts: [top-pinch, set-down, top-pinch, set-down, na]
 
 ### T099 Stand the water bottle upright, close the headphone case and put the clipper in its case
 
-Source `internal_oct08` (`outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `excluded`, episodes 9. Table: episode 9 (5019 frames, mean quality 2.5).
+Source `internal_oct08` (`outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1`), group `excluded`, episodes 9. Table: episode 9 (5019 frames, mean quality 2.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5015,7 +5015,7 @@ eval_subtask_contacts: [top-pinch, set-down, rim-pinch, rim-pinch, rim-pinch, ri
 
 ### T100 Put the shirt in the bin and the socks in the basket
 
-Source `internal_oldval` (`outputs/rebot_oldval_train-2026-10-14-v1`), group `clothing`, episodes 0. Table: episode 0 (2910 frames, mean quality 3.9).
+Source `internal_oldval` (`outputs/data/rebot_oldval_train-2026-10-14-v1`), group `clothing`, episodes 0. Table: episode 0 (2910 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5049,7 +5049,7 @@ eval_subtask_contacts: [cloth-pinch, na, drop, cloth-pinch, na, drop, cloth-pinc
 
 ### T101 Put the pill bottle in the bin and the tape roll and the cup in the basket
 
-Source `internal_oldval` (`outputs/rebot_oldval_train-2026-10-14-v1`), group `rigid`, episodes 1. Table: episode 1 (2844 frames, mean quality 3.8).
+Source `internal_oldval` (`outputs/data/rebot_oldval_train-2026-10-14-v1`), group `rigid`, episodes 1. Table: episode 1 (2844 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5083,7 +5083,7 @@ eval_subtask_contacts: [side-pinch, na, drop, rim-pinch, na, drop, side-pinch, n
 
 ### T102 Put the large nail clipper in the clipper case
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 10. Table: episode 10 (2457 frames, mean quality 1.8).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 10. Table: episode 10 (2457 frames, mean quality 1.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5109,7 +5109,7 @@ eval_subtask_contacts: [top-pinch, na, drop, push, top-pinch, na]
 
 ### T103 Put the nail clippers in the clipper case and move the pill bottle aside
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 0. Table: episode 0 (4554 frames, mean quality 3.7).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 0. Table: episode 0 (4554 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5147,7 +5147,7 @@ eval_subtask_contacts: [side-pinch, na, insert, push, top-pinch, na, insert, pus
 
 ### T104 Put the nail clippers in the clipper case and stand the bottles upright
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 1. Table: episode 1 (4284 frames, mean quality 4.1).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 1. Table: episode 1 (4284 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5183,7 +5183,7 @@ eval_subtask_contacts: [top-pinch, na, insert, top-pinch, na, insert, top-pinch,
 
 ### T105 Put the nail clippers in the clipper case and the bit in the gray compartment
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 2, 3. Table: episode 3 (1956 frames, mean quality 3.8).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 2, 3. Table: episode 3 (1956 frames, mean quality 3.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5220,7 +5220,7 @@ Episode 2 (1545 frames, mean quality 3.2)
 
 ### T106 Tidy up the table
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 4. Table: episode 5 (4014 frames, mean quality 3.9).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `bits_clippers`, episodes 4. Table: episode 5 (4014 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5354,7 +5354,7 @@ Episode 8 (12147 frames, mean quality 3.1)
 
 ### T107 Stand the bottles upright
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `bottles_lids`, episodes 11. Table: episode 11 (3357 frames, mean quality 2.5).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `bottles_lids`, episodes 11. Table: episode 11 (3357 frames, mean quality 2.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5376,7 +5376,7 @@ eval_subtask_contacts: [top-pinch, set-down, top-pinch, set-down]
 
 ### T108 Tidy up the table
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `bottles_lids`, episodes 5, 6, 7, 8. Table: episode 5 (4014 frames, mean quality 3.9).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `bottles_lids`, episodes 5, 6, 7, 8. Table: episode 5 (4014 frames, mean quality 3.9).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5510,7 +5510,7 @@ Episode 8 (12147 frames, mean quality 3.1)
 
 ### T109 Close the bit kit
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `cases_kit_box_push`, episodes 9. Table: episode 9 (870 frames, mean quality 3.0).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `cases_kit_box_push`, episodes 9. Table: episode 9 (870 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5530,7 +5530,7 @@ eval_subtask_contacts: [cloth-pinch, set-down, na]
 
 ### T110 Close the headphone case and put the bit in the gray compartment
 
-Source `internal_oct14` (`outputs/rebot_2026-10-14-annotated-v4`), group `cases_kit_box_push`, episodes 12. Table: episode 12 (4374 frames, mean quality 2.7).
+Source `internal_oct14` (`outputs/data/rebot_2026-10-14-annotated-v4`), group `cases_kit_box_push`, episodes 12. Table: episode 12 (4374 frames, mean quality 2.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5556,7 +5556,7 @@ eval_subtask_contacts: [handle-grasp, drop, top-pinch, na, drop, na]
 
 ### T111 Shake the hand
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `excluded`, episodes 147, 148, 149, 151, 152. Table: episode 149 (492 frames, mean quality 4.7).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `excluded`, episodes 147, 148, 149, 151, 152. Table: episode 149 (492 frames, mean quality 4.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5616,7 +5616,7 @@ Episode 152 (648 frames, mean quality 1.7)
 
 ### T112 Shake the hand three times
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `excluded`, episodes 155. Table: episode 155 (729 frames, mean quality 4.3).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `excluded`, episodes 155. Table: episode 155 (729 frames, mean quality 4.3).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5644,7 +5644,7 @@ eval_subtask_contacts: [top-pinch, top-pinch, top-pinch, top-pinch, na, side-pin
 
 ### T113 Shake the hand twice
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `excluded`, episodes 150, 153, 154, 156. Table: episode 154 (471 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `excluded`, episodes 150, 153, 154, 156. Table: episode 154 (471 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5705,7 +5705,7 @@ Episode 150 (540 frames, mean quality 3.8)
 
 ### T114 Fold the towel and put it in the far left corner of the mat
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 179, 180, 181, 182, 183. Table: episode 183 (1251 frames, mean quality 4.1).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 179, 180, 181, 182, 183. Table: episode 183 (1251 frames, mean quality 4.1).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5812,7 +5812,7 @@ Episode 180 (975 frames, mean quality 3.8)
 
 ### T115 Hit the puck back with the mallet
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 211, 212, 213, 214, 215, 216, 217, 218, 219, 220. Table: episode 212 (513 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 211, 212, 213, 214, 215, 216, 217, 218, 219, 220. Table: episode 212 (513 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5930,7 +5930,7 @@ Episode 215 (1215 frames, mean quality 3.0)
 
 ### T116 Move the block to the other cross
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 3, 4. Table: episode 3 (444 frames, mean quality 4.5).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 3, 4. Table: episode 3 (444 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -5966,7 +5966,7 @@ Episode 4 (378 frames, mean quality 4.5)
 
 ### T117 Plug the charger into the power strip
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 231, 232, 233, 234, 235, 236, 237, 238, 239, 240. Table: episode 237 (582 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 231, 232, 233, 234, 235, 236, 237, 238, 239, 240. Table: episode 237 (582 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6073,7 +6073,7 @@ Episode 234 (612 frames, mean quality 2.7)
 
 ### T118 Pour the egg into the pan and put the bowl back on the mat
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 23, 24. Table: episode 24 (672 frames, mean quality 4.8).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 23, 24. Table: episode 24 (672 frames, mean quality 4.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6114,7 +6114,7 @@ Episode 23 (690 frames, mean quality 4.6)
 
 ### T119 Pour the ingredients into the pan and put the bowls back
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 29, 30. Table: episode 29 (1593 frames, mean quality 4.2).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 29, 30. Table: episode 29 (1593 frames, mean quality 4.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6186,7 +6186,7 @@ Episode 30 (1704 frames, mean quality 4.2)
 
 ### T120 Pour the noodles into the pan and put the bowl back on the mat
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 25, 26, 31, 32. Table: episode 25 (570 frames, mean quality 4.6).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 25, 26, 31, 32. Table: episode 25 (570 frames, mean quality 4.6).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6250,7 +6250,7 @@ Episode 32 (522 frames, mean quality 4.0)
 
 ### T121 Pour the oil into the pan and put the bowl back on the mat
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 27, 28. Table: episode 27 (579 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 27, 28. Table: episode 27 (579 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6292,7 +6292,7 @@ Episode 28 (537 frames, mean quality 5.0)
 
 ### T122 Push the T block onto the black T
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 107, 108, 109. Table: episode 107 (801 frames, mean quality 3.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 107, 108, 109. Table: episode 107 (801 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6326,7 +6326,7 @@ Episode 109 (900 frames, mean quality 3.0)
 
 ### T123 Push the T block onto the green T
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 100, 101, 102, 103, 104, 105, 106. Table: episode 100 (597 frames, mean quality 3.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 100, 101, 102, 103, 104, 105, 106. Table: episode 100 (597 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6388,7 +6388,7 @@ Episode 103 (789 frames, mean quality 2.0)
 
 ### T124 Put a fig bar in each tray, then an apple in each tray
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 184, 185, 186, 187, 188, 189, 190, 191, 192, 193. Table: episode 192 (1269 frames, mean quality 4.4).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 184, 185, 186, 187, 188, 189, 190, 191, 192, 193. Table: episode 192 (1269 frames, mean quality 4.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6605,7 +6605,7 @@ Episode 186 (1239 frames, mean quality 3.5)
 
 ### T125 Put the T block on the green T
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 110, 111, 112, 113, 114, 115, 116, 117, 118, 119. Table: episode 112 (276 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 110, 111, 112, 113, 114, 115, 116, 117, 118, 119. Table: episode 112 (276 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6718,7 +6718,7 @@ Episode 115 (312 frames, mean quality 3.3)
 
 ### T126 Put the black disk on the red plate
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 61, 62, 64, 68. Table: episode 61 (771 frames, mean quality 4.5).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 61, 62, 64, 68. Table: episode 61 (771 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6774,7 +6774,7 @@ Episode 68 (1038 frames, mean quality 2.8)
 
 ### T127 Put the blue cube in the tray
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 145, 146. Table: episode 145 (150 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 145, 146. Table: episode 145 (150 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6807,7 +6807,7 @@ Episode 146 (171 frames, mean quality 5.0)
 
 ### T128 Put the bolt on the green pad
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 33, 34, 35, 36, 37, 38, 39, 40, 41, 42. Table: episode 33 (336 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 33, 34, 35, 36, 37, 38, 39, 40, 41, 42. Table: episode 33 (336 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -6923,7 +6923,7 @@ Episode 38 (327 frames, mean quality 4.2)
 
 ### T129 Put the box on the plate
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 13, 14, 15, 16, 17, 18, 19, 20, 21, 22. Table: episode 16 (315 frames, mean quality 4.8).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 13, 14, 15, 16, 17, 18, 19, 20, 21, 22. Table: episode 16 (315 frames, mean quality 4.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7041,7 +7041,7 @@ Episode 19 (744 frames, mean quality 3.2)
 
 ### T130 Put the can in the small taped area
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 5, 6, 7. Table: episode 5 (669 frames, mean quality 4.2).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 5, 6, 7. Table: episode 5 (669 frames, mean quality 4.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7087,7 +7087,7 @@ Episode 6 (627 frames, mean quality 3.5)
 
 ### T131 Put the charger in the bin
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 90, 91, 92, 93, 94, 95, 96, 97, 98, 99. Table: episode 91 (279 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 90, 91, 92, 93, 94, 95, 96, 97, 98, 99. Table: episode 91 (279 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7193,7 +7193,7 @@ Episode 98 (297 frames, mean quality 3.3)
 
 ### T132 Put the crayfish in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 221, 222, 223, 224, 225, 226, 227, 228, 229, 230. Table: episode 223 (837 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 221, 222, 223, 224, 225, 226, 227, 228, 229, 230. Table: episode 223 (837 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7309,7 +7309,7 @@ Episode 228 (798 frames, mean quality 3.5)
 
 ### T133 Put the cube in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 177, 178. Table: episode 178 (414 frames, mean quality 4.5).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 177, 178. Table: episode 178 (414 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7345,7 +7345,7 @@ Episode 177 (351 frames, mean quality 3.5)
 
 ### T134 Put the cube on the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 0, 1, 2. Table: episode 1 (420 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 0, 1, 2. Table: episode 1 (420 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7391,7 +7391,7 @@ Episode 0 (447 frames, mean quality 3.2)
 
 ### T135 Put the disk in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 53, 54, 55, 56, 57, 58, 59, 60. Table: episode 56 (282 frames, mean quality 4.3).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 53, 54, 55, 56, 57, 58, 59, 60. Table: episode 56 (282 frames, mean quality 4.3).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7478,7 +7478,7 @@ Episode 55 (351 frames, mean quality 3.0)
 
 ### T136 Put the disk on the blue plate
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 65, 66. Table: episode 65 (879 frames, mean quality 4.5).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 65, 66. Table: episode 65 (879 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7514,7 +7514,7 @@ Episode 66 (990 frames, mean quality 4.2)
 
 ### T137 Put the green eraser in the lower drawer
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 164, 165, 166. Table: episode 166 (882 frames, mean quality 4.4).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 164, 165, 166. Table: episode 166 (882 frames, mean quality 4.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7572,7 +7572,7 @@ Episode 164 (1164 frames, mean quality 3.6)
 
 ### T138 Put the green eraser in the upper drawer
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 161, 162, 163. Table: episode 163 (729 frames, mean quality 4.4).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 161, 162, 163. Table: episode 163 (729 frames, mean quality 4.4).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7630,7 +7630,7 @@ Episode 162 (1029 frames, mean quality 3.4)
 
 ### T139 Put the microcontroller farther from the box in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 73, 80. Table: episode 73 (654 frames, mean quality 4.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 73, 80. Table: episode 73 (654 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7666,7 +7666,7 @@ Episode 80 (447 frames, mean quality 3.5)
 
 ### T140 Put the microcontroller farthest from the box in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 76. Table: episode 76 (651 frames, mean quality 4.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 76. Table: episode 76 (651 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7688,7 +7688,7 @@ eval_subtask_contacts: [top-pinch, na, drop, na]
 
 ### T141 Put the microcontroller in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 75, 77. Table: episode 77 (411 frames, mean quality 4.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 75, 77. Table: episode 77 (411 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7724,7 +7724,7 @@ Episode 75 (735 frames, mean quality 3.8)
 
 ### T142 Put the microcontroller nearest the box in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 71, 72, 74, 79. Table: episode 79 (462 frames, mean quality 4.8).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 71, 72, 74, 79. Table: episode 79 (462 frames, mean quality 4.8).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7780,7 +7780,7 @@ Episode 72 (498 frames, mean quality 3.0)
 
 ### T143 Put the microcontroller nearest the far end of the box in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 78. Table: episode 78 (615 frames, mean quality 3.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 78. Table: episode 78 (615 frames, mean quality 3.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7802,7 +7802,7 @@ eval_subtask_contacts: [top-pinch, na, drop, na]
 
 ### T144 Put the motor in the box
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 201, 202, 203, 204, 205, 206, 207, 208, 209, 210. Table: episode 201 (612 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 201, 202, 203, 204, 205, 206, 207, 208, 209, 210. Table: episode 201 (612 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -7918,7 +7918,7 @@ Episode 210 (606 frames, mean quality 4.0)
 
 ### T145 Put the paper ball on the table
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 43, 44, 45, 46, 47, 48, 49, 50, 51, 52. Table: episode 51 (414 frames, mean quality 4.5).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 43, 44, 45, 46, 47, 48, 49, 50, 51, 52. Table: episode 51 (414 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8027,7 +8027,7 @@ Episode 50 (459 frames, mean quality 2.7)
 
 ### T146 Put the purple box on the plate
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 11, 12. Table: episode 12 (201 frames, mean quality 3.7).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 11, 12. Table: episode 12 (201 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8061,7 +8061,7 @@ Episode 11 (498 frames, mean quality 3.5)
 
 ### T147 Put the red can in the small taped area
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 8, 9, 10. Table: episode 8 (576 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 8, 9, 10. Table: episode 8 (576 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8107,7 +8107,7 @@ Episode 9 (585 frames, mean quality 4.2)
 
 ### T148 Put the red die in the bin
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 167, 168, 169, 170, 171, 172, 173, 174, 175, 176. Table: episode 176 (717 frames, mean quality 3.2).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 167, 168, 169, 170, 171, 172, 173, 174, 175, 176. Table: episode 176 (717 frames, mean quality 3.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8223,7 +8223,7 @@ Episode 175 (825 frames, mean quality 3.0)
 
 ### T149 Put the tea bag in the cup
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 135, 136, 137, 138, 139, 140, 141, 142, 143, 144. Table: episode 135 (180 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 135, 136, 137, 138, 139, 140, 141, 142, 143, 144. Table: episode 135 (180 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8328,7 +8328,7 @@ Episode 137 (183 frames, mean quality 4.3)
 
 ### T150 Put the trash in the trash can
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 194, 195, 196, 197, 198, 199, 200. Table: episode 197 (1422 frames, mean quality 4.2).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 194, 195, 196, 197, 198, 199, 200. Table: episode 197 (1422 frames, mean quality 4.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8486,7 +8486,7 @@ Episode 200 (1965 frames, mean quality 3.5)
 
 ### T151 Put the wooden disk on the blue plate
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 63, 67, 69, 70. Table: episode 63 (834 frames, mean quality 4.2).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 63, 67, 69, 70. Table: episode 63 (834 frames, mean quality 4.2).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8542,7 +8542,7 @@ Episode 69 (846 frames, mean quality 3.8)
 
 ### T152 Put the yellow eraser in the lower drawer
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 159, 160. Table: episode 160 (1269 frames, mean quality 3.7).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 159, 160. Table: episode 160 (1269 frames, mean quality 3.7).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8587,7 +8587,7 @@ Episode 159 (1419 frames, mean quality 2.9)
 
 ### T153 Put the yellow eraser in the upper drawer
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 157, 158. Table: episode 157 (1557 frames, mean quality 3.6).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 157, 158. Table: episode 157 (1557 frames, mean quality 3.6).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8632,7 +8632,7 @@ Episode 158 (1686 frames, mean quality 2.9)
 
 ### T154 Shake out the towel and fold it
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 130, 132, 133, 134. Table: episode 130 (3039 frames, mean quality 4.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 130, 132, 133, 134. Table: episode 130 (3039 frames, mean quality 4.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8750,7 +8750,7 @@ Episode 132 (2079 frames, mean quality 3.4)
 
 ### T155 Spread the towel flat and fold it
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 131. Table: episode 131 (5502 frames, mean quality 3.6).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 131. Table: episode 131 (5502 frames, mean quality 3.6).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8844,7 +8844,7 @@ eval_subtask_contacts: [cloth-pinch, drop, cloth-pinch, cloth-pinch, cloth-pinch
 
 ### T156 Stack the green tape roll on the white tape roll
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 120, 121, 122, 123, 124, 125, 126, 127, 128, 129. Table: episode 120 (186 frames, mean quality 5.0).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 120, 121, 122, 123, 124, 125, 126, 127, 128, 129. Table: episode 120 (186 frames, mean quality 5.0).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|
@@ -8956,7 +8956,7 @@ Episode 125 (297 frames, mean quality 4.2)
 
 ### T157 Stack the pieces on the peg
 
-Source `external_rebot_train` (`outputs/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 81, 82, 83, 84, 85, 86, 87, 88, 89. Table: episode 83 (864 frames, mean quality 4.5).
+Source `external_rebot_train` (`outputs/data/external_rebot_train-annotated-v9-tasks1`), group `external_rebot`, episodes 81, 82, 83, 84, 85, 86, 87, 88, 89. Table: episode 83 (864 frames, mean quality 4.5).
 
 | step | subtask | precision | contact | speed | quality | frames |
 |---|---|---|---|---|---|---|

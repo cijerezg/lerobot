@@ -23,6 +23,7 @@ from lerobot.utils.gripper_torque import (
     gripper_torque_levels,
     smooth_gripper_torque,
 )
+from lerobot.utils.motor_velocity import VELOCITY_KEY, smooth_velocity
 
 
 @dataclass(frozen=True)
@@ -199,8 +200,9 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
     if len(roots) < 2 or not stats:
         return
 
-    for key in (ACTION, OBS_STATE):
-        if key not in stats:
+    # Velocity is pooled over the roots that recorded it (2026-11-13 on), whichever root is first.
+    for key in (ACTION, OBS_STATE, OBS_VELOCITY):
+        if key not in stats and key != OBS_VELOCITY:
             continue
         columns = []
         for root in roots:
@@ -210,7 +212,11 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
                     f"Offline source {root} has no data/**/*.parquet. Pooling would silently "
                     "normalize without it, so refusing to continue."
                 )
-            columns.extend(pq.read_table(f, columns=[key]).to_pandas()[key] for f in files)
+            columns.extend(
+                pq.read_table(f, columns=[key]).to_pandas()[key] for f in files if key in pq.read_schema(f).names
+            )
+        if not columns:
+            continue
         values = np.concatenate([np.stack(c.values) for c in columns]).astype(np.float32)
         pooled = {
             "min": values.min(axis=0),
@@ -228,7 +234,7 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
                 key,
                 len(roots),
                 len(values),
-                np.round(stats[key]["q01"], 1),
+                np.round(stats[key]["q01"], 1) if key in stats else None,
                 np.round(pooled["q01"], 1),
             )
         stats[key] = pooled
@@ -670,7 +676,7 @@ def _remap_indices(values: torch.Tensor, remap: dict[int, int]) -> torch.Tensor:
 
 
 def _install_buffer_column(
-    buffer: ReplayBuffer, key: str, values: torch.Tensor, fill_value: int = -1
+    buffer: ReplayBuffer, key: str, values: torch.Tensor, fill_value: float = -1
 ) -> None:
     """Install a dataset-order label tensor in the replay buffer's physical slot order."""
     target = torch.full(
@@ -708,6 +714,21 @@ def _gripper_torque_level_column(dataset, gripper_torque) -> torch.Tensor | None
     )
 
 
+def _velocity_column(dataset) -> torch.Tensor | None:
+    """Per-frame motor velocities [frames, joints] in deg/s, smoothed within each episode.
+
+    None when the root has no velocity column (recorded before 2026-11-13).
+    """
+    hf_dataset = dataset.hf_dataset
+    if OBS_VELOCITY not in hf_dataset.column_names:
+        return None
+    raw = np.stack(hf_dataset.data.column(OBS_VELOCITY).to_numpy(zero_copy_only=False)).astype(np.float64)
+    episodes = _dataset_index_column(dataset, "episode_index").numpy()
+    starts = np.flatnonzero(np.diff(episodes, prepend=episodes[0] - 1))
+    smoothed = np.concatenate([smooth_velocity(part) for part in np.split(raw, starts[1:])])
+    return torch.as_tensor(smoothed, dtype=torch.float32)
+
+
 def materialize_dataset_labels(
     buffer: ReplayBuffer,
     dataset,
@@ -717,6 +738,7 @@ def materialize_dataset_labels(
     require_depth_gripper_event_labels: bool = False,
     embodiment: str | None = None,
     gripper_torque=None,
+    velocity: bool = False,
 ) -> None:
     """Overlay current labels on heavy cache data without decoding video."""
     task_indices = _dataset_index_column(dataset, "task_index")
@@ -769,6 +791,10 @@ def materialize_dataset_labels(
         levels = _gripper_torque_level_column(dataset, gripper_torque)
         if levels is not None:
             _install_buffer_column(buffer, GRIPPER_TORQUE_LEVEL_KEY, levels, fill_value=0)
+    if velocity:
+        smoothed = _velocity_column(dataset)
+        if smoothed is not None:
+            _install_buffer_column(buffer, VELOCITY_KEY, smoothed, fill_value=float("nan"))
     if require_depth_gripper_event_labels:
         from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
         from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
@@ -890,6 +916,7 @@ def load_additional_offline_buffers(
             ),
             embodiment=source.embodiment,
             gripper_torque=getattr(cfg.policy, "gripper_torque", None),
+            velocity=getattr(cfg.policy, "velocity", False),
         )
         buffer.dataset = dataset
         buffer.offline_source = source

@@ -1,6 +1,6 @@
 """Corrected action chunks from hindsight clips (rubric: ``annotation/rubrics/correction_rubric.md``).
 
-A pass is one results folder ``<work>`` (``outputs/_annotation/corrections_v1``). Everything specific to it is
+A pass is one results folder ``<work>`` (``outputs/annotation/corrections_v1``). Everything specific to it is
 data in ``<work>/pass.json``:
 
   {"sources": [{"name": ..., "root": ..., "kind": "inference" | "rebot", "top": ...}, ...],

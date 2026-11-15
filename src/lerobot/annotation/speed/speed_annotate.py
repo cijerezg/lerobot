@@ -33,7 +33,7 @@ Buckets (EDGES on the ratio, fixed rather than quantiles so 1/2 mean genuinely s
 
 Populations. ReBot roots are LeRobot v3 datasets whose meta/episode_metadata.parquet
 has one row per subtask segment (class = the subtask's verb). The diverse corpus
-(outputs/diverse_robot_dataset) contributes one segment per reviewed subtask atom:
+(outputs/data/diverse_robot_dataset) contributes one segment per reviewed subtask atom:
 FMB keyed by source primitive, other sources by the atom verb within robot group.
 Historical parent intervals require explicit --diverse-layer critic_intervals. A class with fewer than
 MIN_CLASS_SEGMENTS segments falls back to its group's pooled cell.
@@ -45,7 +45,7 @@ next to the bucket so the label is auditable. The reference is fit once on the t
 roots and applied to val / inference roots unchanged.
 
     uv run python -m lerobot.annotation.speed.speed_annotate fit \
-        --root outputs/rebot_socks_basket-annotated-v2 ... --diverse outputs/diverse_robot_dataset \
+        --root outputs/data/rebot_socks_basket-annotated-v2 ... --diverse outputs/data/diverse_robot_dataset \
         --out outputs/stats/speed_reference_<name>.json
     uv run python -m lerobot.annotation.speed.speed_annotate annotate --reference <json> --root <root> ...
     uv run python -m lerobot.annotation.speed.speed_annotate annotate-diverse --reference <json> --diverse <dir>

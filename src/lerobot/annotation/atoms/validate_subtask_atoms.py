@@ -2,7 +2,7 @@
 """Validate the atomic subtask layer of the diverse corpus.
 
     uv run python -m lerobot.annotation.atoms.validate_subtask_atoms \
-        [--root outputs/diverse_robot_dataset] [--strict]
+        [--root outputs/data/diverse_robot_dataset] [--strict]
 
 Checks, for corpus/subtask_atoms.jsonl and fmb/subtask_atoms.jsonl against the untouched
 critic_intervals.jsonl of each store:
@@ -253,7 +253,7 @@ def validate_store(root: Path, name: str, strict: bool) -> tuple[list[str], dict
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="outputs/diverse_robot_dataset")
+    ap.add_argument("--root", default="outputs/data/diverse_robot_dataset")
     ap.add_argument("--strict", action="store_true", help="fail on unsure parents too")
     args = ap.parse_args()
     root = Path(args.root)

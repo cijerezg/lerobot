@@ -1,6 +1,6 @@
 # Correction rubric: corrected action chunks from hindsight clips
 
-> **Status:** in use from 2026-11-09. Code: `annotation/corrections/`. Passes: `outputs/_annotation/corrections_v1` (grade 1-2 demos, annotated rollouts), `corrections_v2` (grade 3 demos, cut footage; skip added 2026-11-10), `corrections_v4_dense` (the 1 s grid frames between the 3 s frames of v1, v2's cut footage and v3), `corrections_v5`
+> **Status:** in use from 2026-11-09. Code: `annotation/corrections/`. Passes: `outputs/annotation/corrections_v1` (grade 1-2 demos, annotated rollouts), `corrections_v2` (grade 3 demos, cut footage; skip added 2026-11-10), `corrections_v4_dense` (the 1 s grid frames between the 3 s frames of v1, v2's cut footage and v3), `corrections_v5`
 (the 2026-11-11 rollouts, 1 s grid from the start). Anchors (the episode's own grasp as the target) added 2026-11-12
 after the grasp test; passes v1-v5 were labelled without them.
 

@@ -42,7 +42,7 @@ rejected on save instead of silently overwritten.
 
 ## Files and pipeline
 
-All saves go beneath `outputs/_annotation/subtask_atoms_review/`:
+All saves go beneath `outputs/annotation/subtask_atoms_review/`:
 
 - `manual_drafts/<episode_id>.json`: resumable work, ignored by the collector.
 - `manual_overrides/<episode_id>.json`: completed human reviews, taking precedence

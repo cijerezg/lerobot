@@ -28,11 +28,11 @@ uv sync --locked --extra test --extra dev                         # Test + dev t
 ```
 
 The user's workspace keeps this clone as `lerobot/` next to `config_rl.yaml` (the live run
-config) and `outputs/` (datasets, checkpoints, probe runs). Those are
+config) and `outputs/` (dataset roots and base model at the top level, `runs/`, `analysis/`, `annotation/`, `stats/`, `media/`, `logs/`). Those are
 not in git; `CHEAT_SHEET.md` commands are written from that workspace root.
 
-Scratch: per-pass annotation work goes under `outputs/_annotation/passes/<pass>_<date>/`, other
-scratch under `outputs/scratch/<topic>_<date>/`. Anything that code, configs or docs come to
+Scratch: per-pass annotation work goes under `outputs/annotation/passes/<pass>_<date>/`, other
+scratch under `outputs/analysis/<topic>_<date>/`. Anything that code, configs or docs come to
 depend on is moved into the repo (`lerobot/dataset_info/manifests`, `lerobot/annotation_data`,
 `lerobot/scripts`, `lerobot/docs`) the same day. `migration/` now holds only frozen inputs of
 the published reports under `reports/` and gets no new files.
@@ -43,7 +43,7 @@ the published reports under `reports/` and gets no new files.
 uv run pytest tests -svv --maxfail=10                                     # All tests
 uv run python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml  # Offline training
 uv run python -m lerobot.rl.inference_async --config=config_rl.yaml       # RTC inference
-uv run python -m lerobot.scripts.view_probes outputs/<run>                # Probe viewer
+uv run python -m lerobot.scripts.view_probes outputs/runs/<run>                # Probe viewer
 pre-commit run --all-files                                                # Lint + format
 ```
 

@@ -22,7 +22,7 @@ Rule (val set, rebot_val-annotated-v3):
     socks from fr 1200 until the black-sock reach at 3571).
 
 Usage (from the workspace root):
-  uv run python lerobot/scripts/probes/subtask_scene_sweep_frames.py [root] [--stride 3] [--out outputs/probe_frames/subtask_scene_sweep_frames]
+  uv run python lerobot/scripts/probes/subtask_scene_sweep_frames.py [root] [--stride 3] [--out outputs/analysis/probe_frames/subtask_scene_sweep_frames]
 
 Writes frames.json and the contact sheets into --out. The reviewed frames.json is then copied to
 lerobot/dataset_info/manifests/scene_sweep_frames_<date>.json, which the configs read.
@@ -167,10 +167,10 @@ def render_sheets(root: str, rows: list[dict], out_dir: str, stride: int) -> Non
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("root", nargs="?", default="outputs/rebot_val-annotated-v3")
+    ap.add_argument("root", nargs="?", default="outputs/data/rebot_val-annotated-v3")
     ap.add_argument("--stride", type=int, default=3)
     ap.add_argument("--fps", type=int, default=30)
-    ap.add_argument("--out", default="outputs/probe_frames/subtask_scene_sweep_frames")
+    ap.add_argument("--out", default="outputs/analysis/probe_frames/subtask_scene_sweep_frames")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     rows = select_frames(args.root, args.stride, args.fps)

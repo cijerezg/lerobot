@@ -17,7 +17,7 @@ HEADER = """# Sim eval copy of config_rl.yaml (2026-10-17): env.robot = MuJoCo r
 # registry robots/rebot_b601_sim/tasks.py (tiers easy/hard, staged reward); the values below stay the nail task.
 # One layout by hand:  MUJOCO_GL=egl uv run python -m lerobot.rl.inference_async --config_path=config_rl_sim.yaml [--env.robot.scene=ep1]
 # Every layout on a checkpoint (what the chase runs on the Spark with remote_validate.sh --sim):
-#   lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
+#   lerobot/scripts/run_sim_eval.sh outputs/runs/<run>/checkpoints/<step>/pretrained_model
 """
 
 SUBTASKS_OLD_START = "  # 2026-10-17 sequence under the \"Tidy up the table\" umbrella;"

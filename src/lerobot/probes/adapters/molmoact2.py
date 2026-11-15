@@ -1505,6 +1505,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         ("depth_words", " The depth of the scene is"),
         ("subtask", " The current step is"),
         ("state", " The current state of the robot is"),
+        ("velocity", " The current velocity of the robot is"),
         ("gripper_torque", " The gripper torque is"),
         ("history", " The recent states of the robot"),
         ("metadata_quality", " The quality is"),
@@ -1576,7 +1577,7 @@ class MolmoAct2Adapter(ProbablePolicy):
             "metadata_quality", "metadata_mistake", "metadata_speed", "metadata_precision", "metadata_contact"
         }
         for name in (
-            "embodiment", "control_mode", "task", "subtask", "state", "gripper_torque", "history", "question",
+            "embodiment", "control_mode", "task", "subtask", "state", "velocity", "gripper_torque", "history", "question",
             "metadata", "template",
         ):
             groups[name] = []

@@ -7,8 +7,8 @@ only reach the chunk in the second before the gripper commits, so that is where 
 sits (the complementary window to ``subtask_scene_sweep_frames.py``, whose windows END 1 s
 before the close).
 
-Rule (val root, outputs/rebot_val_2026-10-14-v1-seamfix1 since 2026-11-13; the 2026-10-05 list
-(precision_contact_sweep_frames_2026-10-05.json) was outputs/rebot_training_mix_2026-10-04/validation_all):
+Rule (val root, outputs/data/rebot_val_2026-10-14-v1-seamfix1 since 2026-11-13; the 2026-10-05 list
+(precision_contact_sweep_frames_2026-10-05.json) was outputs/data/rebot_training_mix_2026-10-04/validation_all):
   * a WINDOW is a segment whose contact label is a real element (``meta/contact.parquet``
     code != 14); moves and return-to-home are "not applicable" and are skipped, and so is
     a pour (no gripper commit);
@@ -31,7 +31,7 @@ subtask_windows / episode_metadata indices are GLOBAL; the events table carries 
 frame indices for the rows and back to global for the probe.
 
 Usage (from the workspace root):
-  uv run python lerobot/scripts/probes/precision_contact_sweep_frames.py [root] [--stride 3] [--out outputs/probe_frames/precision_contact_sweep_frames]
+  uv run python lerobot/scripts/probes/precision_contact_sweep_frames.py [root] [--stride 3] [--out outputs/analysis/probe_frames/precision_contact_sweep_frames]
 
 Writes frames.json and the contact sheets into --out. The reviewed frames.json is then copied to
 lerobot/dataset_info/manifests/precision_contact_sweep_frames_<date>.json, which the configs read.
@@ -66,7 +66,7 @@ GRASP_CODES = {
     "the brown shirt": CLOTH, "the pink shirt": CLOTH,
     "the white sock": CLOTH, "the black sock": CLOTH,
     "the bit kit cover": CLOTH,
-    # 2026-11-13: objects of outputs/rebot_val_2026-10-14-v1-seamfix1
+    # 2026-11-13: objects of outputs/data/rebot_val_2026-10-14-v1-seamfix1
     "the shirt": CLOTH, "the sock": CLOTH, "the white sock nearest the bin": CLOTH,
     "the outer edge of the flap with the bits": CLOTH,
     "the nail clipper": [0, 1],
@@ -214,10 +214,10 @@ def render_sheets(root: str, rows: list[dict], out_dir: str, stride: int) -> Non
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("root", nargs="?", default="outputs/rebot_val_2026-10-14-v1-seamfix1")
+    ap.add_argument("root", nargs="?", default="outputs/data/rebot_val_2026-10-14-v1-seamfix1")
     ap.add_argument("--stride", type=int, default=3)
     ap.add_argument("--fps", type=int, default=30)
-    ap.add_argument("--out", default="outputs/probe_frames/precision_contact_sweep_frames")
+    ap.add_argument("--out", default="outputs/analysis/probe_frames/precision_contact_sweep_frames")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     rows = select_frames(args.root, args.stride, args.fps)

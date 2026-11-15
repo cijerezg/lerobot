@@ -1,6 +1,6 @@
 """Print the EXPECTED_* constants of diverse_actor_selection.py as measured on a corpus root.
 
-    uv run python lerobot/scripts/expected_from_selection.py --root outputs/diverse_robot_dataset_v3
+    uv run python lerobot/scripts/expected_from_selection.py --root outputs/data/diverse_robot_dataset_v3
 
 The selection is built exactly like training (retained anchors of every episode minus
 <root>/holdout_episodes.json) with the startup count assert skipped, so it runs on a root
@@ -25,7 +25,7 @@ from lerobot.datasets.diverse_actor_selection import (
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="outputs/diverse_robot_dataset_v3")
+    ap.add_argument("--root", default="outputs/data/diverse_robot_dataset_v3")
     args = ap.parse_args()
     selection = select_actor_anchors(open_federated_corpus(args.root), verify_counts=False)
     episodes_by_source = Counter()

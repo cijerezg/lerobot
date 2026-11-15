@@ -456,16 +456,16 @@ def apply_labels(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--corpus-root", type=Path, default=Path("outputs/diverse_robot_dataset/corpus")
+        "--corpus-root", type=Path, default=Path("outputs/data/diverse_robot_dataset/corpus")
     )
     parser.add_argument(
-        "--build-root", type=Path, default=Path("outputs/diverse_robot_dataset_build")
+        "--build-root", type=Path, default=Path("outputs/data/diverse_robot_dataset_build")
     )
     parser.add_argument(
         "--sheet-root",
         type=Path,
         default=Path(
-            "outputs/diverse_robot_dataset_build/robochallenge/quality_mistake_review/sheets"
+            "outputs/data/diverse_robot_dataset_build/robochallenge/quality_mistake_review/sheets"
         ),
     )
     parser.add_argument(
@@ -477,7 +477,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--backup-root",
         type=Path,
         default=Path(
-            "outputs/diverse_robot_dataset_build/robochallenge/quality_mistake_review/"
+            "outputs/data/diverse_robot_dataset_build/robochallenge/quality_mistake_review/"
             "pre_review_episode_metadata"
         ),
     )

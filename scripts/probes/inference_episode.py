@@ -5,7 +5,7 @@
 Each run dir (or its inference_dataset) becomes a probe input under outputs/probe_inputs/ (data,
 videos, depth symlinked; meta copied plus subtask windows from the operator console labels and
 the depth gripper-event labels), gets a config derived from config_rl_validate.yaml with only
---probes enabled, and runs through run_probes.sh into outputs/probe_runs/<run>-<step>.
+--probes enabled, and runs through run_probes.sh into outputs/runs/<checkpoint run>/probes/<step>/<run>.
 The checkpoint is config_rl.yaml's policy.pretrained_path (inference_checkpoint_path if set) and
 must match the one the actor log says it loaded; --checkpoint skips that check (off-policy replay).
 """
@@ -75,7 +75,7 @@ for run in args.runs:
     for log in (run / "logs").glob("actor_*.log") if args.checkpoint is None else ():
         loaded = re.search(r"Loading policy and processors from checkpoint: (\S+)", log.read_text())
         assert loaded is None or Path(loaded.group(1)).resolve() == checkpoint, f"{run.name} ran {loaded.group(1)}, not {checkpoint}"
-    input_dir, run_dir = ROOT / "outputs/probe_inputs" / run.name, ROOT / "outputs/probe_runs" / (f"{run.name}-{step}" + (f"-{args.run_suffix}" if args.run_suffix else ""))
+    input_dir, run_dir = ROOT / "outputs/probe_inputs" / run.name, checkpoint.parents[2] / "probes" / step / (run.name + (f"-{args.run_suffix}" if args.run_suffix else ""))
     if not input_dir.exists():
         build_input(run / "inference_dataset", input_dir)
     config = write_config(input_dir, run_dir)

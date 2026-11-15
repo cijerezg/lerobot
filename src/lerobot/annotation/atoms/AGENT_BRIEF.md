@@ -17,7 +17,7 @@ Workspace: `/home/user/Documents/Research/RL/LeRobot` (run every command from th
 
 ## What you write, and only that
 
-- `outputs/_annotation/subtask_atoms_review/agent_reviews/<episode_id>.json`, one per episode.
+- `outputs/annotation/subtask_atoms_review/agent_reviews/<episode_id>.json`, one per episode.
   Start it with `uv run python -m lerobot.annotation.atoms.agent_check skeleton --episode E`
   (prefilled from the proprio proposal; parents that already have a Codex manual override
   are left out on purpose and must stay out). Edit the file. Then
@@ -26,11 +26,11 @@ Workspace: `/home/user/Documents/Research/RL/LeRobot` (run every command from th
 - Fill `images` with the workspace-relative paths of every sheet, dense strip and closeup you read.
 - Never modify anything else: not `verdicts/`, `manual_overrides/`, `local_vlm_reviews/` (do
   not even read those: they are rejected machine drafts), `sheets/<source>/`, `proposals.jsonl`,
-  or anything under `outputs/diverse_robot_dataset/`.
+  or anything under `outputs/data/diverse_robot_dataset/`.
 
 ## Where to look
 
-- Sheets: `outputs/_annotation/subtask_atoms_review/sheets/<source>/<episode_id>_NN.jpg`
+- Sheets: `outputs/annotation/subtask_atoms_review/sheets/<source>/<episode_id>_NN.jpg`
   (Read them as images). Per parent: one overview page (header, trace, frames every 1-3 s),
   then candidate atom pages (start | mid | end-1 for the external and the wrist camera).
 - Dense strip, when a boundary is not obvious (it usually is not on a 3 s overview stride):

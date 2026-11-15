@@ -39,16 +39,16 @@ Step 1: Generate the cache from a dataset (one-time cost):
 
     uv run python src/lerobot/scripts/lerobot_memmap_buffer_cache.py \\
         --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \\
-        --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks \\
-        --cache-dir outputs/buffer_cache \\
+        --data-dir outputs/data/so101_pickplace_success_120_v2_w_subtasks \\
+        --cache-dir outputs/cache/buffer_cache \\
         --video-backend pyav
 
     This decodes every video frame, resizes images to 224x224, and writes
-    the result as .bin memmap files under outputs/buffer_cache/<fingerprint>/.
+    the result as .bin memmap files under outputs/cache/buffer_cache/<fingerprint>/.
 
 Step 2: Use the cache in training. The offline learner picks it up
 automatically via the ``buffer_cache_dir`` config field, which defaults
-to "outputs/buffer_cache". When ``ReplayBuffer.from_lerobot_dataset()``
+to "outputs/cache/buffer_cache". When ``ReplayBuffer.from_lerobot_dataset()``
 is called with a ``cache_dir``, it checks for a matching fingerprint and
 loads the memmap cache instead of re-decoding video. No code changes are
 needed — just make sure the cache directory exists and contains the output
@@ -57,7 +57,7 @@ from step 1.
     You can also load a cache directly in code:
 
         from lerobot.rl.buffer import ReplayBuffer
-        buf = ReplayBuffer.from_cache("outputs/buffer_cache/<fingerprint>", device="cuda:0")
+        buf = ReplayBuffer.from_cache("outputs/cache/buffer_cache/<fingerprint>", device="cuda:0")
         batch = buf.sample(batch_size=32, action_chunk_size=50)
 
 Options:

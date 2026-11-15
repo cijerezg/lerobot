@@ -2,7 +2,7 @@
 (provenance). The ``speed`` column (what the loader reads) stays the hybrid label. Run after
 ``lerobot.annotation.speed.rebot_speed_pass``.
 
-    uv run python -m lerobot.annotation.rebot.manual_speed <work> outputs/<root>
+    uv run python -m lerobot.annotation.rebot.manual_speed <work> outputs/data/<root>
 """
 
 import json

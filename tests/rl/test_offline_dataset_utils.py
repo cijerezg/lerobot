@@ -23,7 +23,7 @@ from lerobot.rl.offline_dataset_utils import (
     resolve_task_strings,
 )
 from lerobot.rl.shared_config import GripperTorqueConfig
-from lerobot.utils.constants import OBS_EFFORT
+from lerobot.utils.constants import OBS_EFFORT, OBS_VELOCITY
 
 
 def _fake_dataset(tasks, task_indices, subtasks, subtask_indices, root, episode_indices=None):
@@ -213,6 +213,28 @@ def test_roots_without_effort_get_no_gripper_torque_column():
     )
 
     assert "gripper_torque_level" not in buffer.complementary_info
+
+
+def test_velocity_is_smoothed_within_each_episode():
+    dataset = _fake_dataset(["insert"], [0] * 7, [], None, "/tube", episode_indices=[0, 0, 0, 0, 0, 1, 1])
+    velocity = [0.0, 10.0, 10.0, 10.0, 10.0, 0.0, 50.0]
+    dataset.hf_dataset = dataset.hf_dataset.add_column(OBS_VELOCITY, [[value, -value] for value in velocity])
+    buffer = _fake_buffer(capacity=7)
+
+    materialize_dataset_labels(buffer, dataset, dataset, source_index=0, velocity=True)
+
+    # Episode 1 starts from its own first sample.
+    smoothed = torch.tensor([0.0, 2.5, 5.0, 7.0, 8.5, 0.0, 12.5])
+    assert torch.allclose(buffer.complementary_info["motor_velocity"], torch.stack([smoothed, -smoothed], dim=1))
+
+
+def test_roots_without_velocity_get_no_velocity_column():
+    dataset = _fake_dataset(["insert"], [0, 0], [], None, "/old", episode_indices=[0, 0])
+    buffer = _fake_buffer(capacity=2)
+
+    materialize_dataset_labels(buffer, dataset, dataset, source_index=0, velocity=True)
+
+    assert "motor_velocity" not in buffer.complementary_info
 
 
 def test_depth_event_targets_overlay_cached_buffer(monkeypatch):

@@ -1,6 +1,6 @@
 """New ReBot root with some episodes' task strings replaced. The source is read only. Never overwrites.
 
-    uv run python -m lerobot.annotation.rebot.retask_root outputs/<root> --out outputs/<new_root> --tasks <map.json>
+    uv run python -m lerobot.annotation.rebot.retask_root outputs/data/<root> --out outputs/data/<new_root> --tasks <map.json>
 
 ``map.json`` is ``{"<episode_index>": "<new task>"}``. Every file is hardlinked; the files that carry the task
 (meta/tasks.parquet, the episodes table, every data file, provenance.json) are unlinked and rewritten. Tasks are

@@ -4,7 +4,7 @@ from pathlib import Path
 WS = Path(__file__).resolve().parents[4]; OUT = Path(__file__).resolve().parent / "frames"
 def grab(path, t_s):
     cap = cv2.VideoCapture(str(path)); cap.set(cv2.CAP_PROP_POS_MSEC, t_s * 1000); ok, f = cap.read(); cap.release(); return f
-pol = WS / "outputs/rebot-mix40_20_40-resume1200-20261027/validation/step_00001600/sim/close_lid/videos"
+pol = WS / "outputs/runs/rebot-mix40_20_40-resume1200-20261027/validation/step_00001600/sim/close_lid/videos"
 rows = []
 for t in [0, 15, 25, 30, 33, 36]:
     top = grab(pol / "ep0_top.mp4", t); wr = grab(pol / "ep0_wrist.mp4", t)
@@ -12,8 +12,8 @@ for t in [0, 15, 25, 30, 33, 36]:
         cv2.putText(im, lab, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
     rows.append(np.hstack([top, wr]))
 cv2.imwrite(str(OUT / "policy_ep0_sheet.jpg"), np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 80])
-demo = WS / "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1/videos/observation.images.top/chunk-000"
-demo_w = WS / "outputs/rebot_additions_2026-10-04-annotated-v12-tasks1/videos/observation.images.wrist/chunk-000"
+demo = WS / "outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1/videos/observation.images.top/chunk-000"
+demo_w = WS / "outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1/videos/observation.images.wrist/chunk-000"
 for ep, fi in ((0, 0), (2, 1), (3, 2)):
     cv2.imwrite(str(OUT / f"t071_ep{ep}_top_f0.png"), grab(demo / f"file-{fi:03d}.mp4", 0.0))
 sheet = []

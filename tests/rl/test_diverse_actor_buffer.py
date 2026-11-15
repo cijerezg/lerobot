@@ -34,7 +34,7 @@ from lerobot.rl.data_sources.diverse_actor_buffer import (
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/data/diverse_robot_dataset_v3"
 
 
 @pytest.fixture(scope="module")

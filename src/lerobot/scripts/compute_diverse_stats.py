@@ -39,9 +39,9 @@ makes an accidental gather auditable rather than invisible.
 Example:
     python -m lerobot.scripts.compute_diverse_stats \\
         --encoding anchor --chunk-size 30 --name diverse-rebot-v1 \\
-        --diverse-root outputs/diverse_robot_dataset \\
-        --rebot-root outputs/rebot_socks_basket-annotated-v2 \\
-        --rebot-root outputs/rebot_shirts_bin-annotated-v2 \\
+        --diverse-root outputs/data/diverse_robot_dataset \\
+        --rebot-root outputs/data/rebot_socks_basket-annotated-v2 \\
+        --rebot-root outputs/data/rebot_shirts_bin-annotated-v2 \\
         --out outputs/stats/action_stats_anchor_diverse-rebot-v1.pt
 """
 
@@ -413,7 +413,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--diverse-root", default="outputs/diverse_robot_dataset")
+    parser.add_argument("--diverse-root", default="outputs/data/diverse_robot_dataset")
     parser.add_argument("--rebot-root", action="append", default=[], type=Path)
     parser.add_argument("--rebot-layout", default="rebot_b601_joint7_commanded")
     parser.add_argument("--encoding", default="anchor", choices=("absolute", "anchor", "delta"))

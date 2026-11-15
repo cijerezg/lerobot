@@ -1,6 +1,6 @@
 """Figures for run_grad_drift.py: drift of the probe gradient per data group, per block and per pair of steps.
 
-    uv run python lerobot/adhocs/grad_drift/plot_grad_drift.py outputs/grad_drift/base_2026-11-12
+    uv run python lerobot/adhocs/grad_drift/plot_grad_drift.py outputs/analysis/grad_drift/base_2026-11-12
 """
 import glob
 import json

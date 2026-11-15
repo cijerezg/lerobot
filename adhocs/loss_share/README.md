@@ -15,9 +15,9 @@ checkpoint of a run.
 ## Run
 
     uv run python lerobot/adhocs/loss_share/run_loss_share.py --config_path=config_rl.yaml \
-        --run_dir=outputs/rebot-corr10-nodepth-b128-20261111 --steps=400,800,1200,1600,2000 \
-        --out_dir=outputs/loss_share/corr10_2026-11-12
-    uv run python lerobot/adhocs/loss_share/plot_loss_share.py outputs/loss_share/corr10_2026-11-12
+        --run_dir=outputs/runs/rebot-corr10-nodepth-b128-20261111 --steps=400,800,1200,1600,2000 \
+        --out_dir=outputs/analysis/loss_share/corr10_2026-11-12
+    uv run python lerobot/adhocs/loss_share/plot_loss_share.py outputs/analysis/loss_share/corr10_2026-11-12
 
 About 0.2 s per frame at batch 1, 40 s of setup; a finished checkpoint is skipped on rerun.
 

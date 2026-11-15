@@ -217,7 +217,7 @@ needed (checked below). Unlike the package close_lid scene the twin's case is a 
 
 ## Running the twin eval on a checkpoint
 
-    TWIN=1 PARALLEL=3 lerobot/scripts/run_sim_eval.sh outputs/<run>/checkpoints/<step>/pretrained_model
+    TWIN=1 PARALLEL=3 lerobot/scripts/run_sim_eval.sh outputs/runs/<run>/checkpoints/<step>/pretrained_model
 
 (same arguments as before: `[FRESH_OUTPUT_DIRECTORY] [CONFIG]`, `LAYOUTS="twin_l1_tape_basket_left_p2 twin_l4_three_p1"` to pick
 placements, `SIM_EVAL_ARGS="--env.robot.episodes=2 --env.processor.reset.control_time_s=40"` for a short pass). The set is 64
@@ -247,4 +247,4 @@ configurations, renders and checks.json; `--configs <names>` for a subset, `--ch
 
 ## Smoke test 2026-10-30 (resume ckpt 600, twin_l1_tape_basket_right_p1, 1 episode)
 
-Loop runs end to end (policy load, 60 s episode, videos, subtask_events.json with the dense record, summary tables). Fixes made on the way: numpy bools in the dense record (json), drop rule extended to off-desk and at-rest objects (the infinite table collider lets a knocked object roll 2 m away at z = 0), raw gains off_desk / basket_moved_m / displaced_m. Policy behaviour in both smoke episodes: approach + contact at ~26-29 s, tape knocked over, no lift (reward 0.2, dense 0.37); in one run the arm pushed the basket ~25 cm. Output outputs/twin_eval_smoke_2026-10-30.
+Loop runs end to end (policy load, 60 s episode, videos, subtask_events.json with the dense record, summary tables). Fixes made on the way: numpy bools in the dense record (json), drop rule extended to off-desk and at-rest objects (the infinite table collider lets a knocked object roll 2 m away at z = 0), raw gains off_desk / basket_moved_m / displaced_m. Policy behaviour in both smoke episodes: approach + contact at ~26-29 s, tape knocked over, no lift (reward 0.2, dense 0.37); in one run the arm pushed the basket ~25 cm. Output outputs/analysis/twin_eval_smoke_2026-10-30.

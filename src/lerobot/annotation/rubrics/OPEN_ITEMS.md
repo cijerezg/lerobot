@@ -39,4 +39,4 @@ Class files are `classes/<class>/strategy/FINAL.md` under `paths.QUALITY_V2`.
 | `idle_scan` cannot run on episodes split into several entries | pass 2026-11-10b | support entries |
 | `check_precision_chain` misses a carry before a pour | later passes | add the case |
 | `render_review_videos` hardcodes `external_0` / `wrist_0` | external pass 2026-10-08 | read the camera list |
-| MolmoAct reviewer brief cites `outputs/_annotation/diverse_v2_expansion_review/REVIEW_PROTOCOL.md`, not on this disk | `examples/dataset/diverse_robot_dataset/molmoact_review/` | recover the file or fold its rules into the brief |
+| MolmoAct reviewer brief cites `outputs/annotation/diverse_v2_expansion_review/REVIEW_PROTOCOL.md`, not on this disk | `examples/dataset/diverse_robot_dataset/molmoact_review/` | recover the file or fold its rules into the brief |

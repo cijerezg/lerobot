@@ -24,12 +24,13 @@ position over the whole episode (click to seek; shows the zoom window). The numb
 value under the playhead. Smoothing is a centered mean over 3 / 7 / 15 frames on velocity and torque, drawn over
 the raw signal.
 
-"Velocity input" (2026-11-14): one row per joint, the raw velocity and on top of it what the model would read:
-causal mean of the last 4 frames (0.4 newest / 0.3 / 0.2 / 0.1, not across episodes), then the rule of the state
-tokens (q01 / q99 of the root's `meta/stats.json` -> [-1, 1], clip, 256 levels). The y axis is fixed to q01..q99, so
-clipped stretches run flat along the edge. "Histogram": frames per level over the whole root, one row per joint
-(log counts by default); the line is the level under the playhead, hover gives level / deg/s / frames. The run also
-prints a table per joint (q01, q99, deg/s per level, share clipped, levels used, share in the fullest level).
+"Velocity input" (2026-11-14): one row per joint, the raw velocity and on top of it what the model reads
+(`utils/motor_velocity.py`, docs/design/memory_prompts.md 1.1): causal mean of the last 5 frames (0.25 newest / 0.25 /
+0.2 / 0.15 / 0.15, not across episodes), then the 256 state tokens between q01 and q99 of the root's velocity
+column (`meta/stats.json`, as for the state; a training run pools the range over its roots). The y axis is fixed to that range, so clipped stretches run flat along the edge. "Histogram":
+frames per level over the whole root, one row per joint (log counts by default); the line is the level under the
+playhead, hover gives level / deg/s / frames. The run prints a table per
+joint (low, high, deg/s per level, share clipped, levels used, share in the fullest level).
 
 Click a chart to seek, wheel = zoom the time axis, drag = pan, double click = whole episode, space = play / pause,
 arrows = one frame, shift + arrows = one second. Hover gives the values of that frame (in "One joint" also
@@ -52,18 +53,3 @@ the holder once in episode 0 and twice in episode 1). Gripper: 0 = closed, negat
   does not separate "bit in hand" from a stop in free air.
 - Not checked: in episode 1 the hold torque steps from 0.29 to 0.22 N*m within one frame at 35.3 s with no motion
   of the gripper, when the bit reaches the holder. Possibly the holder taking load off the fingers.
-
-Velocity input, root `outputs/rebot_teleop_2026-11-14-tube-cut-v3` (16 episodes, 34836 frames):
-
-| joint | q01 | q99 | deg/s per level | clipped | levels used | fullest level |
-|---|---|---|---|---|---|---|
-| shoulder_pan | -9.65 | 10.78 | 0.080 | 2.0% | 256 | 16.8% |
-| shoulder_lift | -12.73 | 19.17 | 0.125 | 2.2% | 256 | 10.1% |
-| elbow_flex | -9.09 | 14.69 | 0.093 | 1.9% | 256 | 13.5% |
-| wrist_flex | -9.64 | 6.31 | 0.063 | 1.3% | 191 | 24.9% |
-| wrist_yaw | -4.62 | 4.62 | 0.036 | 1.3% | 111 | 56.4% |
-| wrist_roll | -9.65 | 10.50 | 0.079 | 1.0% | 237 | 42.3% |
-| gripper | -37.36 | 34.85 | 0.283 | 1.9% | 256 | 59.6% |
-
-The fullest level is standstill. On wrist and gripper one motor step (0.84 deg/s) is 3 to 23 levels wide, so their
-levels are a comb, not a continuum.

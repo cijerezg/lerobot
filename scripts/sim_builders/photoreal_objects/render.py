@@ -62,7 +62,7 @@ def main():
     gallery.close();image_out('objects_comparison_sheet.jpg',np.vstack(previews))
 
     before,after=pairs['nail_ep5'];pair=[before,after]
-    states_df=pd.read_parquet(WS/'outputs/rebot_2026-10-16-annotated-v1/data/chunk-000/file-005.parquet')
+    states_df=pd.read_parquet(WS/'outputs/data/rebot_2026-10-16-annotated-v1/data/chunk-000/file-005.parquet')
     states=np.stack(states_df[states_df.episode_index==5].sort_values('frame_index')['observation.state'].values)
     rr.init('Surrounding object appearance comparison',spawn=False);rr.save(str(ROOT/'objects_comparison.rrd'))
     rr.send_blueprint(rrb.Blueprint(rrb.Grid(rrb.Spatial2DView(origin='before/top',name='Previous top'),rrb.Spatial2DView(origin='after/top',name='Updated top'),rrb.Spatial2DView(origin='before/wrist',name='Previous wrist'),rrb.Spatial2DView(origin='after/wrist',name='Updated wrist'),grid_columns=2)))

@@ -292,6 +292,8 @@ class FutureVisualLossConfig:
 HAND_BLOCK_ACTION_WIDTH = 15  # joints 0..7, hand delta 8..14
 HAND_BLOCK_STATE_WIDTH = 18  # joints 0..7, hand pose 8..17
 HAND_FAST_LAYOUTS = ("joints", "masked", "hand_first")
+# Clauses prompt_clauses_off can name: the control-mode clause and the metadata clauses.
+PROMPT_CLAUSES_OPTIONAL = ("control_mode", "quality", "mistake", "speed", "precision", "contact")
 
 
 @dataclass
@@ -372,7 +374,7 @@ class MolmoAct2Config(PreTrainedConfig):
     action_mode: str = "both"
     inference_action_mode: str | None = None
     discrete_action_tokenizer: str = (
-        "/home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer"
+        "/home/user/Documents/Research/RL/LeRobot/outputs/models/MolmoAct-FAST-tokenizer"
     )
     discrete_generation_max_steps: int | None = None
     norm_tag: str | None = "so100_so101_molmoact2"
@@ -413,6 +415,10 @@ class MolmoAct2Config(PreTrainedConfig):
     # defaults, determine which conditioning clauses the policy is trained to use.
     subtask_dropout: float = 0.0
     metadata_dropout: float = 0.0
+    # Prompt clauses left out in training and at inference, from PROMPT_CLAUSES_OPTIONAL
+    # (control_mode, quality, mistake, speed, precision, contact). Empty = all rendered,
+    # the prompt of every checkpoint trained before 2026-11-14.
+    prompt_clauses_off: list[str] = field(default_factory=list)
 
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, prompt is
@@ -558,6 +564,12 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError(f"subtask_dropout must be in [0, 1), got {self.subtask_dropout}.")
         if not 0 <= self.metadata_dropout < 1:
             raise ValueError(f"metadata_dropout must be in [0, 1), got {self.metadata_dropout}.")
+        unknown = set(self.prompt_clauses_off) - set(PROMPT_CLAUSES_OPTIONAL)
+        if unknown:
+            raise ValueError(
+                f"prompt_clauses_off has unknown clauses {sorted(unknown)}; "
+                f"expected a subset of {PROMPT_CLAUSES_OPTIONAL}."
+            )
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}.")
         if self.lora_alpha < 1:

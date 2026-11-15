@@ -7,10 +7,10 @@
 # of the checkpoint. Both machines mirror the same absolute paths, so every path below
 # is used verbatim on either side.
 #
-#   lerobot/scripts/remote_validate.sh outputs/molmoact2_offline_rebot_v4/checkpoints/000400
-#   lerobot/scripts/remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400
-#   lerobot/scripts/remote_validate.sh --sim outputs/.../checkpoints/000400   # MuJoCo nail-clipper eval instead of the probes
-#   lerobot/scripts/remote_validate.sh --with-sim outputs/.../checkpoints/000400   # probes, then the sim eval, one pass (chase: -- --with-sim)
+#   lerobot/scripts/remote_validate.sh outputs/runs/molmoact2_offline_rebot_v4/checkpoints/000400
+#   lerobot/scripts/remote_validate.sh lerobot-tinypi outputs/runs/.../checkpoints/000400
+#   lerobot/scripts/remote_validate.sh --sim outputs/runs/.../checkpoints/000400   # MuJoCo nail-clipper eval instead of the probes
+#   lerobot/scripts/remote_validate.sh --with-sim outputs/runs/.../checkpoints/000400   # probes, then the sim eval, one pass (chase: -- --with-sim)
 #
 # The remote run is launched detached (setsid + nohup), so a dropped ssh does not kill
 # a two-hour probe suite — the tail reconnects, and `--attach` picks a run back up from
@@ -111,9 +111,10 @@ if [[ -d "$CKPT/pretrained_model" ]]; then MODEL="$CKPT/pretrained_model"; else 
 
 # Slug: <run>-<step> for .../<run>/checkpoints/<step>[/pretrained_model], else basename.
 step_dir="$MODEL"; [[ "$(basename "$MODEL")" == "pretrained_model" ]] && step_dir="$(dirname "$MODEL")"
-RUN_NAME=""; STEP_N=""
+RUN_NAME=""; STEP_N=""; RUN_ROOT=""
 if [[ "$(basename "$(dirname "$step_dir")")" == "checkpoints" ]]; then
-  RUN_NAME="$(basename "$(dirname "$(dirname "$step_dir")")")"
+  RUN_ROOT="$(dirname "$(dirname "$step_dir")")"
+  RUN_NAME="$(basename "$RUN_ROOT")"
   STEP_N="$(basename "$step_dir")"
   SLUG="$RUN_NAME-$STEP_N"
 else
@@ -128,7 +129,7 @@ RUN_DIR="${RUN_DIR:-$WS/outputs/remote_val/$SLUG}"
 # always run at step 0 here (offline_steps=0 + val_on_start), so the remote's
 # step_00000000 is renamed to the checkpoint's own step on the way in.
 if [[ -n "$RUN_NAME" && "$STEP_N" =~ ^[0-9]+$ ]]; then
-  RESULT_DIR="$WS/outputs/$RUN_NAME/validation/$(printf 'step_%08d' "$((10#$STEP_N))")"
+  RESULT_DIR="$RUN_ROOT/validation/$(printf 'step_%08d' "$((10#$STEP_N))")"
 else
   RESULT_DIR="$RUN_DIR/validation"
 fi
@@ -314,7 +315,7 @@ fi
 echo
 if (( EXIT == 0 )); then
   info "done. results: $RESULT_DIR/"
-  view_root="$RESULT_DIR"; [[ -n "$RUN_NAME" ]] && view_root="$WS/outputs/$RUN_NAME"
+  view_root="$RESULT_DIR"; [[ -n "$RUN_NAME" ]] && view_root="$RUN_ROOT"
   if (( SIM || WITH_SIM )); then info "sim: $RESULT_DIR/sim/summary.md; videos: $RESULT_DIR/sim/<layout>/videos/ep<N>_{top,wrist,wrist_depth}.mp4 (compare_probes shows them side by side: uv run python -m lerobot.scripts.compare_probes '$view_root' ...)"; fi
   if (( ! SIM )); then info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$view_root'"; fi
 else

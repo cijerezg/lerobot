@@ -25,7 +25,7 @@ from lerobot.rl.data_sources.diverse_mixture import (
     allocate_group_quotas,
 )
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/data/diverse_robot_dataset_v3"
 DRAWS = 20_000
 # Four standard errors of a binomial proportion at this many draws. Wide enough that a
 # correct sampler effectively never trips it, tight enough to catch a wrong weight rule
@@ -90,7 +90,7 @@ def test_a_different_outer_split_is_configurable() -> None:
 
 def test_sqrt_episode_weights_are_what_the_plan_says(selection) -> None:
     targets = HierarchicalAnchorSampler(selection, seed=0).target_proportions()
-    expected = {  # training-selection episode counts of DATA_ROOT (outputs/diverse_robot_dataset_v3), recounted 2026-10-18
+    expected = {  # training-selection episode counts of DATA_ROOT (outputs/data/diverse_robot_dataset_v3), recounted 2026-10-18
         "robochallenge": math.sqrt(196),
         "molmoact": math.sqrt(411),
         "fmb": math.sqrt(160),

@@ -32,8 +32,10 @@ from lerobot.utils.constants import (
     LAST_CHECKPOINT_LINK,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
+    OBS_VELOCITY,
     PRETRAINED_MODEL_DIR,
 )
+from lerobot.utils.motor_velocity import VELOCITY_KEY
 from lerobot.utils.transition import move_transition_to_device
 
 # Depths for the SO100/SO101 MolmoAct2 checkpoint. Adjust if you point this
@@ -250,6 +252,7 @@ _FORWARDED_COMPLEMENTARY = (
     "metadata_precision",
     "metadata_contact",
     "gripper_torque_level",
+    VELOCITY_KEY,
     "state_dim_is_pad",
     "action_dim_is_pad",
     "action_layout_id",
@@ -417,7 +420,10 @@ class MolmoAct2Trainer(Trainer):
         import os
 
         from lerobot.policies.factory import make_pre_post_processors
-        from lerobot.policies.molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
+        from lerobot.policies.molmoact2.processor_molmoact2 import (
+            MolmoAct2PackInputsProcessorStep,
+            make_molmoact2_pre_post_processors,
+        )
 
         dataset_stats = _dataset_stats(dataset)
         dataset_meta = getattr(dataset, "meta", None) if dataset is not None else None
@@ -473,6 +479,15 @@ class MolmoAct2Trainer(Trainer):
                 dataset_meta=dataset_meta,
                 action_stats_override=action_stats_override,
             )
+        if getattr(cfg.policy, "velocity", False) and dataset_stats is not None:
+            # The velocity range travels with the checkpoint's processor, as the state stats
+            # do; a processor loaded from a checkpoint keeps the range it was trained with.
+            pack_step = next(
+                step for step in result[0].steps if isinstance(step, MolmoAct2PackInputsProcessorStep)
+            )
+            if not pack_step.velocity_low:
+                pack_step.velocity_low = [float(v) for v in dataset_stats[OBS_VELOCITY]["q01"]]
+                pack_step.velocity_high = [float(v) for v in dataset_stats[OBS_VELOCITY]["q99"]]
         self._preprocessor = result[0]  # cache for critic_value_for_logging
         self.sync_subtask_vocabulary(result[0], dataset, is_main_process)
         return result
@@ -1586,6 +1601,9 @@ class MolmoAct2Trainer(Trainer):
         # Gripper torque level of the last control steps (1..levels); absent = no clause.
         if context.get("gripper_torque_level"):
             complementary["gripper_torque_level"] = torch.tensor([context["gripper_torque_level"]])
+        # Smoothed motor velocity of the last control steps (deg/s per joint); absent = no clause.
+        if context.get("velocity") is not None:
+            complementary[VELOCITY_KEY] = torch.tensor([context["velocity"]])
         if complementary:
             pre_input[TransitionKey.COMPLEMENTARY_DATA] = complementary
         with torch.no_grad():

@@ -45,8 +45,8 @@ in meta/info.json:
 Example:
     python lerobot/src/lerobot/scripts/compute_embodiment_stats.py \\
         --encoding anchor --chunk-size 30 --name diverse-v1 \\
-        --root outputs/rebot_socks_basket-annotated-v2 \\
-        --root outputs/diverse_robot_dataset/corpus/packed_5hz/robochallenge/arrange_flowers
+        --root outputs/data/rebot_socks_basket-annotated-v2 \\
+        --root outputs/data/diverse_robot_dataset/corpus/packed_5hz/robochallenge/arrange_flowers
 """
 
 from __future__ import annotations

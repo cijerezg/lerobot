@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 pd.set_option("display.width", 250); pd.set_option("display.max_columns", 40); pd.set_option("display.max_rows", 400)
-root = sys.argv[1] if len(sys.argv) > 1 else "outputs/rebot_val-annotated-v3"
+root = sys.argv[1] if len(sys.argv) > 1 else "outputs/data/rebot_val-annotated-v3"
 STRIDE, H, FPS = 3, 30, 30
 df = pd.concat(pd.read_parquet(f, columns=["episode_index", "frame_index", "index", "observation.state", "action"])
                for f in sorted(glob.glob(f"{root}/data/**/*.parquet", recursive=True))).sort_values("index")

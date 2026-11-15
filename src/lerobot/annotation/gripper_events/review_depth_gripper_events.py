@@ -13,7 +13,7 @@ By default, two event-rich episodes are selected from each annotated dataset:
 Specific episodes can also be rendered:
 
     python review_depth_gripper_events.py \
-        --data-dir outputs/rebot_val-annotated-v2 --episodes 0 2
+        --data-dir outputs/data/rebot_val-annotated-v2 --episodes 0 2
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ CLOSE_THRESHOLD = -60.0
 OPEN_THRESHOLD = -90.0
 CUTOFF_FRAMES = 150
 DEFAULT_DATASETS = [
-    Path("outputs/rebot_socks_basket-annotated-v2"),
-    Path("outputs/rebot_shirts_bin-annotated-v2"),
-    Path("outputs/rebot_two_container-annotated-v2"),
-    Path("outputs/rebot_val-annotated-v2"),
+    Path("outputs/data/rebot_socks_basket-annotated-v2"),
+    Path("outputs/data/rebot_shirts_bin-annotated-v2"),
+    Path("outputs/data/rebot_two_container-annotated-v2"),
+    Path("outputs/data/rebot_val-annotated-v2"),
 ]
 
 VIDEO_W = 1280
@@ -402,7 +402,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--episodes", type=int, nargs="*")
     parser.add_argument("--per-dataset", type=int, default=2)
-    parser.add_argument("--out", type=Path, default=Path("outputs/_annotation/depth_gripper_event_review"))
+    parser.add_argument("--out", type=Path, default=Path("outputs/annotation/depth_gripper_event_review"))
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--crf", type=int, default=24)
     parser.add_argument("--preset", default="veryfast")

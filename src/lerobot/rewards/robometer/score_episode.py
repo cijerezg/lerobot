@@ -4,7 +4,7 @@ the whole per-frame vector of that query.
 
     uv run python -m lerobot.rewards.robometer.score_episode --sim-dir <...>/sim/bottle_basket_v1 --episode 1 \
         --task bottle_basket --out lerobot/scripts/sim_builders/digital_twin/judge/runs/bb_v1_ep1.robometer.json
-    uv run python -m lerobot.rewards.robometer.score_episode --root outputs/rebot_teleop_2026-10-29-cut-v1 --episode 0 \
+    uv run python -m lerobot.rewards.robometer.score_episode --root outputs/data/rebot_teleop_2026-10-29-cut-v1 --episode 0 \
         --task "basket:pill bottle" --out ...
 
 ``--task`` is a vlm_judge task spec (its task string is the prompt) or free text with ``--task-text``. The timeline

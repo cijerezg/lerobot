@@ -11,7 +11,7 @@ from lerobot.annotation.paths import WORKSPACE
 from lerobot.annotation.rebot import build_root, verify_root
 
 SRC = "outputs/train/2026-10-20/21-35-32_rebot-mix40-ckpt1200-20261020/inference_dataset"
-OUT = WORKSPACE / "outputs/rebot_rollouts_2026-10-20-probe-v1"
+OUT = WORKSPACE / "outputs/data/rebot_rollouts_2026-10-20-probe-v1"
 
 o = pd.read_parquet(WORKSPACE / SRC / "meta/online_labels.parquet").sort_values("frame_index")
 end = len(o) - len(o) % 3

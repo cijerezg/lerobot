@@ -273,7 +273,7 @@ def default_manifold_cache(output_dir: str) -> str:
     Validation writes each step to ``validation/step_00001000/actions``, so a cache
     inside the probe's own output would be refit at every step and never reused. Step
     directories are skipped, putting the manifold in ``validation/``; the standalone
-    CLI has no step directory and lands in ``outputs/probe/``.
+    CLI has no step directory and lands in ``outputs/analysis/probe/``.
     """
     parent = os.path.dirname(os.path.normpath(output_dir))
     if os.path.basename(parent).startswith("step_"):

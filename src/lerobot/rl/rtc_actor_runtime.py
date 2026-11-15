@@ -50,6 +50,7 @@ from lerobot.utils.gripper_torque import (
     gripper_torque_levels,
     smooth_gripper_torque,
 )
+from lerobot.utils.motor_velocity import VELOCITY_SUFFIX, VELOCITY_WEIGHTS, smooth_velocity
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import Transition, move_state_dict_to_device, move_transition_to_device
@@ -272,6 +273,8 @@ class RTCSharedState:
         self.history_entries: deque | None = None
         # Gripper torque of the last control steps, oldest first (the prompt level's input).
         self.gripper_torques: deque = deque(maxlen=len(GRIPPER_TORQUE_WEIGHTS))
+        # Motor velocities of the last control steps, oldest first (the prompt tokens' input).
+        self.velocities: deque = deque(maxlen=len(VELOCITY_WEIGHTS))
         # Current subtask: decoded by the high-level query, or walked by the operator
         # console through subtask_script (the rollout's steps in order, cursor 0 on
         # episode reset; empty = decode path). A script entry is (text, index) or
@@ -532,6 +535,18 @@ class RTCSharedState:
     def gripper_torque_snapshot(self) -> list[float]:
         with self.lock:
             return list(self.gripper_torques)
+
+    def push_velocity(self, velocity: list[float]) -> None:
+        with self.lock:
+            self.velocities.append(velocity)
+
+    def clear_velocities(self) -> None:
+        with self.lock:
+            self.velocities.clear()
+
+    def velocity_snapshot(self) -> list[list[float]]:
+        with self.lock:
+            return list(self.velocities)
 
     def history_snapshot(self) -> list[dict]:
         with self.lock:
@@ -863,6 +878,7 @@ def rtc_inference_worker(
                     subtask=current_subtask if subtask_enabled else None,
                     metadata=cycle_metadata,
                     gripper_torque_level=_gripper_torque_level(shared_state, cfg),
+                    velocity=_velocity(shared_state, cfg),
                 )
                 t_preproc_end = time.perf_counter()
 
@@ -1122,6 +1138,7 @@ def rtc_env_worker(
                 action_queue.clear()
                 shared_state.clear_history()
                 shared_state.clear_gripper_torques()
+                shared_state.clear_velocities()
                 shared_state.clear_subtask_state()
                 shared_state.request_reset()
                 if not standalone:
@@ -1704,12 +1721,24 @@ def _warmup_observation(cfg, history_offsets: dict[str, list[int]] | None, actio
 
 
 def _push_gripper_torque(shared_state: RTCSharedState, online_env) -> None:
-    """Add the gripper torque of the env's last reset/step to the prompt level's input."""
+    """Add the gripper torque and the motor velocities of the env's last reset/step to the prompt inputs."""
     if not hasattr(online_env, "get_raw_observation"):
         return
     raw = online_env.get_raw_observation()
     if GRIPPER_TORQUE_KEY in raw:
         shared_state.push_gripper_torque(float(raw[GRIPPER_TORQUE_KEY]))
+    # Motor order, the order of the dataset's observation.velocity column.
+    velocity = [float(value) for key, value in raw.items() if isinstance(key, str) and key.endswith(VELOCITY_SUFFIX)]
+    if velocity:
+        shared_state.push_velocity(velocity)
+
+
+def _velocity(shared_state: RTCSharedState, cfg) -> list[float] | None:
+    """Smoothed motor velocities (deg/s) over the last control steps; None = off or no reading yet."""
+    velocities = shared_state.velocity_snapshot()
+    if not getattr(cfg.policy, "velocity", False) or not velocities:
+        return None
+    return smooth_velocity(np.array(velocities))[-1].tolist()
 
 
 def _gripper_torque_level(shared_state: RTCSharedState, cfg) -> int:

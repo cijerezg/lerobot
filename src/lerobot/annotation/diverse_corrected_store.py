@@ -46,14 +46,14 @@ and video payloads.  Root/store metadata and unrelated sidecar rows are copied.
 Examples::
 
     uv run python -m lerobot.annotation.diverse_corrected_store \
-      --source-root outputs/diverse_robot_dataset_v3 \
-      --out-root outputs/diverse_robot_dataset_v3_audit1 \
-      --fix-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes --dry-run
+      --source-root outputs/data/diverse_robot_dataset_v3 \
+      --out-root outputs/data/diverse_robot_dataset_v3_audit1 \
+      --fix-dir outputs/annotation/passes/diverse_annotation_audit_<date>/fixes --dry-run
 
     uv run python -m lerobot.annotation.diverse_corrected_store \
-      --source-root outputs/diverse_robot_dataset_v3 \
-      --out-root outputs/diverse_robot_dataset_v3_audit1 \
-      --fix-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes
+      --source-root outputs/data/diverse_robot_dataset_v3 \
+      --out-root outputs/data/diverse_robot_dataset_v3_audit1 \
+      --fix-dir outputs/annotation/passes/diverse_annotation_audit_<date>/fixes
 """
 
 from __future__ import annotations

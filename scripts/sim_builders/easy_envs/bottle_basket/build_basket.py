@@ -1,5 +1,5 @@
 """Build the brown seagrass basket asset and the bottle_basket scene.
-Textures: real wrist-camera crops of the basket (outputs/rebot_teleop_2026-10-21-cut-v1 ep 0 frames 6000/6030).
+Textures: real wrist-camera crops of the basket (outputs/data/rebot_teleop_2026-10-21-cut-v1 ep 0 frames 6000/6030).
 Dimensions: wrist depth back-projection (measure_basket.py): rim 0.30 x 0.25 m outside, 0.21 m tall, rim rope ~0.025 m.
 Run from the workspace root:  uv run python lerobot/scripts/sim_builders/easy_envs/bottle_basket/build_basket.py
 Writes scenes/assets/photoreal/basket/*, scenes/bottle_basket/{scene.xml,objects.json,background_top.png}.
@@ -44,7 +44,7 @@ f6030 = cv2.imread(str(REF / "wrist_frame_6030.png"))
 # outer wall seen frontally at close range: ep 0 frame 1020 (34.0 s). Quad aligned with the rope rows (bottom edge of the
 # wall from (80,214) to (380,117)); its metric size comes from the D405 depth sidecar at the quad corners.
 f1020 = cv2.imread(str(REF / "wrist_frame_1020.png"))
-dep = cv2.imread(str(WS / "outputs/rebot_teleop_2026-10-21-cut-v1/depth/wrist.depth/episode-000000/frame-001020.png"), cv2.IMREAD_UNCHANGED).astype(np.float64) * 1e-4
+dep = cv2.imread(str(WS / "outputs/data/rebot_teleop_2026-10-21-cut-v1/depth/wrist.depth/episode-000000/frame-001020.png"), cv2.IMREAD_UNCHANGED).astype(np.float64) * 1e-4
 quad = [[52, 110], [352, 13], [377, 108], [77, 205]]  # inset from the wall/table edge
 FX, CX, CY = 394.9832, 322.5604, 238.6966
 def p3(u, v):
@@ -54,7 +54,7 @@ patch_w_m = float((np.linalg.norm(c3[1] - c3[0]) + np.linalg.norm(c3[2] - c3[3])
 PW, PH = 480, int(round(480 * patch_h_m / patch_w_m))
 patch = flatten_light(crop(f1020, quad, (PW, PH)), sigma=40)
 mean_bgr = patch.reshape(-1, 3).mean(0)
-json.dump({"weave": {"source": "outputs/rebot_teleop_2026-10-21-cut-v1 wrist ep0 frame 1020 (outer wall, frontal), metric size from the depth sidecar",
+json.dump({"weave": {"source": "outputs/data/rebot_teleop_2026-10-21-cut-v1 wrist ep0 frame 1020 (outer wall, frontal), metric size from the depth sidecar",
                      "quad": quad, "patch_m": [patch_w_m, patch_h_m],
                      "mean_bgr": mean_bgr.tolist()},
            "rim": {"source": "wrist ep0 frame 6030 near rim", "quad": [[130, 282], [600, 278], [600, 326], [130, 330]]}},

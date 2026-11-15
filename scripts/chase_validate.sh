@@ -7,8 +7,8 @@
 # Checkpoints that land while a pass is in flight are marked skipped, not queued: the point
 # is that the DGX is always working on the freshest weights, never on a backlog.
 #
-#   lerobot/scripts/chase_validate.sh outputs/molmoact2_rebot_diverse_speed_v1
-#   setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> > /dev/null 2>&1 &
+#   lerobot/scripts/chase_validate.sh outputs/runs/molmoact2_rebot_diverse_speed_v1
+#   setsid nohup lerobot/scripts/chase_validate.sh outputs/runs/<run> > /dev/null 2>&1 &
 #
 # The newest checkpoint is read from the step directories themselves, not from
 # checkpoints/last. A directory counts as complete only once its byte size stops changing,

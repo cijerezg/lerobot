@@ -61,7 +61,7 @@ def sheet(recs, path):
 
 
 def main():
-    recs = S.diverse("outputs/diverse_robot_dataset_v3/corpus", "diverse") + S.diverse("outputs/diverse_robot_dataset_v3/fmb", "fmb")
+    recs = S.diverse("outputs/data/diverse_robot_dataset_v3/corpus", "diverse") + S.diverse("outputs/data/diverse_robot_dataset_v3/fmb", "fmb")
     for r in recs: r["approach_deg"] = angle_for(r); r["group"] = r["sub_source"] if r["sub_source"] in ("droid", "droid_success", "molmoact", "fmb") else r["embodiment"]
     with open(OUT / "diverse_angles.jsonl", "w") as f:
         for r in recs: f.write(json.dumps({k: v for k, v in r.items() if not k.startswith("_")}) + "\n")

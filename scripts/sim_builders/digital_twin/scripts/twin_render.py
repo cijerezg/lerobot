@@ -4,7 +4,7 @@ Run from the LeRobot root: MUJOCO_GL=egl uv run python lerobot/scripts/sim_build
 import sys, pathlib, numpy as np, cv2, mujoco, pandas as pd, av
 sys.path.insert(0, "lerobot/src"); from lerobot.probes.action_trace_sim import to_qpos
 ROOT = pathlib.Path("lerobot/scripts/sim_builders/digital_twin"); OUT = ROOT / "twin" / "renders"; OUT.mkdir(parents=True, exist_ok=True)
-DS = pathlib.Path("outputs/rebot_teleop_2026-10-29-cut-v1"); frames = [int(f) for f in sys.argv[1:]] or [0, 300, 2400]
+DS = pathlib.Path("outputs/data/rebot_teleop_2026-10-29-cut-v1"); frames = [int(f) for f in sys.argv[1:]] or [0, 300, 2400]
 states = np.stack(pd.read_parquet(DS / "data/chunk-000/file-000.parquet", columns=["observation.state"])["observation.state"].to_numpy())
 def label(im, t):
     cv2.putText(im, t, (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3); cv2.putText(im, t, (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1); return im

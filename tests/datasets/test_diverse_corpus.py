@@ -434,7 +434,7 @@ def test_alignment_check_catches_a_one_frame_shift(tmp_path: Path, monkeypatch) 
 # and skip when the data is not present.
 # --------------------------------------------------------------------------------------
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/data/diverse_robot_dataset"
 
 
 def _federated():

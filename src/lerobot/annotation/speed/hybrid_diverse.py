@@ -1,6 +1,6 @@
 """Hybrid motion+duration speed labels (the adopted method) for a diverse corpus root.
 
-    DIVERSE_DATASET_ROOT=outputs/diverse_robot_dataset_v3 uv run python -m lerobot.annotation.speed.hybrid_diverse
+    DIVERSE_DATASET_ROOT=outputs/data/diverse_robot_dataset_v3 uv run python -m lerobot.annotation.speed.hybrid_diverse
 
 Same arithmetic as the first hybrid pass (v6, the 2026-09-08 atoms pass), without the
 v4 -> v5 -> v6 chain: the motion pools are fit here from the training atoms of this root, the
@@ -24,7 +24,7 @@ from lerobot.annotation.speed import hybrid_motion_speed as hybrid
 from lerobot.annotation.speed import joint_motion_speed as motion
 from lerobot.annotation.speed import speed_annotate as speed
 
-DATA = Path(os.environ.get("DIVERSE_DATASET_ROOT", "outputs/diverse_robot_dataset_v3"))
+DATA = Path(os.environ.get("DIVERSE_DATASET_ROOT", "outputs/data/diverse_robot_dataset_v3"))
 REF = Path(os.environ.get("SPEED_HYBRID_REF", "outputs/stats/speed_reference_hybrid_motion_duration_v1_diverse-v3.json"))
 SIDE = "speed_atoms_hybrid_v1.jsonl"
 RUNS = "speed_runs_hybrid_v1.jsonl"

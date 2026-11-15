@@ -1,7 +1,7 @@
 # Diverse real-robot production dataset
 
-Training data lives under `outputs/diverse_robot_dataset/` — `corpus/` and `fmb/`, data only.
-Staging, review, logs, and provenance live under `outputs/diverse_robot_dataset_build/`. Pilot
+Training data lives under `outputs/data/diverse_robot_dataset/` — `corpus/` and `fmb/`, data only.
+Staging, review, logs, and provenance live under `outputs/data/diverse_robot_dataset_build/`. Pilot
 outputs are evidence and test fixtures only; they are not part of the training set.
 The plan of record is `DIVERSE_ROBOT_DATASET.md` at the workspace root.
 The label folder `migration/diverse_quality_mistake_labels/` named below and in the scripts is no longer on disk (2026-11-13).
@@ -70,7 +70,7 @@ Read the corpus with `lerobot.datasets.diverse_corpus`:
 ```python
 from lerobot.datasets.diverse_corpus import DiverseCorpus
 
-corpus = DiverseCorpus("outputs/diverse_robot_dataset/corpus")
+corpus = DiverseCorpus("outputs/data/diverse_robot_dataset/corpus")
 actor = corpus.actor_sample(corpus.actor_anchors(split="train")[0])
 critic = corpus.critic_sample(corpus.critic_intervals(split="train")[0], action_points=32)
 ```
@@ -107,8 +107,8 @@ intervals were visually reviewed. Every interval is complete, uninterrupted,
 and critic-eligible. Quality and mistake supervision follows the ReBot contract
 of rubric v1 (2026-08-02, git `ef8f2dbb2:pi07_wiki/annotation_rubric.md`;
 superseded by `annotation/rubrics/quality_mistake_rubric_v2.md`), using
-`outputs/rebot_val-annotated-v3` and
-`outputs/rebot_shirts_bin-annotated-v2` as golden schema examples: quality is
+`outputs/data/rebot_val-annotated-v3` and
+`outputs/data/rebot_shirts_bin-annotated-v2` as golden schema examples: quality is
 one integer constant over a complete primitive interval, while a mistake is a
 boolean only over the frames of a discrete visible failure event. Formal outcome
 and recovery remain unused and unknown.
@@ -127,7 +127,7 @@ train/validation/test splits at source-episode level.
 # Validate the production-wide ReBot-compatible quality/mistake artifact.
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/annotate_fmb_critic.py \
-  --review-root outputs/diverse_robot_dataset_build/fmb/production/review \
+  --review-root outputs/data/diverse_robot_dataset_build/fmb/production/review \
   --labels migration/diverse_quality_mistake_labels/fmb_production_quality_mistakes.json \
   validate
 
@@ -140,18 +140,18 @@ train/validation/test splits at source-episode level.
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py acquire
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
-  --review-root outputs/diverse_robot_dataset_build/fmb/production/review convert
+  --review-root outputs/data/diverse_robot_dataset_build/fmb/production/review convert
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py views
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py annotate-depth-events
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
-  --review-root outputs/diverse_robot_dataset_build/fmb/production/review validate
+  --review-root outputs/data/diverse_robot_dataset_build/fmb/production/review validate
 ```
 
 The validated corpus lives at
-`outputs/diverse_robot_dataset/fmb/`. Its `episodes/`
+`outputs/data/diverse_robot_dataset/fmb/`. Its `episodes/`
 directories are the single source-native collection. Each episode stores the
 complete native `actions`, primitive labels, original timestep indices,
 nominal-grid timestamps, low-dimensional observations, side-1/side-2/wrist-1
@@ -195,7 +195,7 @@ never assigned labels. The flagged executions were geometry-dependent or slow
 but direct; no correction, retry, failed close, slip, drop, knock, or wrong
 target was visible. The production label artifact is
 `migration/diverse_quality_mistake_labels/fmb_production_quality_mistakes.json`, and the 100 applied review files are in
-`outputs/diverse_robot_dataset_build/fmb/production/review/`.
+`outputs/data/diverse_robot_dataset_build/fmb/production/review/`.
 
 Depth remains source-native D405 Z16 `uint16`. Zero and 65,535 are invalid.
 Metric interpretation is 0.1 mm per valid level with provenance
@@ -218,15 +218,15 @@ Use the common and FMB stores as one logical corpus without copying either:
 from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 
 corpus = FederatedDiverseCorpus(
-    "outputs/diverse_robot_dataset/corpus",
-    "outputs/diverse_robot_dataset/fmb",
+    "outputs/data/diverse_robot_dataset/corpus",
+    "outputs/data/diverse_robot_dataset/fmb",
 )
 actor_rows = corpus.actor_anchors(split="train")
 critic_rows = corpus.critic_intervals(split="train")
 ```
 
 The refreshed unified ledger is
-`outputs/diverse_robot_dataset_build/provenance/unified_coverage_ledger.json`. At the comparable
+`outputs/data/diverse_robot_dataset_build/provenance/unified_coverage_ledger.json`. At the comparable
 5 Hz stride it records 304 episodes, 247,067 unique synchronized timesteps,
 40,507 retained actor rows, and 843 critic-eligible intervals. FMB also retains
 its separate 14,892-row 10 Hz actor index. All indexes reference the original
@@ -241,21 +241,21 @@ source-native primitive intervals were model-reviewed under the ReBot rubric; th
 label artifact is `migration/diverse_quality_mistake_labels/fmb_multi_production_quality_mistakes.json` (275 quality 5, 3 quality 4,
 1 quality 3, 1 quality 2 with a single `knock` event; one interval critic-ineligible).
 Review files applied at conversion live in
-`outputs/diverse_robot_dataset_v2_build/fmb_multi/review_completed/`.
+`outputs/data/diverse_robot_dataset_v2_build/fmb_multi/review_completed/`.
 
 ```bash
 # Convert with the completed reviews into a fresh store, validate, then union with v1.
 .venv/bin/python lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
   --manifest lerobot/examples/dataset/diverse_robot_dataset/fmb_multi_production.json \
-  --review-root outputs/diverse_robot_dataset_v2_build/fmb_multi/review_completed \
-  --raw-root outputs/diverse_robot_dataset_v2_build/fmb_multi/staging \
-  --output-root outputs/diverse_robot_dataset_v2_build/fmb_multi/store_reviewed \
+  --review-root outputs/data/diverse_robot_dataset_v2_build/fmb_multi/review_completed \
+  --raw-root outputs/data/diverse_robot_dataset_v2_build/fmb_multi/staging \
+  --output-root outputs/data/diverse_robot_dataset_v2_build/fmb_multi/store_reviewed \
   --labels migration/diverse_quality_mistake_labels/fmb_multi_production_quality_mistakes.json \
   convert   # then: validate
 .venv/bin/python lerobot/examples/dataset/diverse_robot_dataset/fmb_merge_stores.py \
-  --into outputs/diverse_robot_dataset_v2/fmb \
-  --store outputs/diverse_robot_dataset/fmb \
-  --store outputs/diverse_robot_dataset_v2_build/fmb_multi/store_reviewed
+  --into outputs/data/diverse_robot_dataset_v2/fmb \
+  --store outputs/data/diverse_robot_dataset/fmb \
+  --store outputs/data/diverse_robot_dataset_v2_build/fmb_multi/store_reviewed
 ```
 
 The union store hardlinks both episode collections (no array copies), concatenates
@@ -286,8 +286,8 @@ Run one task component end to end. Acquisition is the only networked step:
 uv run --no-project --python .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/acquire_robochallenge.py \
   --task item_classification \
-  --downloads-root outputs/diverse_robot_dataset_build/robochallenge/staging/downloads \
-  --raw-root outputs/diverse_robot_dataset_build/robochallenge/staging/raw
+  --downloads-root outputs/data/diverse_robot_dataset_build/robochallenge/staging/downloads \
+  --raw-root outputs/data/diverse_robot_dataset_build/robochallenge/staging/raw
 
 # Steps 3-4: nominate 15 candidates and render review proxies.
 uv run --no-project --python .venv/bin/python \
@@ -308,7 +308,7 @@ quota; the realized balance is recorded under `robot_balance` in
 unless the validation report passes.
 
 Validated annotation JSON files feed the converter and extractor. Accepted episodes are
-ingested into the source-native corpus at `outputs/diverse_robot_dataset/corpus/`. The old
+ingested into the source-native corpus at `outputs/data/diverse_robot_dataset/corpus/`. The old
 packed per-task components under `robochallenge/datasets/` were deleted on 2026-09-01.
 
 ## DROID Failure and DROID Success
@@ -333,14 +333,14 @@ component is therefore roughly 10-12 GB.
 # summarize all 13,747 source episodes against their commanded-action traces.
 uv run --no-project --python .venv/bin/python -m lerobot.scripts.lerobot_diverse_pilot \
   --config lerobot/examples/dataset/diverse_robot_dataset/droid_sources.json \
-  --metadata-root outputs/diverse_robot_dataset_build/droid/metadata \
-  --output-root outputs/diverse_robot_dataset_build/droid audit
+  --metadata-root outputs/data/diverse_robot_dataset_build/droid/metadata \
+  --output-root outputs/data/diverse_robot_dataset_build/droid audit
 
 uv run --no-project --python .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_droid.py scan \
-  --metadata-root outputs/diverse_robot_dataset_build/droid/metadata/droid_failure \
-  --staging-root outputs/diverse_robot_dataset_build/droid/staging \
-  --output outputs/diverse_robot_dataset_build/droid/review/episode_scan.json
+  --metadata-root outputs/data/diverse_robot_dataset_build/droid/metadata/droid_failure \
+  --staging-root outputs/data/diverse_robot_dataset_build/droid/staging \
+  --output outputs/data/diverse_robot_dataset_build/droid/review/episode_scan.json
 
 # Per component: nominate 24, download only their payload, render review sheets.
 uv run --no-project --python .venv/bin/python \
@@ -401,6 +401,6 @@ uv run --no-project --python .venv/bin/python \
 ```
 
 Cross-source coverage accounting is `build_corpus.py ledger`, which writes
-`outputs/diverse_robot_dataset_build/provenance/unified_coverage_ledger.json`. The older
+`outputs/data/diverse_robot_dataset_build/provenance/unified_coverage_ledger.json`. The older
 per-component `coverage_ledger.py` was removed on 2026-09-01: it read the packed
 `datasets/` components that no longer exist, and its output was superseded.

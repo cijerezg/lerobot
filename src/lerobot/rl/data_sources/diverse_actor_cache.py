@@ -843,8 +843,8 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     parser = argparse.ArgumentParser(description="Build the diverse actor memmap cache.")
-    parser.add_argument("--root", default="outputs/diverse_robot_dataset")
-    parser.add_argument("--cache-dir", default="outputs/buffer_cache-diverse")
+    parser.add_argument("--root", default="outputs/data/diverse_robot_dataset")
+    parser.add_argument("--cache-dir", default="outputs/cache/buffer_cache-diverse")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(

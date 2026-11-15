@@ -19,7 +19,7 @@ from scipy.ndimage import gaussian_filter1d, median_filter
 ARM = 6  # joints 0-5; the gripper is left alone
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--roots", nargs="+", default=["outputs/rebot_2026-10-28-annotated-v1"])
+parser.add_argument("--roots", nargs="+", default=["outputs/data/rebot_2026-10-28-annotated-v1"])
 parser.add_argument("--n", type=int, default=3)
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--min_frames", type=int, default=1000)

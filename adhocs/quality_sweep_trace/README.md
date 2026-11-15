@@ -12,8 +12,8 @@ paths of the Action Inspector's 3D scene next to the demonstration.
 ## Run
 
     uv run python lerobot/adhocs/quality_sweep_trace/run_quality_sweep_trace.py --config_path=config_rl_validate.yaml \
-        --policy.pretrained_path=outputs/rebot-corr10-nodepth-b128-20261111/checkpoints/002000/pretrained_model \
-        --out_dir=outputs/quality_sweep_trace/corr10-ckpt2000_2026-11-13
+        --policy.pretrained_path=outputs/runs/rebot-corr10-nodepth-b128-20261111/checkpoints/002000/pretrained_model \
+        --out_dir=outputs/analysis/quality_sweep_trace/corr10-ckpt2000_2026-11-13
 
 Flags: `--episodes=0,1,7,8` (val episodes; each needs grasp / move / release as its first three segments),
 `--seed=0` (the flow-noise draw shared by the five prompts). About 15 s for 16 anchors.

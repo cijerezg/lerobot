@@ -4,24 +4,24 @@ You are one reviewer of one batch. Workspace `/home/user/Documents/Research/RL/L
 Python command is `uv run python ...` from that root; never install anything; never run git.
 
 ## Read first
-1. `outputs/_annotation/diverse_v2_expansion_review/REVIEW_PROTOCOL.md` (the rubric; binding).
+1. `outputs/annotation/diverse_v2_expansion_review/REVIEW_PROTOCOL.md` (the rubric; binding).
 2. `lerobot/examples/dataset/diverse_robot_dataset/molmoact_review/write_household_batch5.py` (the exact
    decision format you will write) and `batch_writer.py` (the assertions your file must pass).
 
 ## Your inputs
-- `outputs/_annotation/diverse_v3_review/<component>/batches.json`: index `<N>` is your list of
+- `outputs/annotation/diverse_v3_review/<component>/batches.json`: index `<N>` is your list of
   episode indices (18-19 episodes).
-- Sheets: `outputs/_annotation/diverse_v3_review/<component>/episode_XXXXXX.{primary,secondary,wrist}.jpg`
+- Sheets: `outputs/annotation/diverse_v3_review/<component>/episode_XXXXXX.{primary,secondary,wrist}.jpg`
   (1600x988, 12 tiles each with `t=` stamps, header = episode index, duration, camera, instruction).
   Read ALL THREE sheets of EVERY episode with the Read tool before deciding. Never grade a sheet
   you did not read.
 
 ## Supplemental sheets (render them yourself whenever the 12 tiles leave the outcome open)
     uv run python lerobot/examples/dataset/diverse_robot_dataset/molmoact_review/render_terminal.py --component <component> --episodes E1 E2 [--seconds 2] [--end-s T]
-        -> outputs/_annotation/diverse_v3_review/<component>/terminal_claude/episode_XXXXXX.{primary,secondary,wrist}.terminal.jpg
+        -> outputs/annotation/diverse_v3_review/<component>/terminal_claude/episode_XXXXXX.{primary,secondary,wrist}.terminal.jpg
            (12 samples over the last 2 s of every camera, including the last source frame; decides release / placement)
     uv run python lerobot/examples/dataset/diverse_robot_dataset/molmoact_review/render_dense.py --component <component> --episode E --camera <primary|secondary|wrist> --start A --end B --stride 0.25 [--tile-width 500]
-        -> outputs/_annotation/diverse_v3_review/<component>/dense_claude/episode_XXXXXX.dense.<camera>.<A>-<B>s.jpg
+        -> outputs/annotation/diverse_v3_review/<component>/dense_claude/episode_XXXXXX.dense.<camera>.<A>-<B>s.jpg
            (--tile-width 500 for knobs, levers, switches, small objects; several pages if > 12 tiles)
 Read every supplemental sheet you render, cite it in `evidence` ("dense secondary 6.9-7.8 s ...",
 "terminal wrist 11.3-13.3 s ...") and list it in `extra_sheets` (path relative to the component
@@ -65,10 +65,10 @@ the batch-5 pattern (`D[ep] = dict(...)` per episode, then `write_batch('<compon
 docstring "<Component> v3 batch <N> (batches.json index <N>). Reviewer <your agent label>'s
 explicit visual decisions, 2026-09-19." Then run it:
     uv run python lerobot/examples/dataset/diverse_robot_dataset/molmoact_review/write_<component>_batch<N>.py
-It writes `outputs/_annotation/diverse_v3_review/<component>/verdicts_batch<N>.json` and prints
+It writes `outputs/annotation/diverse_v3_review/<component>/verdicts_batch<N>.json` and prints
 the summary; it refuses to overwrite, so if it fails on an assertion fix the script and rerun
 (delete only the verdicts_batch<N>.json YOUR run created, never any other file). Do not write
-into `outputs/_annotation/diverse_v2_expansion_review/`, `outputs/diverse_robot_dataset*`, or any
+into `outputs/annotation/diverse_v2_expansion_review/`, `outputs/data/diverse_robot_dataset*`, or any
 other file.
 
 ## Report back

@@ -1,6 +1,6 @@
 # Digital twin, first assembly (2026-10-29)
 
-Reference: `outputs/rebot_teleop_2026-10-29-cut-v1` ep 0, frame 0 (`room/renders/real_top_f0.png`). Table frame as in `room/ROOM_REPORT.md`:
+Reference: `outputs/data/rebot_teleop_2026-10-29-cut-v1` ep 0, frame 0 (`room/renders/real_top_f0.png`). Table frame as in `room/ROOM_REPORT.md`:
 robot base at the origin, desk top z = 0, x toward the far edge / top camera, y to the image right of the top view.
 
 Files (all under `twin/`): `scene_twin.xml` (room + robot + aligned `ext` camera + 9 free bodies), `assets/{bits_kit,pill_bottle,pump_bottle}/`

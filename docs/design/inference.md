@@ -85,9 +85,11 @@ assembles the same clauses as training, with the steering defaults:
 | embodiment | `The robot is {a/an} {name}.` — rollouts render it from `cfg.env.robot.type` (`rebot_b601_follower` aliases to `Rebot B601`); offline batches from `embodiment_index` (unknown/-1 = no clause). ReBot training rows carry NO clause (`RoleAlignedBuffer` stamps `action_layout_id` only), so the hardware prompt's sentence is one the model never saw on ReBot frames — `probes/embodiment_swap.py` measures that gap |
 | control mode | `The control mode is joint space.` / `... end-effector space.` — read from `ACTION_LAYOUTS[action_layout_id].control_mode` (diverse v3, 2026-09-19); the rollout path stamps `action_layout_id` from `diverse.rebot_layout` (`probes.utils.identity_columns`), so deployment renders **joint** with no flag of its own; opens the ReBot prompt |
 | subtask | latest HL decode (absent until the first decode) |
+| velocity | `The current velocity of the robot is <state tokens>.` — one token per joint from the last 5 control steps' `{joint}.vel` (`policy.velocity`, [memory_prompts.md §1.1](memory_prompts.md)); absent when the checkpoint's processor has no velocity range or the env gives no velocities |
 | gripper torque | `The gripper torque is {n} of {levels}.` — level of the last 4 control steps' gripper torque (`policy.gripper_torque`, [memory_prompts.md §1.1](memory_prompts.md)); absent when `levels` is 0 or the env gives no `gripper.torque` |
 | metadata | `{quality: 5, mistake: false}` — π0.7 "prompt for the best" |
 | history | live deque windows (when `memory.history_keys` set) |
+| switched off | clauses named in `policy.prompt_clauses_off` render in neither training nor inference ([memory_prompts.md §1.1](memory_prompts.md)) |
 | advantage | `inference_advantage` — **null under skip_critic** (clause absent; a hardcoded 1.0 would be out-of-distribution against advantage-free training) |
 | summary | generation prompt only, never the action prompt |
 
@@ -130,8 +132,8 @@ state-matched frame of another episode (the scene intervention) and a random oth
 frame. Standalone on the val set, one `output_dir` for every checkpoint so the viewer's
 Trends page lines them up:
 `.venv/bin/python -m lerobot.probes.input_swap --config config_rl.yaml
---policy.pretrained_path=<ckpt>/pretrained_model --val_dataset_path=outputs/rebot_val-annotated-v4
---probe_parameters.output_dir=outputs/probe_runs/<name>` (omit `pretrained_path` for the
+--policy.pretrained_path=<ckpt>/pretrained_model --val_dataset_path=outputs/data/rebot_val-annotated-v4
+--probe_parameters.output_dir=outputs/runs/<run>/probes/<name>` (omit `pretrained_path` for the
 untrained init; it lands in `step_00000000`).
 Hand-picked mode (2026-09-05): `--pairs=anchor:donor,...` runs the cube on chosen frames
 only and writes `input_swap_pairs/trace.html`, an action-inspector dashboard of every pair

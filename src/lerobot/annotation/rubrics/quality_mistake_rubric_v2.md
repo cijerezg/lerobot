@@ -622,19 +622,19 @@ validation. v1 labels are a starting point to check, not something to keep.
 
 | dataset | root | episodes | units | hours | step classes | v1 mistakes |
 |---|---|---|---|---|---|---|
-| rebot_all | `outputs/rebot_all-annotated-v2` | 90 | 1,197 segments | 2.89 | 79 | 177 |
-| additions | `outputs/rebot_cache_ready_2026-09-25/main_additions_train` | 24 | 114 | 0.24 | 35 | 11 |
-| bits + book | `outputs/rebot_bits-book-annotated-v1` | 10 | 169 | 0.65 | 10 | 15 |
-| external | `outputs/rebot_cache_ready_2026-09-25/external_rebot_train` | 240 | 1,077 | 1.75 | 135 | 20 |
-| validation | `outputs/rebot_cache_ready_2026-09-25/validation_all` | 8 | 92 | 0.18 | 48 | 7 |
+| rebot_all | `outputs/data/rebot_all-annotated-v2` | 90 | 1,197 segments | 2.89 | 79 | 177 |
+| additions | `outputs/data/rebot_cache_ready_2026-09-25/main_additions_train` | 24 | 114 | 0.24 | 35 | 11 |
+| bits + book | `outputs/data/rebot_bits-book-annotated-v1` | 10 | 169 | 0.65 | 10 | 15 |
+| external | `outputs/data/rebot_cache_ready_2026-09-25/external_rebot_train` | 240 | 1,077 | 1.75 | 135 | 20 |
+| validation | `outputs/data/rebot_cache_ready_2026-09-25/validation_all` | 8 | 92 | 0.18 | 48 | 7 |
 | **ReBot total** | | **372** | **2,649** | **5.72** | | **230** |
-| DROID | `outputs/diverse_robot_dataset_v3/corpus` | 50 | 328 atoms | 0.41 | 157 | 34 |
+| DROID | `outputs/data/diverse_robot_dataset_v3/corpus` | 50 | 328 atoms | 0.41 | 157 | 34 |
 | DROID success | same | 70 | 535 | 0.51 | 260 | 44 |
 | MolmoAct | same | 417 | 1,200 | 1.31 | 392 | 11 |
 | RoboChallenge | same | 200 | 1,489 | 2.42 | 118 | 5 |
 | UR7e | same | 4 | 55 | 0.07 | 10 | 0 |
 | YAM | same | 8 | 36 | 0.05 | 8 | 0 |
-| FMB | `outputs/diverse_robot_dataset_v3/fmb` | 160 | 801 | 0.93 | 6 | 1 |
+| FMB | `outputs/data/diverse_robot_dataset_v3/fmb` | 160 | 801 | 0.93 | 6 | 1 |
 | **diverse total** | | **909** | **4,444** | **5.70** | | **95** |
 | **all** | | **1,281** | **7,093** | **11.4** | | **325** |
 
@@ -742,7 +742,7 @@ Draft-4 wording: read "v2 base 5" as an `exemplary` stretch, "4" as no stretch, 
 
 ### 8.6 Rollout pilot 2026-10-06 (user verdicts)
 
-The user watched three annotated policy rollouts (`outputs/rebot_rollouts_2026-10-05-cut-v1` ep 1, 6, 9, on review videos). Frames are episode-local and approximate (read off the
+The user watched three annotated policy rollouts (`outputs/data/rebot_rollouts_2026-10-05-cut-v1` ep 1, 6, 9, on review videos). Frames are episode-local and approximate (read off the
 video clock). "graded" is what the pilot wrote.
 
 | case | what happens | graded | user |

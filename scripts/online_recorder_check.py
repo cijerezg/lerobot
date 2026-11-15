@@ -57,7 +57,7 @@ rec.add_frame(raw_obs(t), torch.zeros(8), is_intervention=False, subtask_index=-
 rec.finalize()  # saves it as episode 2, truncated
 
 info = json.load(open(root / "meta/info.json"))
-ref = json.load(open("outputs/rebot_socks_basket-annotated-v2/meta/info.json"))
+ref = json.load(open("outputs/data/rebot_socks_basket-annotated-v2/meta/info.json"))
 schema = lambda i: {k: (v["dtype"], list(v["shape"]), v.get("names")) for k, v in i["features"].items()}
 assert schema(info) == schema(ref), (schema(info), schema(ref))
 assert info["robot_type"] == ref["robot_type"] and info["fps"] == 30

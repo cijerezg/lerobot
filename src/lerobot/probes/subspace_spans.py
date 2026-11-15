@@ -66,7 +66,7 @@ Use ``--report_only`` to rebuild from existing CSVs and caches without recomputi
 layer's measurements. This mode never runs model inference.
 
     uv run python -m lerobot.probes.subspace_spans \\
-        --cache_dir outputs/<run>/validation/step_<n>/conditions_matrix/cache
+        --cache_dir outputs/runs/<run>/validation/step_<n>/conditions_matrix/cache
 """
 
 from __future__ import annotations

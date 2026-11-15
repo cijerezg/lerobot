@@ -33,7 +33,7 @@ from lerobot.scripts.diverse_smoke import (  # noqa: E402
 from lerobot.types import TransitionKey  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
 
-BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/MolmoAct2"
+BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/models/MolmoAct2"
 ROLE_KEYS = [f"{OBS_IMAGES}.external_0", f"{OBS_IMAGES}.wrist_0"]
 TASK = "put the sock in the basket"
 

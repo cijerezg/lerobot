@@ -4,7 +4,7 @@
     uv run python -m lerobot.annotation.atoms.agent_check check --episode E
     uv run python -m lerobot.annotation.atoms.agent_check status
 
-A review is outputs/_annotation/subtask_atoms_review/agent_reviews/<episode_id>.json, the
+A review is outputs/annotation/subtask_atoms_review/agent_reviews/<episode_id>.json, the
 same shape as a manual override:
 
 {"episode_id": E, "reviewer": "Claude visual review", "images": [sheet paths read],

@@ -1,7 +1,7 @@
 # Appearance pass (2026-10-30)
 
 Scope: desk colour, lights, wall and floor of the digital twin, tested on a copy (`scene_test.xml`), never on `scene_twin.xml`.
-Reference frames: `outputs/rebot_teleop_2026-10-29-cut-v1` ep 0, top f0 (desk), wrist f0 (wall), wrist f2400 (floor).
+Reference frames: `outputs/data/rebot_teleop_2026-10-29-cut-v1` ep 0, top f0 (desk), wrist f0 (wall), wrist f2400 (floor).
 Scripts (run from the LeRobot root): `scripts/appear_fit.py` (real patch statistics -> `fit_real.json`, patches drawn in
 `fit_patches.jpg`), `scripts/appear_calibrate.py` (build `scene_test.xml` + `room_test.xml`, render, segment, fit, `--before`,
 `--iters N`, `--no-update`, `--compose`, `--mult`). Colour statistics are trimmed (luminance 25th..95th percentile) on both sides;

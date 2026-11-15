@@ -6,6 +6,7 @@ training config and the roots themselves. Writes lerobot/dataset_info/DATA.md (o
 Sources: `dataset.sources` (ReBot roots and their episode_groups), `diverse.rebot_group_weights` (shares),
 `diverse.rebot_exclusions_manifest` and `diverse.diverse_exclusions_manifest` (usefulness cuts: frames whose action targets are never drawn), `diverse.root`
 (corpus/ and fmb/ episodes.jsonl minus holdout_episodes.json and excluded_episodes.json), `val_dataset_path`.
+With `diverse.enabled: false` each source is one group (all its episodes) and its share is its weight over the sum of the weights.
 Roots built but not yet in the config are listed in lerobot/dataset_info/pending.yaml (`- root: ..., note: ...`).
 Also writes lerobot/dataset_info/SUBTASKS.md: every subtask string in the sampled ReBot episodes (meta/episode_metadata.parquet).
 """
@@ -22,6 +23,7 @@ import yaml
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
+HOME = ("return to home", "return home")  # v1 roots / v2 roots
 
 
 def episode_lengths(root):
@@ -55,6 +57,7 @@ FAMILIES = {
     "floss": r"\bfloss\b",
     "can": r"\bcan\b",
     "deck of cards": r"deck of cards",
+    "tube": r"\btube\b",
 }
 STOP = r"\b(?:to|in|into|on|onto|off|next|over|down|upright|out|from|back|toward|away|near\w*|farther|farthest|left|right|between|with|lying|apart|under|hanging|of|at|and|flat|open)\b"
 
@@ -64,7 +67,7 @@ DEST = r"\b(?:to|in|into|on|onto|off|next|over|down|upright|out|from|back|toward
 def subtask_object(subtask):
     """(family, variant) of a subtask string, or None for "return to home". Variant = the noun phrase that names the object."""
     rest = subtask.split(" ", 1)[1] if " " in subtask else ""
-    if subtask == "return to home" or not rest:
+    if subtask in HOME or not rest:
         return None
     rest = re.sub(r"^(?:out|up)\s", "", rest)  # "shake out the towel", "line up the ends"
     head_part = re.split(DEST, rest)[0]  # the object phrase, before any destination
@@ -79,15 +82,19 @@ def subtask_object(subtask):
     return phrase, phrase
 
 
+def source_groups(source, lengths):
+    return source.get("episode_groups") or {source["name"]: sorted(lengths)}
+
+
 def subtask_tables(cfg, shares):
     """Segments and object grasp cycles in the sampled ReBot episodes. A cycle = a run of consecutive segments of one
-    episode on the same object family, split at each fresh grasp (grasp -> move -> release = 1, back-to-back regrasps = 1,
+    episode on the same object family, split at each fresh grasp (grasp -> move -> release = 1, approach -> grasp -> move -> insert = 1, back-to-back regrasps = 1,
     nine bits in a row = 9, each bit kit flap = 1)."""
     seg = defaultdict(lambda: [0, set(), 0, 0, 0])  # subtask -> segments, episodes, frames, internal, external
     obj = defaultdict(lambda: [0, set(), 0, 0, 0, defaultdict(int)])  # family -> cycles, episodes, frames, int, ext, variants
     for s in cfg["dataset"]["sources"]:
         meta = pd.read_parquet(WORKSPACE / s["root"] / "meta/episode_metadata.parquet")
-        for g, eps in s["episode_groups"].items():
+        for g, eps in source_groups(s, meta.episode_index.unique()).items():
             if not shares.get(g, 0):
                 continue
             col = 3 if g != "external_rebot" else 4
@@ -105,7 +112,7 @@ def subtask_tables(cfg, shares):
                         prev = None
                         continue
                     y = obj[o[0]]
-                    grasp = r.subtask.startswith("grasp ")
+                    grasp = r.subtask.startswith(("grasp ", "approach "))  # an approach opens the cycle its grasp belongs to
                     if o[0] != prev or (grasp and not prev_grasp):
                         y[0] += 1
                         y[col] += 1
@@ -141,7 +148,11 @@ def main():
     ap.add_argument("--config", default="config_rl.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load((WORKSPACE / args.config).read_text())
+    diverse_on = cfg["diverse"].get("enabled")
     shares = cfg["diverse"]["rebot_group_weights"]
+    if not diverse_on:
+        total = sum(s["weight"] for s in cfg["dataset"]["sources"])
+        shares = {s["name"]: s["weight"] / total for s in cfg["dataset"]["sources"]}
     manifest = cfg["diverse"].get("rebot_exclusions_manifest")
     cut = defaultdict(int)  # (root, episode) -> excluded frames
     if manifest:
@@ -153,7 +164,7 @@ def main():
     for s in cfg["dataset"]["sources"]:
         lengths = episode_lengths(WORKSPACE / s["root"])
         per = {}
-        for g, eps in s["episode_groups"].items():
+        for g, eps in source_groups(s, lengths).items():
             frames = sum(lengths[e] for e in eps)
             usable = frames - sum(cut[(s["root"], e)] for e in eps)
             per[g] = (len(eps), frames)
@@ -164,18 +175,18 @@ def main():
         src_rows.append((s["name"], s["root"], len(lengths), sum(lengths.values()), sampled, per))
 
     rebot_share = sum(v for g, v in shares.items() if g in group)
-    diverse_share = cfg["diverse"]["weight"] if cfg["diverse"].get("enabled") else 0
+    diverse_share = cfg["diverse"]["weight"] if diverse_on else 0
     div_manifest = cfg["diverse"].get("diverse_exclusions_manifest")
     cut_s = defaultdict(float)  # episode_id -> excluded seconds
     if div_manifest:
         for x in json.loads((WORKSPACE / div_manifest).read_text())["exclusions"]:
             cut_s[x["episode_id"]] += x["to_s"] - x["from_s"]
-    div, n_skip = diverse_rows(WORKSPACE / cfg["diverse"]["root"], cut_s)
+    div, n_skip = diverse_rows(WORKSPACE / cfg["diverse"]["root"], cut_s) if diverse_on else ({}, 0)
 
     out = [f"# Data record\n\nGenerated {datetime.now():%Y-%m-%d %H:%M} by `uv run python lerobot/dataset_info/data_count.py` from "
            f"`{args.config}`. Do not edit by hand; rerun after every change to the data or the config.\n"]
     out.append("## Training mix by sampling group\n\nShare = fraction of all training samples. Usable = frames minus the usefulness cuts "
-               f"(`{manifest}`; rule: `lerobot/src/lerobot/annotation/rubrics/usefulness_review_rubric.md`). ReBot hours at 30 fps.\n")
+               f"(`{manifest or 'no manifest'}`; rule: `lerobot/src/lerobot/annotation/rubrics/usefulness_review_rubric.md`). ReBot hours at 30 fps.\n")
     out.append("| group | share | episodes | frames | usable frames | hours |\n|---|---|---|---|---|---|")
     for g, (n, f, u) in sorted(group.items(), key=lambda kv: -shares.get(kv[0], 0)):
         out.append(f"| {g} | {shares.get(g, 0):.4g} | {n} | {f:,} | {u:,} | {hours(f)} |")
@@ -183,7 +194,7 @@ def main():
     out.append(f"| **ReBot sampled** | **{rebot_share:.4g}** | **{tot[0]}** | **{tot[1]:,}** | **{tot[2]:,}** | **{hours(tot[1])}** |")
     dn, df, ds = (sum(v[i] for v in div.values()) for i in range(3))
     dc = sum(v[3] for v in div.values())
-    out.append(f"| diverse corpus | {diverse_share:.4g} | {dn} | {df:,} | | {ds / 3600:.2f} (usable {(ds - dc) / 3600:.2f}) |\n")
+    out.append(f"| diverse corpus | {diverse_share:.4g} | {dn} | {df:,} | | {ds / 3600:.2f} (usable {(ds - dc) / 3600:.2f}) |\n" if diverse_on else "\nDiverse corpus: off.\n")
 
     out.append("## ReBot roots in the config\n\n| source | root | episodes | frames | hours | sampled eps | groups (episodes / frames) |\n|---|---|---|---|---|---|---|")
     for name, root, n, f, sampled, per in src_rows:
@@ -192,15 +203,18 @@ def main():
     n_all, f_all = sum(r[2] for r in src_rows), sum(r[3] for r in src_rows)
     out.append(f"| **total** | | **{n_all}** | **{f_all:,}** | **{hours(f_all)}** | | |\n")
 
-    out.append(f"## Diverse corpus\n\n`{cfg['diverse']['root']}`: corpus/ + fmb/ episodes, minus {n_skip} holdout or excluded episodes "
-               f"(anchor-level retention not counted). Hours from each episode's duration; usable = minus `{div_manifest}`.\n")
-    out.append("| source | episodes | frames | hours | usable hours |\n|---|---|---|---|---|")
-    out += [f"| {k} | {n} | {f:,} | {s / 3600:.2f} | {(s - c) / 3600:.2f} |" for k, (n, f, s, c) in div.items()]
+    if diverse_on:
+        out.append(f"## Diverse corpus\n\n`{cfg['diverse']['root']}`: corpus/ + fmb/ episodes, minus {n_skip} holdout or excluded episodes "
+                   f"(anchor-level retention not counted). Hours from each episode's duration; usable = minus `{div_manifest}`.\n")
+        out.append("| source | episodes | frames | hours | usable hours |\n|---|---|---|---|---|")
+        out += [f"| {k} | {n} | {f:,} | {s / 3600:.2f} | {(s - c) / 3600:.2f} |" for k, (n, f, s, c) in div.items()]
 
     val = cfg.get("val_dataset_path")
     if val:
         lengths = episode_lengths(WORKSPACE / val)
         out.append(f"\n## Validation\n\n`{val}`: {len(lengths)} episodes, {sum(lengths.values()):,} frames, {hours(sum(lengths.values()))} h.")
+    else:
+        out.append("\n## Validation\n\nNone (`val_dataset_path: null`).")
 
     pending = yaml.safe_load((HERE / "pending.yaml").read_text()) if (HERE / "pending.yaml").is_file() else None
     out.append("\n## Built, not in the config\n\nFrom `lerobot/dataset_info/pending.yaml`.\n")
@@ -223,7 +237,7 @@ def main():
         out.append(f"| {k} | {n} | {i} | {x} | {len(eps)} | {f:,} | {hours(f)} | {v} |")
     verbs = defaultdict(lambda: [0, 0])
     for k, (n, _, f, _, _) in seg.items():
-        v = "return to home" if k == "return to home" else k.split(" ")[0]
+        v = k if k in HOME else k.split(" ")[0]
         verbs[v][0] += n
         verbs[v][1] += f
     out.append("\n## Subtasks by verb (sampled ReBot episodes)\n\n| verb | segments | frames | hours |\n|---|---|---|---|")

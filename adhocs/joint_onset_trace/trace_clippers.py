@@ -3,8 +3,8 @@
 the stock probe sends only quality/mistake/speed, so its prompt lacks those two clauses. Everything else is the stock probe.
 
     uv run python lerobot/adhocs/joint_onset_trace/trace_clippers.py --config config_rl.yaml \
-        --dataset.root outputs/rebot_rollouts_2026-10-17-probe-v1 \
-        --probe_parameters.output_dir outputs/probe_runs/<name> \
+        --dataset.root outputs/data/rebot_rollouts_2026-10-17-probe-v1 \
+        --probe_parameters.output_dir outputs/runs/<run>/probes/<step>/<name> \
         --probe_parameters.trace_n_samples 16 \
         --probe_parameters.trace_frames "$(cat lerobot/adhocs/joint_onset_trace/reach_anchors.txt)"
 """

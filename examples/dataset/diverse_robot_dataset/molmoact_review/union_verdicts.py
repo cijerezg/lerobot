@@ -2,7 +2,7 @@
 
     uv run python lerobot/examples/dataset/diverse_robot_dataset/molmoact_review/union_verdicts.py household ['{"<episode>": {<patch>}}']
 
-Writes outputs/_annotation/diverse_v3_review/<component>/verdicts_v3.json (the v3 round alone, same checks as
+Writes outputs/annotation/diverse_v3_review/<component>/verdicts_v3.json (the v3 round alone, same checks as
 merge_verdicts.py: full coverage of the v3 candidates, unsure -> reject, events only with quality <= 2) and
 verdicts_union.json (every v2 record verbatim plus the v3 records, each stamped `round`), which is what
 `prepare_molmoact.py finalize --verdicts` takes. Refuses when any union candidate lacks a verdict.
@@ -12,9 +12,9 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[5]
-REVIEW = ROOT / 'outputs/_annotation/diverse_v3_review'
-V2_VERDICTS = {'household': ROOT / 'outputs/_annotation/diverse_v2_expansion_review/household/verdicts.json',
-               'tabletop': ROOT / 'outputs/diverse_robot_dataset_v3_build/molmoact/review/tabletop/verdicts.json'}
+REVIEW = ROOT / 'outputs/annotation/diverse_v3_review'
+V2_VERDICTS = {'household': ROOT / 'outputs/annotation/diverse_v2_expansion_review/household/verdicts.json',
+               'tabletop': ROOT / 'outputs/data/diverse_robot_dataset_v3_build/molmoact/review/tabletop/verdicts.json'}
 KINDS = {'failed_close', 'slip', 'drop', 'knock', 'wrong_target'}
 REVIEW_DATE = '2026-09-19'
 BASIS = 'three 12-tile contact sheets per episode (two external + wrist), model review under the ReBot rubric, unclear = reject'

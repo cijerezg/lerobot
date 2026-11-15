@@ -138,12 +138,12 @@ def sheet(rows, path):
 
 # ---------------------------------------------------------------- specs
 ROOTS = {
-    "own": "outputs/rebot_all-annotated-v1", "bottle": "outputs/bottle_grasping-train-annotated-v2",
-    "bits": "outputs/rebot_bits-annotated-v2", "pushbook": "outputs/rebot_push-book-annotated-v1",
-    "model": "outputs/rebot_rollouts-annotated-v2", "model20": "outputs/rebot_inference_2026-09-20-v1",
+    "own": "outputs/data/rebot_all-annotated-v1", "bottle": "outputs/data/bottle_grasping-train-annotated-v2",
+    "bits": "outputs/data/rebot_bits-annotated-v2", "pushbook": "outputs/data/rebot_push-book-annotated-v1",
+    "model": "outputs/data/rebot_rollouts-annotated-v2", "model20": "outputs/data/rebot_inference_2026-09-20-v1",
 }
-EXT = {p.split("/")[-1].split("-annotated")[0]: p for p in sorted(glob.glob("outputs/rebot_public_annotated_v1/*/*"))}
-DIV = "outputs/diverse_robot_dataset_v3/corpus"; FMB = "outputs/diverse_robot_dataset_v3/fmb"
+EXT = {p.split("/")[-1].split("-annotated")[0]: p for p in sorted(glob.glob("outputs/data/rebot_public_annotated_v1/*/*"))}
+DIV = "outputs/data/diverse_robot_dataset_v3/corpus"; FMB = "outputs/data/diverse_robot_dataset_v3/fmb"
 
 # spec row: (group, source_key, subtask regex, n, filter) ; filter: None | ("angle>=",45) | ("angle<",45) | ("sub_source", "molmoact")
 SPECS = [

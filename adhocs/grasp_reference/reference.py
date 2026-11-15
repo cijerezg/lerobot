@@ -29,7 +29,7 @@ from lerobot.datasets.video_utils import decode_video_frames
 from lerobot.rl.offline_dataset_utils import split_segments_by_quality_spans
 
 CONFIG = Path("config_rl.yaml")
-OUT = Path("outputs/grasp_reference")
+OUT = Path("outputs/analysis/grasp_reference")
 SECOND = 30
 
 

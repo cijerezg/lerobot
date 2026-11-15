@@ -27,6 +27,7 @@ disabled by default and is independent of the history enable switch.
 The task is to {task}.
 [ The current step is {subtask}. ]                                   ← HL subtask
 The current state of the robot is <state_start><state_k>…<state_end>.    ← discrete digit tokens (02 §4.1)
+[ The current velocity of the robot is <state_start><state_k>×J<state_end>. ]  ← motor velocity tokens
 [ The gripper torque is {n} of {levels}. ]                           ← gripper torque level
 [ The recent states of the robot, oldest to newest, are: <T_h continuous positions> ]  ← proprio history (§2.4)
 [ The quality is {q} of 5. ] [ The robot made {a mistake | no mistakes}. ]     ← metadata
@@ -48,6 +49,28 @@ sample) and cut into `levels` equal-width levels between `low` and `high` (N*m, 
 from the last 4 control steps (`RTCSharedState.gripper_torques`). Level 0 means no reading
 (roots without the effort column, the diverse corpus) and renders no clause. The clause
 has no training dropout: the robot reads the torque at inference. `levels: 0` turns it off.
+
+Velocity clause (`policy.velocity: true`, `utils/motor_velocity.py`): `observation.velocity`
+(all joints, deg/s) is smoothed with a causal weighted mean of the last 5 frames (0.25 on the
+newest, then 0.25, 0.2, 0.15, 0.15; an episode's first frames repeat its first sample) and
+rendered exactly as the state: scaled to [-1, 1] between q01 and q99 per joint, clipped, and
+written as the 256 `<state_k>` tokens inside `<state_start>` / `<state_end>`, in the dataset's
+joint order. q01 / q99 are those of the velocity column in the dataset stats, pooled over the
+roots that have the column (`pool_lowdim_stats`). The trainer pins them in the pack step
+(`velocity_low` / `velocity_high`), so they are saved with the checkpoint's processor and
+inference needs no numbers in the config; a checkpoint saved without them renders no clause.
+The learner smooths per episode at buffer load (complementary column `motor_velocity`,
+[frames, joints]), the actor over the last 5 control steps (`RTCSharedState.velocities`, the
+env's `{joint}.vel` readings in motor order). NaN means no reading (roots without the column,
+the diverse corpus) and renders no clause. No training dropout, no loss of its own.
+
+Clauses switched off (`policy.prompt_clauses_off`, 2026-11-14): a list from `control_mode`,
+`quality`, `mistake`, `speed`, `precision`, `contact`. The pack step drops the named
+clauses from every prompt, training and inference alike; the data columns stay (the
+future-visual loss still reads the mistake flag). Empty renders all of them, the prompt of
+every checkpoint trained before 2026-11-14. Runs from 2026-11-14 on use
+`[control_mode, quality, mistake, precision, contact]`, which leaves speed as the only
+metadata clause.
 
 The pretraining-era setup/control clauses ("The setup is `<setup_start>…`",
 "The expected control mode is …") were **removed 2026-07-22** — they existed to
@@ -301,7 +324,7 @@ Registered in the validation loop (each runs only when its enable flag is set):
 | `mem_temporal_attention` | when and where is history read? | past-attention mass against the uniform-over-time baseline $T/(T+1)$ of the temporal softmax; enrichment ~1 means no selective read survives |
 | `subtask_sweep` | does the subtask clause move the actions at all? | vocabulary spread over a same-clause seed floor; this was P3 of the plan doc, and it gates every claim that memory reaches behaviour |
 | `subtask_scene_sweep` | does the clause move the actions when every label offered is plausible for the scene? | the same sweep on hand-reviewed empty-handed frames (a reach before its close, or return to home) with only `grasp <class>` for classes on the table with one instance plus `return to home`, and the absent classes as a control population on the same frame. Separations $S_p$ / $S_g$ (object-only) / $S_a$ over the seed floor; displacement off the true-label chunk by group (other present object, home, absent) in seed-floor units; normalized GT rank; FK target agreement $\Delta(X)$ = extra approach toward object $X$ when named, against a reseed null, with $p_X$ = tool position at $X$'s next close. Frame list from `scripts/probes/subtask_scene_sweep_frames.py` (scene inventory is hand-written: `the dark shirt` excluded as ambiguous, multi-instance classes skipped). Added 2026-09-13 (`probes/subtask_scene_sweep.py`) |
-| `precision_contact_sweep` | do the precision and contact clauses move the chunk in the second before the gripper commits, with only plausible alternatives offered? | `metadata_steering` swept both clauses (until 2026-10-26, when it dropped them) on evenly sampled frames, mostly transport, where the true precision is 1 and the true contact is "not applicable" and a one-second chunk should not change; its null is the right answer there, not evidence. This probe runs on hand-reviewed pre-commit frames (1.0 / 0.5 / 0.2 s before the last close of a grasp or the first open of a release; `scripts/probes/precision_contact_sweep_frames.py`, lists in `dataset_info/manifests/`, sheets in `outputs/probe_frames/`) with the deployment prompt plus the frame's TRUE precision and contact as the reference, and changes one sentence at a time: the precision ramp 1-5, the contact codes plausible for the object (top vs side pinch on a bottle, cloth vs top pinch on a shirt, set-down vs drop over a bin; hand table in the builder) and two control codes implausible everywhere (strike, pour). Readouts: displacement off the truthful chunk in seed-floor units ($D_p$, $D_{pl}$, $D_{ctl}$; plausible $\approx$ control = lexical read), the precision ramp's projection + Kendall $\tau$ and range, and three FK readouts against the reseed null: approach angle side minus top pinch (rubric definition, 0 top-down / 90 horizontal), release height set-down minus drop, end-effector path length $L(p_5)/L(p_1)$. Never scored against the demonstration. Added 2026-10-05 (`probes/precision_contact_sweep.py`) |
+| `precision_contact_sweep` | do the precision and contact clauses move the chunk in the second before the gripper commits, with only plausible alternatives offered? | `metadata_steering` swept both clauses (until 2026-10-26, when it dropped them) on evenly sampled frames, mostly transport, where the true precision is 1 and the true contact is "not applicable" and a one-second chunk should not change; its null is the right answer there, not evidence. This probe runs on hand-reviewed pre-commit frames (1.0 / 0.5 / 0.2 s before the last close of a grasp or the first open of a release; `scripts/probes/precision_contact_sweep_frames.py`, lists in `dataset_info/manifests/`, sheets in `outputs/analysis/probe_frames/`) with the deployment prompt plus the frame's TRUE precision and contact as the reference, and changes one sentence at a time: the precision ramp 1-5, the contact codes plausible for the object (top vs side pinch on a bottle, cloth vs top pinch on a shirt, set-down vs drop over a bin; hand table in the builder) and two control codes implausible everywhere (strike, pour). Readouts: displacement off the truthful chunk in seed-floor units ($D_p$, $D_{pl}$, $D_{ctl}$; plausible $\approx$ control = lexical read), the precision ramp's projection + Kendall $\tau$ and range, and three FK readouts against the reseed null: approach angle side minus top pinch (rubric definition, 0 top-down / 90 horizontal), release height set-down minus drop, end-effector path length $L(p_5)/L(p_1)$. Never scored against the demonstration. Added 2026-10-05 (`probes/precision_contact_sweep.py`) |
 | `input_swap` | which input stream does the chunk follow — state, images, subtask text, past states or past images? | $2^k$ cube per anchor over the switches named in `probe_parameters.input_swap_factors` (since 2026-11-05; default `state,image,subtask` = the S/I/T cube of every earlier run, the live configs use `state,image,state_history,image_history` = S/I/P/H so the memory slot's past images and past states each get a switch; a history without a switch of its own rides with the stream it remembers, as since 2026-09-24, and depth history stays the anchor's): each switch taken from the anchor or from a donor frame, all $2^k$ cells in one stacked forward at one flow seed; depth, the task string and metadata stay the anchor's. Donors are `same_episode` (≥4 s away), `matched` (nearest state in another episode — scene changes, pose roughly does not) and `random`. Readouts are per-cell displacement distributions with the three donors side by side, the cube's variance shares, the state-only cell's absolute shift over the state shift, and the policy's all-donor displacement against the demonstrations' own gap over the same pairs. Added 2026-09-05 (`probes/input_swap.py`); `--pairs=anchor:donor,...` runs chosen pairs only and writes an action-inspector dashboard (`trace.html`) of every pair, also written for the full run's nine example pairs |
 
 The rest of [archive/memory_probes_plan.md](../archive/memory_probes_plan.md) (retired

@@ -8,9 +8,9 @@ are read-only; normalized files are written to a fresh directory.
 Usage::
 
     uv run python -m lerobot.annotation.diverse_fix_normalizer \
-      --source-root outputs/diverse_robot_dataset_v3 \
-      --fix-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes/round1 \
-      --out-dir outputs/_annotation/passes/diverse_annotation_audit_<date>/fixes/round1_normalized \
+      --source-root outputs/data/diverse_robot_dataset_v3 \
+      --fix-dir outputs/annotation/passes/diverse_annotation_audit_<date>/fixes/round1 \
+      --out-dir outputs/annotation/passes/diverse_annotation_audit_<date>/fixes/round1_normalized \
       --dry-run
 """
 

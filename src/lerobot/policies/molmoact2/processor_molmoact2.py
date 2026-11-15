@@ -47,6 +47,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.import_utils import require_package
+from lerobot.utils.motor_velocity import VELOCITY_KEY
 
 from .action_layout import (
     JOINT_SLOTS,
@@ -304,6 +305,7 @@ def _build_robot_text(
     history_ages_seconds=(6.0, 4.0, 2.0),
     gripper_torque_level: int = 0,
     gripper_torque_levels: int = 0,
+    velocity_string: str = "",
 ) -> str:
     """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
 
@@ -348,7 +350,11 @@ def _build_robot_text(
     gripper_torque_level: the smoothed gripper torque as a level 1..gripper_torque_levels
     (utils/gripper_torque.py), rendered right after the state clause. 0 omits it (a
     source without the reading; byte-identical legacy prompt). No training dropout:
-    the robot reads it at inference."""
+    the robot reads it at inference.
+
+    velocity_string: the smoothed motor velocities as state tokens, one per joint
+    (_extract_velocity_strings, utils/motor_velocity.py), rendered right after the state
+    clause. Empty omits it, like the torque clause; no training dropout either."""
     embodiment_clause = (
         f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
     )
@@ -363,6 +369,7 @@ def _build_robot_text(
         if gripper_torque_level > 0
         else ""
     )
+    velocity_clause = f" The current velocity of the robot is {velocity_string}." if velocity_string else ""
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
     depth_clause = (
         f" The depth of the scene is {DEPTH_TOKEN * num_depth_tokens}." if num_depth_tokens > 0 else ""
@@ -390,7 +397,7 @@ def _build_robot_text(
             metadata_clause += f" The contact is {contact_phrase_for(int(metadata['contact']))}."
     prompt = (
         f"{embodiment_clause}{control_mode_clause}The task is to {task}."
-        f"{depth_clause}{subtask_clause}{state_clause}{gripper_torque_clause}"
+        f"{depth_clause}{subtask_clause}{state_clause}{velocity_clause}{gripper_torque_clause}"
         f"{history_clause}{history_images_clause}"
         f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
@@ -1379,9 +1386,17 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     subtask_names: list[str] = field(default_factory=list)
     subtask_dropout: float = 0.0
     metadata_dropout: float = 0.0
+    # Clauses left out of every prompt, training and inference
+    # (MolmoAct2Config.prompt_clauses_off): control_mode and the metadata keys.
+    prompt_clauses_off: list[str] = field(default_factory=list)
     # Gripper torque clause: number of levels the complementary column
     # "gripper_torque_level" counts in (GripperTorqueConfig.levels); 0 = clause off.
     gripper_torque_levels: int = 0
+    # Velocity clause: q01 / q99 of the training data's velocity per joint in deg/s, the
+    # range the state tokens divide, as for the state. Pinned here so a checkpoint carries
+    # it; empty = clause off.
+    velocity_low: list[float] = field(default_factory=list)
+    velocity_high: list[float] = field(default_factory=list)
     # Embodiment clause vocabulary: index → prompt name, pinned into the saved config
     # so a checkpoint renders through the vocabulary it trained with even after
     # lerobot/datasets/embodiment.py grows new robots. No dropout knob on purpose —
@@ -1499,7 +1514,10 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "embodiment_names": list(self.embodiment_names),
             "subtask_dropout": self.subtask_dropout,
             "metadata_dropout": self.metadata_dropout,
+            "prompt_clauses_off": list(self.prompt_clauses_off),
             "gripper_torque_levels": self.gripper_torque_levels,
+            "velocity_low": list(self.velocity_low),
+            "velocity_high": list(self.velocity_high),
             "history_dropout": self.history_dropout,
             "history_stride_seconds": self.history_stride_seconds,
             "history_times_seconds": self.history_times_seconds,
@@ -1755,6 +1773,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
         control_modes = self._extract_control_modes(complementary, batch_size)
+        if "control_mode" in self.prompt_clauses_off:
+            control_modes = [None] * batch_size
         image_keys = self._resolve_image_keys(observation)
         history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
         slot_images = (
@@ -2051,6 +2071,21 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             return [0] * batch_size
         return torch.as_tensor(level).detach().cpu().reshape(-1).long().expand(batch_size).tolist()
 
+    def _extract_velocity_strings(self, complementary: dict, batch_size: int) -> list[str]:
+        velocity = complementary.get(VELOCITY_KEY)
+        if velocity is None or not self.velocity_low:
+            return [""] * batch_size
+        low = np.array(self.velocity_low)
+        high = np.array(self.velocity_high)
+        rows = torch.as_tensor(velocity).detach().cpu().double().numpy()
+        rows = np.broadcast_to(rows.reshape(-1, len(low)), (batch_size, len(low)))
+        # The state's QUANTILES scaling; a NaN row = no reading = no clause.
+        unit = 2.0 * (rows - low) / (high - low) - 1.0
+        return [
+            "" if np.isnan(row).any() else _build_discrete_state_string(row, self.num_state_tokens)
+            for row in unit
+        ]
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if self.prompt_mode == "subtask_generation":
             return self._pack_subtask_generation(transition)
@@ -2103,8 +2138,18 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
         control_modes = self._extract_control_modes(complementary, batch_size)
+        if "control_mode" in self.prompt_clauses_off:
+            control_modes = [None] * batch_size
         metadata_list = self._extract_metadata(complementary, batch_size)
+        if self.prompt_clauses_off:
+            metadata_list = [
+                None
+                if metadata is None
+                else {key: value for key, value in metadata.items() if key not in self.prompt_clauses_off}
+                for metadata in metadata_list
+            ]
         gripper_torque_level_list = self._extract_gripper_torque_levels(complementary, batch_size)
+        velocity_strings = self._extract_velocity_strings(complementary, batch_size)
         history_states = self._extract_history_states(complementary, batch_size)
         image_keys = self._resolve_image_keys(observation)
         history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
@@ -2177,6 +2222,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 metadata=metadata,
                 gripper_torque_level=gripper_torque_level_list[batch_idx],
                 gripper_torque_levels=self.gripper_torque_levels,
+                velocity_string=velocity_strings[batch_idx],
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -2553,6 +2599,7 @@ def make_molmoact2_pre_post_processors(
             env_action_dim=env_action_dim,
             subtask_dropout=config.subtask_dropout,
             metadata_dropout=config.metadata_dropout,
+            prompt_clauses_off=list(getattr(config, "prompt_clauses_off", [])),
             gripper_torque_levels=gripper_torque_levels,
             history_dropout=history_dropout,
             history_stride_seconds=config.history_stride_seconds,

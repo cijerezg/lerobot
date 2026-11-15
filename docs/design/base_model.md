@@ -4,7 +4,7 @@ The full parameter tables live in the in-tree reference
 [`policies/molmoact2/ARCHITECTURE.md`](../../src/lerobot/policies/molmoact2/ARCHITECTURE.md).
 That document was written against the released `allenai/MolmoAct2-SO100_101`
 checkpoint; the **current base is the multi-embodiment foundation checkpoint
-`allenai/MolmoAct2`** (at `outputs/MolmoAct2`), so treat its `config.json` as the
+`allenai/MolmoAct2`** (at `outputs/models/MolmoAct2`), so treat its `config.json` as the
 source of truth for exact dimensions. Its SO-101 frame-conversion section is
 obsolete (see "Embodiment" below). This page is the working summary plus the math
 that matters for pi07.

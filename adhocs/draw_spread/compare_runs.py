@@ -3,9 +3,9 @@ headline medians, train vs val, one color per run. Absolute units (normalized ac
 
     uv run python lerobot/adhocs/draw_spread/compare_runs.py <out_dir_for_comparison> <label>=<run_dir> [<label>=<run_dir> ...]
 e.g.
-    uv run python lerobot/adhocs/draw_spread/compare_runs.py outputs/draw_spread/compare_2026-11-07 \\
-        internal1200=outputs/draw_spread/internal1200_2026-11-07 mix40_1200=outputs/draw_spread/mix40_1026_1200_2026-11-07 \\
-        mix40_1800=outputs/draw_spread/mix40_resume600_2026-11-07
+    uv run python lerobot/adhocs/draw_spread/compare_runs.py outputs/analysis/draw_spread/compare_2026-11-07 \\
+        internal1200=outputs/analysis/draw_spread/internal1200_2026-11-07 mix40_1200=outputs/analysis/draw_spread/mix40_1026_1200_2026-11-07 \\
+        mix40_1800=outputs/analysis/draw_spread/mix40_resume600_2026-11-07
 """
 import os, sys
 import numpy as np, pandas as pd

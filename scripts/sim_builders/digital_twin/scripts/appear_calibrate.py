@@ -9,7 +9,7 @@ sys.path.insert(0, "lerobot/src"); from lerobot.probes.action_trace_sim import t
 ROOT = pathlib.Path("lerobot/scripts/sim_builders/digital_twin"); SRC = pathlib.Path("assets/sim_sources/digital_twin"); APP = ROOT / "twin/appearance"; TWIN = ROOT / "twin"
 SCENES = pathlib.Path("lerobot/src/lerobot/robots/rebot_b601_sim/scenes"); TEX0 = SCENES / "table_top.png"
 LAM = SRC / "downloads/textures/laminate_floor_02/laminate_floor_02_diff_1k.jpg"
-DS = pathlib.Path("outputs/rebot_teleop_2026-10-29-cut-v1"); FRAMES = [0, 300, 2400]
+DS = pathlib.Path("outputs/data/rebot_teleop_2026-10-29-cut-v1"); FRAMES = [0, 300, 2400]
 REAL = json.load(open(APP / "fit_real.json")); PARAMS = APP / "params.json"
 states = np.stack(pd.read_parquet(DS / "data/chunk-000/file-000.parquet", columns=["observation.state"])["observation.state"].to_numpy())
 iters = int(sys.argv[sys.argv.index("--iters") + 1]) if "--iters" in sys.argv else 1

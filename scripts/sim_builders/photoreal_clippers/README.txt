@@ -41,7 +41,7 @@ assets/provenance.json records the texture-source quadrilaterals and homographie
 assets/case_provenance.json records the case geometry assumptions.
 The clipper dimensions remain the existing 75 x 12 x 10 mm and 53 x 12 x 9 mm
 collision-box dimensions, previously fitted from the real wrist/depth data.
-Motion comes from outputs/rebot_2026-10-16-annotated-v1, episode 5 observation.state.
+Motion comes from outputs/data/rebot_2026-10-16-annotated-v1, episode 5 observation.state.
 
 What the comparison proves, and what it does not
 ----------------------------------------------
@@ -88,7 +88,7 @@ previews/ contains intermediate diagnostic renders, not the final comparison.
 Optional policy evaluation (not executed for this appearance experiment)
 ----------------------------------------------------------------------
   bash lerobot/scripts/sim_builders/photoreal_clippers/run_eval.sh \
-    outputs/<run>/checkpoints/<step>/pretrained_model nail_ep5
+    outputs/runs/<run>/checkpoints/<step>/pretrained_model nail_ep5
 
 The launcher runs one episode and writes under this experiment's policy_runs/.
 Pass nail_ep1, nail_ep2 or nail_ep3 to select another layout. It uses the same

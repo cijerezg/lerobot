@@ -62,7 +62,7 @@ def main():
     for r in renderers:r.close()
 
     # Actuator replay: both simulations get exactly the same targets at the original 30 Hz.
-    df=pd.read_parquet(WS/'outputs/rebot_2026-10-16-annotated-v1/data/chunk-000/file-005.parquet')
+    df=pd.read_parquet(WS/'outputs/data/rebot_2026-10-16-annotated-v1/data/chunk-000/file-005.parquet')
     states=np.stack(df[df.episode_index==5].sort_values('frame_index')['observation.state'].values)
     rr.init('Clipper appearance comparison',spawn=False);rr.save(str(ROOT/'comparison.rrd'))
     rr.send_blueprint(rrb.Blueprint(rrb.Grid(rrb.Spatial2DView(origin='before/top',name='Original top'),rrb.Spatial2DView(origin='after/top',name='Updated top'),rrb.Spatial2DView(origin='before/wrist',name='Original wrist'),rrb.Spatial2DView(origin='after/wrist',name='Updated wrist'),grid_columns=2)))
@@ -87,7 +87,7 @@ def main():
         if i in [start,334,500,668]:image_out(f'camera_replay_f{i:04d}.jpg',frame)
         if i%60==0:print('replay',i,'/',end,flush=True)
     vid.close();rr.disconnect()
-    result=dict(replay_frames=[start,end-1],fps=fps,source='outputs/rebot_2026-10-16-annotated-v1 episode 5 observation.state',max_qpos_difference=max_qpos_error,rgb_observation_ms_mean=[float(np.mean(x)) for x in render_ms],rgb_observation_ms_p95=[float(np.percentile(x,95)) for x in render_ms],note='Two 640x480 RGB cameras, including top composite; excludes depth and policy. No performance claim for concurrent training.')
+    result=dict(replay_frames=[start,end-1],fps=fps,source='outputs/data/rebot_2026-10-16-annotated-v1 episode 5 observation.state',max_qpos_difference=max_qpos_error,rgb_observation_ms_mean=[float(np.mean(x)) for x in render_ms],rgb_observation_ms_p95=[float(np.percentile(x,95)) for x in render_ms],note='Two 640x480 RGB cameras, including top composite; excludes depth and policy. No performance claim for concurrent training.')
     (ROOT/'replay_validation.json').write_text(json.dumps(result,indent=2))
     print(json.dumps(result),flush=True)
     for obj in pair:obj.disconnect()

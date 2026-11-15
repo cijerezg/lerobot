@@ -15,7 +15,7 @@ the adapter sits on one of its root ports.** Same adapter, same cable, same arm 
 controller (PCI `0000:10:00.3`, buses 003/004): zero loss.
 
 Evidence, all with `scripts/leader_bus_capture.py` (raw bytes of every burst saved as JSON in
-`outputs/leader_bus_capture_*.json`, re-analysable offline with `analyze --json`):
+`outputs/logs/leader_bus_capture_*.json`, re-analysable offline with `analyze --json`):
 
 | condition (7-servo sync burst, 33 ms cadence) | clean bursts |
 |---|---|

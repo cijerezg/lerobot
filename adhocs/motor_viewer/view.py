@@ -5,7 +5,7 @@ uv run python lerobot/adhocs/motor_viewer/view.py <dataset root> [--episode 0] [
 
 One HTML per episode plus the clip it plays (top and wrist views stacked into one H.264 file: one clock, no drift),
 then the first page opens in the browser. An existing clip is reused, so a second launch is immediate.
-"Velocity input" and "Histogram" show the velocity as the model would read it (4-frame causal mean, 256 levels).
+"Velocity input" and "Histogram" show the velocity as the model would read it (5-frame causal mean, 256 levels).
 The page only draws: no detection, no model of the torque (that is adhocs/torque_viewer). Needs the dataset columns
 ``observation.velocity`` / ``observation.effort``, so any root recorded since 2026-11-13 (lerobot_record or the
 online recorder).
@@ -20,6 +20,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from lerobot.utils.motor_velocity import smooth_velocity
 
 parser = argparse.ArgumentParser()
 parser.add_argument("root")
@@ -41,25 +43,28 @@ video_keys = sorted((k for k, ft in info["features"].items() if ft["dtype"] == "
 stem = root.parent.name if root.name == "inference_dataset" else root.name
 shown = [args.episode] if args.episode is not None else sorted(data.episode_index.unique().tolist())
 
-# Velocity as the model would read it: causal mean of the last 4 frames (newest first), then the rule of the state
-# tokens (q01 / q99 of the root -> [-1, 1], clip, 256 levels). The first frames of an episode repeat its first sample.
-WEIGHTS, LEVELS = [0.4, 0.3, 0.2, 0.1], 256
+# Velocity as the model reads it (utils/motor_velocity.py): causal mean of the last 5 frames, then the 256 state
+# tokens between q01 and q99 of the velocity column, as for the state. Here the range is this root's meta/stats.json;
+# a training run pools it over its roots.
+LEVELS = 256
+smooth_of = {
+    ep: smooth_velocity(np.stack(df.sort_values("frame_index")["observation.velocity"].to_numpy()).astype(np.float64))
+    for ep, df in data.groupby("episode_index")
+}
+all_smooth = np.concatenate(list(smooth_of.values()))
 velocity_stats = json.load(open(root / "meta/stats.json"))["observation.velocity"]
 q01, q99 = np.array(velocity_stats["q01"]), np.array(velocity_stats["q99"])
-smooth_of, level_of = {}, {}
-for ep, df in data.groupby("episode_index"):
-    velocity = np.stack(df.sort_values("frame_index")["observation.velocity"].to_numpy())
-    padded = np.concatenate([np.repeat(velocity[:1], 3, axis=0), velocity])
-    smooth_of[ep] = sum(w * padded[3 - k : len(padded) - k] for k, w in enumerate(WEIGHTS))
-    unit = np.clip((smooth_of[ep] - q01) / (q99 - q01) * 2 - 1, -1, 1)
-    level_of[ep] = np.rint((unit + 1) / 2 * (LEVELS - 1)).astype(int)
-all_smooth, all_levels = np.concatenate(list(smooth_of.values())), np.concatenate(list(level_of.values()))
+level_of = {
+    ep: np.rint(np.clip((smooth - q01) / (q99 - q01), 0.0, 1.0) * (LEVELS - 1)).astype(np.int64)
+    for ep, smooth in smooth_of.items()
+}
+all_levels = np.concatenate(list(level_of.values()))
 inputs = {
     joint: dict(q01=q01[j], q99=q99[j], hist=np.bincount(all_levels[:, j], minlength=LEVELS).tolist(),
                 clipped=float(((all_smooth[:, j] < q01[j]) | (all_smooth[:, j] > q99[j])).mean()))
     for j, joint in enumerate(joints)
 }
-print(f"velocity input, {len(all_levels)} frames: joint, q01, q99 (deg/s), deg/s per level, clipped, levels used, share in the fullest level")
+print(f"velocity input, {len(all_levels)} frames: joint, low, high (deg/s), deg/s per level, clipped, levels used, share in the fullest level")
 for joint, row in inputs.items():
     hist = np.array(row["hist"])
     print(f"  {joint:14s} {row['q01']:7.2f} {row['q99']:7.2f} {(row['q99'] - row['q01']) / (LEVELS - 1):6.3f} {row['clipped']:6.1%} "
@@ -190,7 +195,7 @@ function linesOf(joint, measure) {
 function strips() {
   if (state.mode === "input") {
     return D.joints.map(j => ({title: j.replace("_", " "), measure: "velocity", joint: j, input: D.input[j], lines: [
-      {values: D.series[j].velocity, kind: "raw", name: "raw"}, {values: D.series[j].input, kind: "main", name: "model input (last 4 frames 0.4 / 0.3 / 0.2 / 0.1, 256 levels, y axis = q01 to q99)"}]}));
+      {values: D.series[j].velocity, kind: "raw", name: "raw"}, {values: D.series[j].input, kind: "main", name: "model input (last 5 frames 0.25 / 0.25 / 0.2 / 0.15 / 0.15, 256 levels, y axis = their range)"}]}));
   }
   if (state.mode === "joint") { return Object.keys(MEASURES).map(m => ({title: MEASURES[m].label, measure: m, joint: state.joint, lines: linesOf(state.joint, m)})); }
   return D.joints.map(j => ({title: j.replace("_", " "), measure: state.measure, joint: j, lines: linesOf(j, state.measure)}));

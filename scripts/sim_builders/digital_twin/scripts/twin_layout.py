@@ -47,7 +47,7 @@ def unproject(u, v, h=0.0):
 def axis_angle(a, b, h):
     pa, pb = unproject(*a, h), unproject(*b, h); return float(np.degrees(np.arctan2(pb[1] - pa[1], pb[0] - pa[0])))
 
-layout = {"source_frame": "outputs/rebot_teleop_2026-10-29-cut-v1 ep0 frame 0, observation.images.top (640x480)",
+layout = {"source_frame": "outputs/data/rebot_teleop_2026-10-29-cut-v1 ep0 frame 0, observation.images.top (640x480)",
           "camera_used_for_unprojection": {"scene": CALIB, "pos": t.round(5).tolist(), "fovy": float(m.cam_fovy[cid]), "note": "calibrated webcam pose; the room scene's aligned ext camera is for rendering only"},
           "pixel_offset_real_minus_calibrated": OFFSET.tolist(), "table_frame": "robot base at the origin, z = 0 desk top, x toward the far edge / top camera, y to the image right", "objects": {}}
 for name, p in PICKS.items():

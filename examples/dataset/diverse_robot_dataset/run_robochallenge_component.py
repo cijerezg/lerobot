@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 PREPARE = Path(__file__).with_name("prepare_robochallenge.py")
 CONVERT = REPO_ROOT / "lerobot/examples/dataset/diverse_robot_pilot/convert_robochallenge.py"
 PILOT_CONFIG = REPO_ROOT / "lerobot/examples/dataset/diverse_robot_pilot/config.json"
-PILOT_METADATA_ROOT = REPO_ROOT / "outputs/diverse_robot_pilot/metadata"
+PILOT_METADATA_ROOT = REPO_ROOT / "outputs/data/diverse_robot_pilot/metadata"
 CANDIDATE_COUNT = 15
 ANCHOR_STRIDE_S = 2.0
 
@@ -199,7 +199,7 @@ def main() -> None:
     parser.add_argument(
         "--component-root",
         type=Path,
-        default=REPO_ROOT / "outputs/diverse_robot_dataset_build/robochallenge",
+        default=REPO_ROOT / "outputs/data/diverse_robot_dataset_build/robochallenge",
     )
     parser.add_argument(
         "--production-manifest",

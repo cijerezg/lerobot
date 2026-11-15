@@ -77,8 +77,8 @@ class ExplorerConfig(TrainRLServerPipelineConfig):
 
     explorer_roots: list[str] = field(
         default_factory=lambda: [
-            "outputs/rebot_training_mix_2026-10-04/validation_all",
-            "outputs/rebot_training_mix_2026-10-04/nonclothing_train",
+            "outputs/data/rebot_training_mix_2026-10-04/validation_all",
+            "outputs/data/rebot_training_mix_2026-10-04/nonclothing_train",
         ]
     )
     explorer_host: str = "127.0.0.1"

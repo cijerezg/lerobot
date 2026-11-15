@@ -17,14 +17,14 @@ cd /home/user/Documents/Research/RL/LeRobot
 
 uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-  --metadata-root outputs/diverse_robot_pilot/metadata \
-  --output-root outputs/diverse_robot_pilot/generated \
+  --metadata-root outputs/data/diverse_robot_pilot/metadata \
+  --output-root outputs/data/diverse_robot_pilot/generated \
   audit
 
 uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-  --metadata-root outputs/diverse_robot_pilot/metadata \
-  --output-root outputs/diverse_robot_pilot/generated \
+  --metadata-root outputs/data/diverse_robot_pilot/metadata \
+  --output-root outputs/data/diverse_robot_pilot/generated \
   nominate
 ```
 
@@ -34,8 +34,8 @@ admitted source without downloading them:
 ```bash
 uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-  --metadata-root outputs/diverse_robot_pilot/metadata \
-  --output-root outputs/diverse_robot_pilot/generated \
+  --metadata-root outputs/data/diverse_robot_pilot/metadata \
+  --output-root outputs/data/diverse_robot_pilot/generated \
   plan-download --source droid_success --episodes 9339 9298
 ```
 
@@ -55,18 +55,18 @@ change independently of the code.
 set -euo pipefail
 
 STAGE="/home/user/Documents/Research/RL/LeRobot/outputs/diverse_robot_pilot/staging"
-PILOT=outputs/diverse_robot_pilot/generated
+PILOT=outputs/data/diverse_robot_pilot/generated
 
 for SOURCE in ur7e_stack droid_success droid_failure; do
   uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
     --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-    --metadata-root outputs/diverse_robot_pilot/metadata \
+    --metadata-root outputs/data/diverse_robot_pilot/metadata \
     --output-root "$PILOT" \
     download --plan "$PILOT/download_plans/$SOURCE.json" --staging-root "$STAGE"
 
   uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
     --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-    --metadata-root outputs/diverse_robot_pilot/metadata \
+    --metadata-root outputs/data/diverse_robot_pilot/metadata \
     --output-root "$PILOT" \
     proxies --plan "$PILOT/download_plans/$SOURCE.json" \
     --staging-root "$STAGE" --proxy-root "$PILOT/review/$SOURCE"
@@ -102,10 +102,10 @@ Then write and validate the two-second multi-chunk dataset. This example is for
 DROID Success; repeat per source and use a distinct output repo id/root.
 
 ```bash
-ROOT="outputs/diverse_robot_pilot/datasets/droid-success-filtered"
+ROOT="outputs/data/diverse_robot_pilot/datasets/droid-success-filtered"
 uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-  --metadata-root outputs/diverse_robot_pilot/metadata \
+  --metadata-root outputs/data/diverse_robot_pilot/metadata \
   --output-root "$PILOT" \
   extract --source droid_success \
   --plan "$PILOT/download_plans/droid_success.json" \
@@ -114,7 +114,7 @@ uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
 
 uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-  --metadata-root outputs/diverse_robot_pilot/metadata \
+  --metadata-root outputs/data/diverse_robot_pilot/metadata \
   --output-root "$PILOT" \
   validate --dataset-root "$ROOT" --repo-id local/diverse-droid-success-filtered
 ```
@@ -128,9 +128,9 @@ deletes only manifest-listed staged files:
 ```bash
 uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-  --metadata-root outputs/diverse_robot_pilot/metadata --output-root "$PILOT" \
+  --metadata-root outputs/data/diverse_robot_pilot/metadata --output-root "$PILOT" \
   cleanup --plan "$PILOT/download_plans/droid_success.json" \
-  --staging-root "$STAGE" --dataset-root outputs/diverse_robot_pilot/datasets/droid-success-filtered \
+  --staging-root "$STAGE" --dataset-root outputs/data/diverse_robot_pilot/datasets/droid-success-filtered \
   --confirm-validated-output
 ```
 
@@ -144,8 +144,8 @@ Convert only reviewed raw episodes into a temporary local v3 source:
 
 ```bash
 uv run python lerobot/examples/dataset/diverse_robot_pilot/convert_robochallenge.py \
-  --raw-task-root outputs/diverse_robot_pilot/staging/robochallenge/shred_paper \
-  --dataset-root outputs/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source \
+  --raw-task-root outputs/data/diverse_robot_pilot/staging/robochallenge/shred_paper \
+  --dataset-root outputs/data/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source \
   --repo-id local/robochallenge-ur5-shred-paper-source --episodes 484 731
 ```
 
@@ -155,13 +155,13 @@ episode mapping. Pass the converted root explicitly to the standard extractor:
 ```bash
 uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
-  --metadata-root outputs/diverse_robot_pilot/metadata \
-  --output-root outputs/diverse_robot_pilot/generated \
+  --metadata-root outputs/data/diverse_robot_pilot/metadata \
+  --output-root outputs/data/diverse_robot_pilot/generated \
   extract --source robochallenge_raw \
-  --source-metadata-root outputs/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source \
-  --plan outputs/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source/meta/local_acquisition_manifest.json \
-  --staging-root outputs/diverse_robot_pilot/staging \
-  --annotations-root outputs/diverse_robot_pilot/generated/review/robochallenge_shred_paper \
-  --dataset-root outputs/diverse_robot_pilot/datasets/robochallenge-ur5-shred-paper-filtered \
+  --source-metadata-root outputs/data/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source \
+  --plan outputs/data/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source/meta/local_acquisition_manifest.json \
+  --staging-root outputs/data/diverse_robot_pilot/staging \
+  --annotations-root outputs/data/diverse_robot_pilot/generated/review/robochallenge_shred_paper \
+  --dataset-root outputs/data/diverse_robot_pilot/datasets/robochallenge-ur5-shred-paper-filtered \
   --repo-id local/diverse-robochallenge-ur5-shred-paper-filtered
 ```

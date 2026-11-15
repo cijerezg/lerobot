@@ -927,7 +927,7 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", default="outputs/diverse_robot_dataset")
+    parser.add_argument("--root", default="outputs/data/diverse_robot_dataset")
     parser.add_argument(
         "--check-samples",
         type=int,

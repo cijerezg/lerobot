@@ -348,7 +348,7 @@ class ProbeConfig:
     enable_embodiment_swap: bool = False  # "The robot is a ..." swapped: other names on ReBot frames, the ReBot name on diverse holdout frames (probes/embodiment_swap.py)
 
     # Common
-    output_dir: str = "outputs/probe"
+    output_dir: str = "outputs/analysis/probe"
     mode: str = "all"  # "collect" | "plot" | "all"
     max_episodes: int | None = 5
     n_frames_per_episode: int = 128

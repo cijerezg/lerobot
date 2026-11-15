@@ -41,7 +41,7 @@ from lerobot.datasets.diverse_actor_selection import (
     select_actor_anchors,
 )
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/data/diverse_robot_dataset_v3"
 
 
 def _corpus():

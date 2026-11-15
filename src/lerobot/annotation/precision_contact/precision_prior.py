@@ -86,13 +86,13 @@ if __name__ == "__main__":
     from lerobot.annotation.paths import WORKSPACE
 
     os.chdir(WORKSPACE)
-    HERE = Path("outputs/_annotation/precision_contact_annotation_2026-09-25")
+    HERE = Path("outputs/annotation/precision_contact_annotation_2026-09-25")
     counts = Counter()
     for l in open(HERE / "rows.jsonl"):
         d = json.loads(l)
         if d["verb"] not in ("move", "return"): counts[(d["root"], d["subtask"].lower(), d["verb"])] += 1
     for name in ("main_additions_train", "external_rebot_train", "validation_all"):
-        m = pd.read_parquet(f"outputs/rebot_cache_ready_2026-09-21/{name}/meta/episode_metadata.parquet", columns=["subtask"])
+        m = pd.read_parquet(f"outputs/data/rebot_cache_ready_2026-09-21/{name}/meta/episode_metadata.parquet", columns=["subtask"])
         for sub, n in m.subtask.str.lower().value_counts().items():
             if verb_of(sub) not in ("move", "return"): counts[(name, sub, verb_of(sub))] += int(n)
 

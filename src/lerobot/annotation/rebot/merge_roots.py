@@ -1,7 +1,7 @@
 """Merge finished ReBot roots (build_root + finalize + speed + gripper events) into one new root. Sources are read only.
 Never overwrites.
 
-    uv run python -m lerobot.annotation.rebot.merge_roots outputs/<root_a> outputs/<root_b> [...] --out outputs/<root>
+    uv run python -m lerobot.annotation.rebot.merge_roots outputs/data/<root_a> outputs/data/<root_b> [...] --out outputs/data/<root>
 
 Episodes keep their order (root by root). Videos, depth PNGs and gripper QA images are hardlinked (one data / video file
 per episode, renumbered); the data files are rewritten with episode, index and task offsets. Every meta table with an

@@ -1,6 +1,6 @@
 """New ReBot root whose policy actions have the chunk-seam steps blended out. The source is read only. Never overwrites.
 
-    uv run python -m lerobot.annotation.rebot.seam_repair_root outputs/<root> --out outputs/<new_root> [--cache_dir <dir>]
+    uv run python -m lerobot.annotation.rebot.seam_repair_root outputs/data/<root> --out outputs/data/<new_root> [--cache_dir <dir>]
 
 Rollouts recorded before the RTC window fix (2026-11-09) carry a one-frame step in the commanded action at every chunk
 handover, every ~16 frames; the arm low-passed it, the recorded action did not (lerobot/adhocs/joint_traces). Per arm

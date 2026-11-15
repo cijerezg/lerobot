@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 
 HERE = Path(__file__).parent
-ROOTS = {"oct07": "outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1",
-         "oct14": "outputs/rebot_2026-10-14-annotated-v4", "oct16": "outputs/rebot_2026-10-16-annotated-v1"}
+ROOTS = {"oct07": "outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1",
+         "oct14": "outputs/data/rebot_2026-10-14-annotated-v4", "oct16": "outputs/data/rebot_2026-10-16-annotated-v1"}
 GRASPS = {"oct07": [0], "oct14": [0, 2, 4, 10], "oct16": [3, 4, 5]}
 WINDOW_T0_MAX = {("oct16", 3): 80.0}  # only the first grasp of that episode
 STRIDE, FPS, THRESH = 3, 30, 10.0

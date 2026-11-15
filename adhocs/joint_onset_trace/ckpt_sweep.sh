@@ -2,8 +2,8 @@
 # Reach probe (robot run 0-8 s) + turn-onset probe (training frames) on every checkpoint 200..1400.
 # 001000 is already done (symlinked from the earlier runs); pass steps as arguments to run a subset.
 set -e
-RUN=outputs/rebot-stratified_sampling-20261016/checkpoints
-OUT=outputs/probe_runs/ckpt_sweep_2026-10-17
+RUN=outputs/runs/rebot-stratified_sampling-20261016/checkpoints
+OUT=outputs/analysis/ckpt_sweep_2026-10-17
 M=$(dirname "$0")
 STEPS=${@:-000200 000400 000600 000800 001200 001400}
 for step in $STEPS; do

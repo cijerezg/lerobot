@@ -8,7 +8,7 @@ of `src/lerobot/annotation/rubrics/correction_rubric.md`.
 
 - `reference.py table`: every `grasp ...` segment of the annotated internal roots in `config_rl.yaml` (external
   pool and correction roots left out) with a close event inside; tool pose by FK on the twin arm
-  (`annotation/corrections/arm.py`). Writes `outputs/grasp_reference/grasps.csv` and prints the per-object tables
+  (`annotation/corrections/arm.py`). Writes `outputs/analysis/grasp_reference/grasps.csv` and prints the per-object tables
   (median and quartiles) for grasps whose frames from 1 s before the close to the stall are all grade 4 or 5.
 - `reference.py frames`: wrist | top image at the stall of 3 lid and 3 kit-flap grasps drawn from `grasps.csv`.
 

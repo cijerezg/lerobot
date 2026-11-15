@@ -60,7 +60,7 @@ probe suite is on, plus held-out `val_loss_*` on 128 frames.
 3. **Decide the starting checkpoint.** `pretrained_path` currently points at
    `all-v5/checkpoints/001200`, which was trained through the FAST alphabet bug
    (4.2% of chunks scrambled under anchor encoding). Resuming from it inherits
-   whatever that taught; the alternative is restarting from `outputs/MolmoAct2`.
+   whatever that taught; the alternative is restarting from `outputs/models/MolmoAct2`.
 4. **Bump `offline_output_dir`** — it still reads `-v9`, and that directory already
    exists from the aborted run.
 5. The v6 memorization result (val/train flow 4.64x, FAST CE 2.97x, on an effective

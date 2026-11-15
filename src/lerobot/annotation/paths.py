@@ -2,7 +2,7 @@
 
 Scripts and rubrics live in this package. Stores that later passes read (class files, proposals,
 measured angles) are in ``WORKSPACE / "lerobot/annotation_data"``; everything a pass writes
-(inventories, label files, sheets, review pages, reports) goes under ``WORKSPACE / "outputs/_annotation"``.
+(inventories, label files, sheets, review pages, reports) goes under ``WORKSPACE / "outputs/annotation"``.
 """
 
 import os

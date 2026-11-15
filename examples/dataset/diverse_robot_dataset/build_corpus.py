@@ -49,8 +49,8 @@ from lerobot.datasets.diverse_pilot import (  # noqa: E402
 
 CORPUS_FORMAT = "diverse_robot_source_native_actor_critic_corpus_v1"
 BUILDER_VERSION = 1
-DATASET_ROOT = REPO_ROOT / "outputs/diverse_robot_dataset"
-BUILD_ROOT = REPO_ROOT / "outputs/diverse_robot_dataset_build"
+DATASET_ROOT = REPO_ROOT / "outputs/data/diverse_robot_dataset"
+BUILD_ROOT = REPO_ROOT / "outputs/data/diverse_robot_dataset_build"
 CORPUS_ROOT = DATASET_ROOT / "corpus"
 CONFIG_DIR = Path(__file__).parent
 

@@ -72,8 +72,8 @@ d["pool"] = d.dataset.map(POOL)
 rc = d.dataset == "robochallenge"  # split by arm: ARX5 vs UR5
 if rc.any():
     import json
-    e = {a["episode_id"]: a["embodiment"] for a in map(json.loads, open("outputs/diverse_robot_dataset_v3/corpus/subtask_atoms.jsonl"
-                                                                          if Path("outputs").exists() else HERE.parents[1] / "outputs/diverse_robot_dataset_v3/corpus/subtask_atoms.jsonl"))}
+    e = {a["episode_id"]: a["embodiment"] for a in map(json.loads, open("outputs/data/diverse_robot_dataset_v3/corpus/subtask_atoms.jsonl"
+                                                                          if Path("outputs").exists() else HERE.parents[1] / "outputs/data/diverse_robot_dataset_v3/corpus/subtask_atoms.jsonl"))}
     d.loc[rc, "pool"] = "rc_" + d.loc[rc, "episode"].map(e).str.lower()
 d["verb_group"] = d.verb.map(VERB_GROUP).fillna("other")
 d["family"] = [family(o, p) for o, p in zip(d.object, d.pool)]

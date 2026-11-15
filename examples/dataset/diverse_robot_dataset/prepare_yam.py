@@ -42,7 +42,7 @@ if str(REPO_ROOT / "lerobot/src") not in sys.path:
 from prepare_droid import _grab_frame, contact_sheet, overview_offsets, read_json, write_json  # noqa: E402
 
 SOURCE_CONFIG = Path(__file__).with_name("yam_sources.json")
-SHEETS_ROOT = REPO_ROOT / "outputs/_annotation/diverse_v3_review/yam"
+SHEETS_ROOT = REPO_ROOT / "outputs/annotation/diverse_v3_review/yam"
 COMPONENTS = {"yam_duster": "duster", "yam_espresso": "espresso", "yam_pick_place": "pick_place"}
 # What the frames show, which the source task strings do not all say: the duster is placed in
 # the box, the espresso set's "fold napkins" is simply wrong, the pencil string is kept.
@@ -651,7 +651,7 @@ def finalize(paths: Paths, verdicts_path: Path, review_prompt: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", required=True, choices=sorted(COMPONENTS))
-    parser.add_argument("--build-root", type=Path, default=Path("outputs/diverse_robot_dataset_v3_build"))
+    parser.add_argument("--build-root", type=Path, default=Path("outputs/data/diverse_robot_dataset_v3_build"))
     parser.add_argument("--sheets-dir", type=Path, default=SHEETS_ROOT, help="review sheets root; the component name is appended")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("audit")

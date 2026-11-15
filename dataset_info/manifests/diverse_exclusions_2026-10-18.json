@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "root": "outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2",
+  "root": "outputs/data/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2",
   "time_convention": "episode-local seconds [from_s,to_s) on the anchor timeline (timestamp_s.npy)",
   "history_policy": "Excluded action targets are forbidden; failed-attempt observation history may condition retained recovery actions.",
   "exclusions": [

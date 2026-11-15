@@ -77,7 +77,7 @@ Standalone (checkpoint, corpus and validation set from the config):
 
     uv run python -m lerobot.probes.conditions_matrix --config config_rl.yaml \\
         --probe_parameters.enable_conditions_matrix=true \\
-        --probe_parameters.conditions_rebot_roots=outputs/bottle_grasping-train-annotated-v2,outputs/rebot_socks_basket-annotated-v3
+        --probe_parameters.conditions_rebot_roots=outputs/data/bottle_grasping-train-annotated-v2,outputs/data/rebot_socks_basket-annotated-v3
 """
 
 from __future__ import annotations

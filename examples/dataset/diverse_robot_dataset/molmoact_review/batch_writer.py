@@ -9,7 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[5]
-REVIEW = ROOT / 'outputs/_annotation/diverse_v3_review'
+REVIEW = ROOT / 'outputs/annotation/diverse_v3_review'
 KINDS = {'failed_close', 'slip', 'drop', 'knock', 'wrong_target'}
 
 

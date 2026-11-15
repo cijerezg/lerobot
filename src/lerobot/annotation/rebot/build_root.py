@@ -13,9 +13,9 @@ Two inputs:
     # labelled pass: <work>/inventory.json + <work>/labels/<IDX>.json (segments, mistakes); writes the
     # subtask tables too. --split picks train, val or all (the staging root of the class pass). An episode
     # without its own "cuts" takes them from <work>/idle_cuts.json (idle_scan) once that file exists.
-    uv run python -m lerobot.annotation.rebot.build_root <work> --out outputs/<root> --split train
+    uv run python -m lerobot.annotation.rebot.build_root <work> --out outputs/data/<root> --split train
     # cut plan only: <work>/plan.json = [{source, episode, keep, cuts, task, ...}]; no annotation tables.
-    uv run python -m lerobot.annotation.rebot.build_root <work> --out outputs/<root> --plan
+    uv run python -m lerobot.annotation.rebot.build_root <work> --out outputs/data/<root> --plan
 """
 
 import argparse

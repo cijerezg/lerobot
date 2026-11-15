@@ -2,14 +2,14 @@
 """Compare two sim-eval runs in one rerun viewer: run A on the top row, run B on the bottom, one shared time axis.
 
 Each run is the rerun.rrd that run_sim_eval.sh writes per layout. Both recordings are re-logged into one
-merged .rrd under ``/A/...`` and ``/B/...`` (default outputs/compare_sim/, ~2 GB per run), then the viewer opens
+merged .rrd under ``/A/...`` and ``/B/...`` (default outputs/analysis/compare_sim/, ~2 GB per run), then the viewer opens
 that file with a blueprint of two rows: wrist camera, top camera, wrist depth, joint traces, subtask events.
 
 Examples::
 
     uv run python -m lerobot.scripts.compare_sim \\
-        outputs/rebot-stratified_sampling-20261016/checkpoints/000400 \\
-        outputs/rebot-stratified_sampling-20261016/checkpoints/001200
+        outputs/runs/rebot-stratified_sampling-20261016/checkpoints/000400 \\
+        outputs/runs/rebot-stratified_sampling-20261016/checkpoints/001200
     uv run python -m lerobot.scripts.compare_sim RUN_A/validation/step_00001200 RUN_B/validation/step_00001200 --layout ep2
     uv run python -m lerobot.scripts.compare_sim a/rerun.rrd b/rerun.rrd --label old --label new --no-open
 
@@ -184,7 +184,7 @@ def main() -> None:
         "--save",
         type=Path,
         default=None,
-        help="merged .rrd path (default outputs/compare_sim/<a>_vs_<b>_<layout>.rrd)",
+        help="merged .rrd path (default outputs/analysis/compare_sim/<a>_vs_<b>_<layout>.rrd)",
     )
     ap.add_argument(
         "--no-open", action="store_true", help="only write the merged .rrd, do not open the viewer"
@@ -193,7 +193,7 @@ def main() -> None:
 
     rrds = [resolve_rrd(args.run_a, args.layout), resolve_rrd(args.run_b, args.layout)]
     labels = args.label + [default_label(r) for r in rrds[len(args.label) :]]
-    out = args.save or Path("outputs/compare_sim") / f"{labels[0]}_vs_{labels[1]}_{args.layout}.rrd"
+    out = args.save or Path("outputs/analysis/compare_sim") / f"{labels[0]}_vs_{labels[1]}_{args.layout}.rrd"
     out.parent.mkdir(parents=True, exist_ok=True)
 
     # Build the whole merged recording first, then open it: streaming into a live viewer makes it follow the

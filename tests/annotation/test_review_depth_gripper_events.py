@@ -24,7 +24,7 @@ def test_countdown_distinguishes_cutoff_from_observed_event() -> None:
 
 
 def test_event_rich_picker_is_deterministic_and_balances_event_types() -> None:
-    root = Path("outputs/rebot_socks_basket-annotated-v2")
+    root = Path("outputs/data/rebot_socks_basket-annotated-v2")
     rows = [
         _review(root, 0, 4, 6),
         _review(root, 1, 5, 5),

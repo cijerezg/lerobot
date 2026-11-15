@@ -5,7 +5,7 @@ subtask not empty, at most 2 per episode). One PNG per anchor: frame thumbnail, 
 (draws thin, mean bold, demo dashed, state at step 0), the end-effector paths in 3D through RebotKinematics.
 A k-means (k=2) check on the flattened normalized chunks says whether the draws are one blob or two clusters.
 
-    uv run python lerobot/adhocs/draw_spread/followup_trajectories.py outputs/draw_spread/internal1200_2026-11-07
+    uv run python lerobot/adhocs/draw_spread/followup_trajectories.py outputs/analysis/draw_spread/internal1200_2026-11-07
 
 Writes <out>/trajectories/<rank>_<set>_<tag>_f<frame>.png, summary.csv, index.html.
 """

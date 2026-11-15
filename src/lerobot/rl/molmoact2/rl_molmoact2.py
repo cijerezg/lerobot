@@ -57,6 +57,10 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # ── Gripper torque level in the prompt ──────────────────────────────────
     gripper_torque: GripperTorqueConfig = field(default_factory=GripperTorqueConfig)
 
+    # ── Motor velocity tokens in the prompt ─────────────────────────────────
+    # Smoothed motor velocity after the state, as state tokens (docs/design/memory_prompts.md §1.1).
+    velocity: bool = False
+
     # ── Subtask generation (two-prompt, string-level) ────────────────────────
     subtask_max_new_tokens: int = 0  # 0 = generation disabled
     subtask_regeneration_interval: float = 1.0  # seconds between regenerations

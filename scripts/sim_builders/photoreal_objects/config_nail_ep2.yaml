@@ -1,4 +1,4 @@
-offline_output_dir: outputs/rebot-stratified_sampling-20261016
+offline_output_dir: outputs/runs/rebot-stratified_sampling-20261016
 batch_size: 64
 dataset:
   repo_id: cijerezg/rebot-all-v1
@@ -6,7 +6,7 @@ dataset:
   max_episodes: null
   sources:
   - name: internal_main
-    root: outputs/rebot_all-annotated-v14-tasks2
+    root: outputs/data/rebot_all-annotated-v14-tasks2
     weight: 1.0
     sampling_group: internal
     normalization_source: true
@@ -104,7 +104,7 @@ dataset:
       - 80
       - 81
   - name: internal_additions
-    root: outputs/rebot_main_additions-annotated-v3
+    root: outputs/data/rebot_main_additions-annotated-v3
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -134,7 +134,7 @@ dataset:
       - 20
       - 21
   - name: internal_bits_kit
-    root: outputs/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1
+    root: outputs/data/rebot_bits_kitfold_2026-10-06-annotated-v2-tasks1
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -160,7 +160,7 @@ dataset:
       - 16
       - 17
   - name: internal_oct04
-    root: outputs/rebot_additions_2026-10-04-annotated-v12-tasks1
+    root: outputs/data/rebot_additions_2026-10-04-annotated-v12-tasks1
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -195,7 +195,7 @@ dataset:
       - 22
       - 23
   - name: internal_oct07
-    root: outputs/rebot_teleop_2026-10-07-annotated-v1-tasks1
+    root: outputs/data/rebot_teleop_2026-10-07-annotated-v1-tasks1
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -208,7 +208,7 @@ dataset:
       - 3
       - 4
   - name: internal_oct08
-    root: outputs/rebot_teleop_2026-10-08-annotated-v1-tasks1
+    root: outputs/data/rebot_teleop_2026-10-08-annotated-v1-tasks1
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -229,7 +229,7 @@ dataset:
       excluded:
       - 9
   - name: internal_oldval
-    root: outputs/rebot_oldval_train-2026-10-14-v1
+    root: outputs/data/rebot_oldval_train-2026-10-14-v1
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -239,7 +239,7 @@ dataset:
       rigid:
       - 1
   - name: internal_oct14
-    root: outputs/rebot_2026-10-14-annotated-v4
+    root: outputs/data/rebot_2026-10-14-annotated-v4
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -261,7 +261,7 @@ dataset:
       - 9
       - 12
   - name: internal_oct16
-    root: outputs/rebot_2026-10-16-annotated-v1
+    root: outputs/data/rebot_2026-10-16-annotated-v1
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -275,7 +275,7 @@ dataset:
       - 5
       - 6
   - name: internal_oct17
-    root: outputs/rebot_2026-10-17-merged-v1
+    root: outputs/data/rebot_2026-10-17-merged-v1
     weight: 1.0
     sampling_group: internal
     normalization_source: false
@@ -284,7 +284,7 @@ dataset:
       - 0
       - 1
   - name: external_rebot_train
-    root: outputs/external_rebot_train-annotated-v9-tasks1
+    root: outputs/data/external_rebot_train-annotated-v9-tasks1
     weight: 1.0
     sampling_group: external_rebot
     normalization_source: false
@@ -533,13 +533,13 @@ dataset:
       - 155
       - 156
   video_backend: pyav
-buffer_cache_dir: outputs/buffer_cache-rebot-20261010
+buffer_cache_dir: outputs/cache/buffer_cache-rebot-20261010
 cache_policy: require
 diverse:
   enabled: true
   rebot_exclusions_manifest: migration/internal_usefulness_review_2026-10-16/cleanup/exclusions.json
-  root: outputs/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2
-  cache_dir: outputs/buffer_cache-diverse-20261010
+  root: outputs/data/diverse_robot_dataset_v3_round18_screen125_corrected_v4_tasks2
+  cache_dir: outputs/cache/buffer_cache-diverse-20261010
   rebot_weight: 0.75
   weight: 0.25
   rebot_start_cell: 1
@@ -580,7 +580,7 @@ diverse:
     external_rebot: 0.25
     excluded: 0
 skip_critic: true
-val_dataset_path: outputs/rebot_val_2026-10-14-v1
+val_dataset_path: outputs/data/rebot_val_2026-10-14-v1
 val_split: 0.0
 val_freq: 0
 val_on_start: false
@@ -588,12 +588,12 @@ val_loss_frames: 128
 policy:
   type: molmoact2_rl
   task: Put the nail clippers in the clipper case
-  pretrained_path: outputs/rebot-stratified_sampling-20261016/checkpoints/001200/pretrained_model
-  base_path: outputs/MolmoAct2
+  pretrained_path: outputs/runs/rebot-stratified_sampling-20261016/checkpoints/001200/pretrained_model
+  base_path: outputs/models/MolmoAct2
   action_mode: both
   hand_block: false
   inference_action_mode: continuous
-  discrete_action_tokenizer: outputs/MolmoAct-FAST-tokenizer
+  discrete_action_tokenizer: outputs/models/MolmoAct-FAST-tokenizer
   knowledge_insulation: true
   train_action_expert_only: false
   freeze_embedding: true
@@ -947,7 +947,7 @@ probe_parameters:
   depth_event_leads_s: 0.5,1,2,3
   depth_event_shift_s: '1.0'
   depth_event_z_offset_mm: 30.0
-  output_dir: outputs/probe
+  output_dir: outputs/analysis/probe
   mode: all
   max_episodes: 9
   n_frames_per_episode: 32

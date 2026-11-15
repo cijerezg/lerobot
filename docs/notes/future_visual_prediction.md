@@ -166,7 +166,7 @@ unstable. Those broader buffer issues were not changed by this work.
 ## Fixed mistake / clean case browser
 
 `future_visual_cases` adds a small, annotation-selected case study on the held-out
-set. For `outputs/rebot_val-annotated-v4`, it selects 15 fixed anchors: episode 3's
+set. For `outputs/data/rebot_val-annotated-v4`, it selects 15 fixed anchors: episode 3's
 drop and two failed closes, a failed-close sequence in episode 2 with recorded
 after-span frames, clean same-subtask grasp counterparts, a clean release, and
 clean transport. The release counterpart has the same verb but a different
@@ -181,18 +181,18 @@ unavailable. The after-frame for the last mistake is outside the recording and
 is listed as omitted. No tail clamping invents a future or recovery.
 
 The generated preview is at
-`outputs/probe/rebot_val_v4_cases/future_visual_cases/cases.html`. It contains real
+`outputs/analysis/probe/rebot_val_v4_cases/future_visual_cases/cases.html`. It contains real
 lookback/current/future RGB, but no model measurements. Recreate it from the
 workspace root without loading a model:
 
 ```bash
 .venv/bin/python -m lerobot.probes.future_visual_cases \
   --config config_rl.yaml --preview \
-  --probe_parameters.output_dir=outputs/probe/rebot_val_v4_cases
+  --probe_parameters.output_dir=outputs/analysis/probe/rebot_val_v4_cases
 ```
 
 To inspect a trained checkpoint, omit `--preview` and supply
-`--policy.pretrained_path=outputs/<run>/checkpoints/<step>/pretrained_model`.
+`--policy.pretrained_path=outputs/runs/<run>/checkpoints/<step>/pretrained_model`.
 The standalone probe loads the checkpoint's saved architecture, memory, and
 auxiliary settings. A missing or untrained future head is reported as unavailable;
 an absent history input is reported separately. It does not initialize PCA from

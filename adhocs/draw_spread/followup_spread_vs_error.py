@@ -2,7 +2,7 @@
 (bias) and rms error of the best single draw. Binned medians per set. Low spread + low error = predictable and
 learned; low spread + high error = confidently wrong.
 
-    uv run python lerobot/adhocs/draw_spread/followup_spread_vs_error.py outputs/draw_spread/internal1200_2026-11-07
+    uv run python lerobot/adhocs/draw_spread/followup_spread_vs_error.py outputs/analysis/draw_spread/internal1200_2026-11-07
 """
 import glob, os, sys
 import numpy as np, pandas as pd

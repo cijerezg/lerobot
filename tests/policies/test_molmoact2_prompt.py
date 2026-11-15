@@ -57,6 +57,12 @@ def test_gripper_torque_clause_follows_the_state():
     assert build(gripper_torque_level=0, gripper_torque_levels=8) == build()
 
 
+def test_velocity_clause_sits_between_the_state_and_the_torque():
+    velocity = "<state_start><state_0><state_255><state_end>"
+    prompt = build(discrete_state_string="<s>", velocity_string=velocity, gripper_torque_level=5, gripper_torque_levels=8)
+    assert f"The current state of the robot is <s>. The current velocity of the robot is {velocity}. The gripper torque" in prompt
+
+
 def test_unified_layout_pads_state_history_and_action_without_reordering():
     step = MolmoAct2UnifiedLayoutProcessorStep(
 state_dim=8, action_dim=8)
@@ -368,7 +374,7 @@ def test_state_age_stamp_added_to_the_projected_past_states():
 
 from pathlib import Path  # noqa: E402
 
-BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/MolmoAct2"
+BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/models/MolmoAct2"
 CAM_KEYS = ["observation.images.external_0", "observation.images.external_1", "observation.images.wrist_0"]
 
 
@@ -663,3 +669,39 @@ def test_state_scatter_adds_masked_rows_onto_placeholders():
     backbone._lerobot_state_values = (embeds, mask, 9)
     with pytest.raises(RuntimeError, match="do not match"):
         backbone.build_input_embeddings(torch.tensor([[5, 9, 9, 5], [5, 5, 5, 5]]))
+
+
+def test_packed_prompt_leaves_out_the_clauses_switched_off():
+    transition = _history_transition(2, [[True, True, True]] * 2, history=False)
+    transition[TransitionKey.COMPLEMENTARY_DATA].update(
+        {
+            "metadata_quality": torch.tensor([5.0, 4.0]),
+            "metadata_mistake": torch.tensor([0.0, 1.0]),
+            "metadata_speed": torch.tensor([3.0, 5.0]),
+            "metadata_precision": torch.tensor([4.0, 4.0]),
+            "metadata_contact": torch.tensor([0.0, 0.0]),
+            "gripper_torque_level": torch.tensor([6, 0]),
+            # deg/s; the second sample has no reading. -30 is below the range and goes to the first token.
+            "motor_velocity": torch.tensor([[-30.0, 5.0], [float("nan"), float("nan")]]),
+        }
+    )
+    step = _pack_step(
+        gripper_torque_levels=8, velocity_low=[-10.0, -5.0], velocity_high=[10.0, 5.0], prompt_clauses_off=["control_mode", "quality", "mistake", "precision", "contact"]
+    )
+    comp = step(transition)[TransitionKey.COMPLEMENTARY_DATA]
+    texts = [
+        step.processor.tokenizer.decode(ids[mask.bool()])
+        for ids, mask in zip(comp["input_ids"], comp["attention_mask"], strict=True)
+    ]
+    assert ". The gripper torque is 6 of 8. The speed is 3 of 5. Given these," in texts[0]
+    assert "The current velocity of the robot is <state_start><state_0><state_255><state_end>. The gripper" in texts[0]
+    assert "velocity" not in texts[1]
+    assert "The gripper torque" not in texts[1] and ". The speed is 5 of 5. Given these," in texts[1]
+    for text in texts:
+        for clause in ("The quality is", "The robot made", "The precision is", "The contact is", "control mode"):
+            assert clause not in text
+
+    everything = step.__class__(**{**step.get_config(), "prompt_clauses_off": []})
+    comp = everything(transition)[TransitionKey.COMPLEMENTARY_DATA]
+    text = everything.processor.tokenizer.decode(comp["input_ids"][0][comp["attention_mask"][0].bool()])
+    assert "The gripper torque is 6 of 8. The quality is 5 of 5. The robot made no mistakes. The speed is 3" in text

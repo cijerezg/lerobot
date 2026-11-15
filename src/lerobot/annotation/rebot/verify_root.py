@@ -7,7 +7,7 @@ episode. A root that carries the annotation tables (meta/quality_spans.parquet) 
 coverage, precision / contact row-aligned, speed runs tiling every frame, spans and windows inside their episode, every mistake inside
 a grade 1-2 span and a quality <= 2 segment, ReplayBuffer materialization.
 
-    uv run python -m lerobot.annotation.rebot.verify_root outputs/<root>     -> <root>/meta/cleanup_verification.json
+    uv run python -m lerobot.annotation.rebot.verify_root outputs/data/<root>     -> <root>/meta/cleanup_verification.json
 """
 
 import argparse
@@ -19,7 +19,7 @@ from lerobot.annotation.paths import WORKSPACE
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["HF_DATASETS_OFFLINE"] = "1"
-os.environ["HF_DATASETS_CACHE"] = str(WORKSPACE / "outputs/_annotation/loader_cache")
+os.environ["HF_DATASETS_CACHE"] = str(WORKSPACE / "outputs/annotation/loader_cache")
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402

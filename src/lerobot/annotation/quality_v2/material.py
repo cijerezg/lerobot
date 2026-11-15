@@ -27,9 +27,9 @@ from lerobot.annotation.precision_contact import diverse_rows as dr  # noqa: E40
 sys.argv = _a
 import cv2, numpy as np, pandas as pd  # noqa: E402
 
-REBOT = {"rebot_all": "outputs/rebot_all-annotated-v2", "additions": "outputs/rebot_cache_ready_2026-09-25/main_additions_train",
-         "validation": "outputs/rebot_cache_ready_2026-09-25/validation_all", "bits_book": "outputs/rebot_bits-book-annotated-v1",
-         "external": "outputs/rebot_cache_ready_2026-09-25/external_rebot_train"}
+REBOT = {"rebot_all": "outputs/data/rebot_all-annotated-v2", "additions": "outputs/data/rebot_cache_ready_2026-09-25/main_additions_train",
+         "validation": "outputs/data/rebot_cache_ready_2026-09-25/validation_all", "bits_book": "outputs/data/rebot_bits-book-annotated-v1",
+         "external": "outputs/data/rebot_cache_ready_2026-09-25/external_rebot_train"}
 # bits_book: the gripper opens/closes on a small bit by only ~30 units, slowly; 25 over 0.67 s misses it
 ONSET_THR = {"bits_book": 10.0,
              # rc_ur5 bare phone: the Robotiq closes on it to only ~18 %, under 25
@@ -192,7 +192,7 @@ def diverse_episode_render_metadata(part, episode, episode_dir):
 
 
 def diverse_units(sel):
-    part = "fmb" if (sel.dataset == "fmb").all() else "corpus"; root = Path("outputs/diverse_robot_dataset_v3") / part
+    part = "fmb" if (sel.dataset == "fmb").all() else "corpus"; root = Path("outputs/data/diverse_robot_dataset_v3") / part
     rows = {r["row_id"]: r for r in dr.load_part(part)}
     # Derived diverse actions such as return have no dedicated render row.
     # Reuse the episode camera/gripper metadata from any non-derived atom.

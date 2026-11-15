@@ -1,8 +1,8 @@
 """Quality sweep in 3D: one frame, the same flow noise, the quality clause asked at 1..5.
 
     uv run python lerobot/adhocs/quality_sweep_trace/run_quality_sweep_trace.py --config_path=config_rl_validate.yaml \
-        --policy.pretrained_path=outputs/rebot-corr10-nodepth-b128-20261111/checkpoints/002000/pretrained_model \
-        --out_dir=outputs/quality_sweep_trace/corr10-ckpt2000_2026-11-13
+        --policy.pretrained_path=outputs/runs/rebot-corr10-nodepth-b128-20261111/checkpoints/002000/pretrained_model \
+        --out_dir=outputs/analysis/quality_sweep_trace/corr10-ckpt2000_2026-11-13
 
 Per anchor one ``predict_action_chunk_batch`` over five prompts that differ only in "The quality is
 $q$ of 5." (no mistake, speed 5, the frame's own precision and contact), all rows on seed ``seed``'s
@@ -45,7 +45,7 @@ NEAR_S = 0.3
 
 @dataclass
 class QualitySweepTraceConfig(TrainRLServerPipelineConfig):
-    out_dir: str = "outputs/quality_sweep_trace/corr10-ckpt2000_2026-11-13"
+    out_dir: str = "outputs/analysis/quality_sweep_trace/corr10-ckpt2000_2026-11-13"
     episodes: str = "0,1,7,8"  # shirt, nail clipper, cup, bit
     seed: int = 0
 

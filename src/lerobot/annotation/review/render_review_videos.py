@@ -14,7 +14,7 @@ subtask window (meta/subtask_windows.json), segment quality (episode_metadata.pa
 speed_hybrid_v1.parquet value beside it), mistakes.parquet spans, online_labels is_intervention.
 
     uv run python -m lerobot.annotation.review.render_review_videos [--seed 20260919]
-    -> outputs/_annotation/annotation_review_2026-09-19/videos/*.mp4 + picks.json
+    -> outputs/annotation/annotation_review_2026-09-19/videos/*.mp4 + picks.json
 
 2026-10-06: --rebot-root <annotated ReBot root> --out <dir> [--episodes E ...] renders those episodes of any ReBot root.
 
@@ -57,8 +57,8 @@ def effective_quality(eid, frame):
     rows = [r for r in QUALITY_SPANS.get(eid, []) if int(r["from_index"]) <= frame < int(r["to_index"])]
     return min((int(r["quality"]) for r in rows), default=4), rows
 
-HERE = Path("outputs/_annotation/annotation_review_2026-09-19"); OUT = HERE / "videos"; OUT.mkdir(parents=True, exist_ok=True)
-DIVERSE = Path("outputs/diverse_robot_dataset_v2"); REBOT = Path("outputs/rebot_all-annotated-v1")
+HERE = Path("outputs/annotation/annotation_review_2026-09-19"); OUT = HERE / "videos"; OUT.mkdir(parents=True, exist_ok=True)
+DIVERSE = Path("outputs/data/diverse_robot_dataset_v2"); REBOT = Path("outputs/data/rebot_all-annotated-v1")
 WHITE, GREY, YELLOW, GREEN, RED, CYAN, ORANGE, BLUE = (255, 255, 255), (170, 170, 170), (80, 220, 255), (80, 230, 80), (60, 60, 255), (255, 220, 80), (0, 160, 255), (255, 120, 120)
 LINE = 22; TILE_H = 420; MAX_LINES = 12; SCALE = 0.55
 

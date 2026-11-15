@@ -3,7 +3,7 @@ sends only quality/mistake/speed). Anchors come from anchors.txt (anchors.py). E
 action_trace_records.npz holds state, the executed chunk (the operator's during an intervention) and every flow sample.
 
     uv run python lerobot/adhocs/intervention_episode_reps/trace_episode.py --config config_rl.yaml \
-        --dataset.root outputs/rebot_rollouts_2026-10-20-probe-v1 \
+        --dataset.root outputs/data/rebot_rollouts_2026-10-20-probe-v1 \
         --probe_parameters.output_dir migration/inference_review_2026-10-20/trace_probe \
         --probe_parameters.trace_n_samples 8 \
         --probe_parameters.trace_frames "$(cat lerobot/adhocs/intervention_episode_reps/anchors.txt)"

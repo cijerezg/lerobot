@@ -10,13 +10,13 @@ import pandas as pd
 from lerobot.annotation.paths import QUALITY_V2, WORKSPACE  # noqa: E402
 HERE = QUALITY_V2
 REBOT = {
-    "rebot_all": "outputs/rebot_all-annotated-v2",
-    "additions": "outputs/rebot_cache_ready_2026-09-25/main_additions_train",
-    "bits_book": "outputs/rebot_bits-book-annotated-v1",
-    "external": "outputs/rebot_cache_ready_2026-09-25/external_rebot_train",
-    "validation": "outputs/rebot_cache_ready_2026-09-25/validation_all",
+    "rebot_all": "outputs/data/rebot_all-annotated-v2",
+    "additions": "outputs/data/rebot_cache_ready_2026-09-25/main_additions_train",
+    "bits_book": "outputs/data/rebot_bits-book-annotated-v1",
+    "external": "outputs/data/rebot_cache_ready_2026-09-25/external_rebot_train",
+    "validation": "outputs/data/rebot_cache_ready_2026-09-25/validation_all",
 }
-DIVERSE = "outputs/diverse_robot_dataset_v3"
+DIVERSE = "outputs/data/diverse_robot_dataset_v3"
 SRC = {"droid": "droid", "droid_success": "droid_success", "molmoact": "molmoact", "robochallenge": "robochallenge",
        "ur7e": "ur7e", "yam": "yam"}
 PREPS = (" to the ", " into the ", " in the ", " on the ", " onto the ", " from the ", " at the ", " over the ", " off the ",

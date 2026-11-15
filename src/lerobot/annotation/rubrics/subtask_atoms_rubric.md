@@ -13,7 +13,7 @@ audit, retention/boundary repairs may revise parents in a new store; preserve or
 Everything is under `/home/user/Documents/Research/RL/LeRobot` (run commands from there,
 with `uv run python`, never bare python; install nothing).
 
-- sheets: `outputs/_annotation/subtask_atoms_review/sheets/<source>/<episode_id>_NN.jpg`
+- sheets: `outputs/annotation/subtask_atoms_review/sheets/<source>/<episode_id>_NN.jpg`
   - `_00` (and one `_NN` per further parent) = header, gripper/speed trace with the candidate
     cuts, and an OVERVIEW strip of frames at a fixed stride (external camera, and the wrist
     camera under it for DROID/UR7e/press/lamp/water/wipe). Labels: `f<frame> <seconds>s
@@ -23,12 +23,12 @@ with `uv run python`, never bare python; install nothing).
   - a parent's sheets are consecutive: the overview page for PARENT k is followed by its
     atom pages, then the overview for PARENT k+1, and so on. Read the PARENT line.
 - finer look: `uv run python -m lerobot.annotation.atoms.sheets dense --episode E --from-s 10 --to-s 20 --stride-s 0.5`
-  writes `outputs/_annotation/subtask_atoms_review/sheets/dense/...jpg` (path is printed). Use it
+  writes `outputs/annotation/subtask_atoms_review/sheets/dense/...jpg` (path is printed). Use it
   whenever a boundary is not obvious from the overview; the cost is small.
 - proposal details (frames of every gripper event, arrival, failed closes): `lerobot/annotation_data/atoms/proposals.jsonl`
   (one JSON line per parent; `grep '"episode_id": "E"'`).
 - verdict skeleton: `uv run python -m lerobot.annotation.atoms.verdict skeleton --episode E`
-  writes `outputs/_annotation/subtask_atoms_review/verdicts/E.json` prefilled with the
+  writes `outputs/annotation/subtask_atoms_review/verdicts/E.json` prefilled with the
   proposal, then prints it. Edit that file (fill objects, fix verbs and cuts), then run
   `uv run python -m lerobot.annotation.atoms.verdict check --episode E` until it prints OK.
   `verdict.py show --episode E` prints the rendered subtask strings for a last read.
@@ -153,7 +153,7 @@ describe the original atom pass; inspect/adapt tools before reuse, including the
    exactly: every atom starts where the previous ended, the first at the parent start, the
    last at the parent end). Use the dense strip for any cut you are not sure of.
 3. Name objects and containers from the task string and the wrist frames.
-4. Write `outputs/_annotation/subtask_atoms_review/verdicts/<episode_id>.json` (start from
+4. Write `outputs/annotation/subtask_atoms_review/verdicts/<episode_id>.json` (start from
    the skeleton), set `reviewer`, per-parent `confidence` ("confident" or "unsure") and a
    one-line `note` saying what you saw ("4 flowers: white, pink, yellow, white; release 3
    starts at f2130 when the arm is over the vase").

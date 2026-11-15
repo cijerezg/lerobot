@@ -11,7 +11,7 @@ never made.
 ```bash
 uv run python lerobot/adhocs/joint_traces/plot.py                     # 5 episodes, seed 0, pre-fix rollout roots
 uv run python lerobot/adhocs/joint_traces/plot.py --seed 1 --n 5 \
-    --roots outputs/rebot_2026-11-10-annotated-v1 --out outputs/analysis/joint_traces/post_fix.html
+    --roots outputs/data/rebot_2026-11-10-annotated-v1 --out outputs/analysis/joint_traces/post_fix.html
 
 uv run python lerobot/adhocs/joint_traces/compare_repairs.py          # 3 episodes of 10-28, three candidate repairs
 ```

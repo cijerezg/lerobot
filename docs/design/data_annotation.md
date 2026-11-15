@@ -2,15 +2,15 @@
 
 ## Datasets
 
-- `outputs/rebot_socks_v1` — raw: 6 eps, 29,192 frames @ 30 fps, top + wrist RGB, wrist depth sidecar.
-- `outputs/rebot-socks-annotated-v2` — **training-ready**: `subtask_index` per frame, 13-label canonical vocab, 81 hand-written summaries (12 s grid), quality/mistake metadata, depth hardlinked.
+- `outputs/data/rebot_socks_v1` — raw: 6 eps, 29,192 frames @ 30 fps, top + wrist RGB, wrist depth sidecar.
+- `outputs/data/rebot-socks-annotated-v2` — **training-ready**: `subtask_index` per frame, 13-label canonical vocab, 81 hand-written summaries (12 s grid), quality/mistake metadata, depth hardlinked.
 - Everything SO-101-era is legacy 6-dim; don't mix.
 - **config_rl.yaml since 2026-09-09:** `rebot_socks_basket/shirts_bin/two_container-annotated-v3` (the 2026-09-08 audit
   revisions of the -v2 roots, frames hardlinked), `rebot_sorting_clothes_v4-multitask-annotated-v1`, and
-  `outputs/rebot_rollouts-annotated-v2` (train source `rollouts`, 15 eps / 49,040 frames = the three 2026-09-08 inference
+  `outputs/data/rebot_rollouts-annotated-v2` (train source `rollouts`, 15 eps / 49,040 frames = the three 2026-09-08 inference
   episodes + the v1 set below); every root carries `meta/speed_hybrid_v1.parquet` (the adopted speed labels,
   `REBOT_SPEED_TABLE`), which `metadata_enabled` now requires alongside the two metadata parquets.
-- `outputs/rebot_rollouts-annotated-v1` (train source `rollouts_0906`, 12 eps / 31,010 frames) + `outputs/rebot_val-annotated-v4`
+- `outputs/data/rebot_rollouts-annotated-v1` (train source `rollouts_0906`, 12 eps / 31,010 frames) + `outputs/data/rebot_val-annotated-v4`
   (val, 4 eps / 16,907 frames) — **the consolidated sets in config_rl.yaml since 2026-09-07**. The train set is the 11
   rollout episodes below plus one teleop demo (ep 11 = the v4-1 socks episode that was `rebot_val-annotated-v3` ep 3, flagged
   `is_intervention` True like every operator frame; 54 % of frames overall); the val set is `rebot_val-annotated-v2` (v1 ep 9,
@@ -19,7 +19,7 @@
   (library merge, videos stream-copied and pixel-checked against the sources,
   metadata rebased, depth hardlinked, `meta/provenance.json` per episode), sidecars regenerated and checked by a
   one-off verifier (also removed; successor `annotation/rebot/verify_root.py`). The two sources below stay on disk untouched.
-- `outputs/rebot_inference_2026-09-06-v6` (train) + `outputs/rebot_inference_val_2026-09-06-v2` (val) — sources of the above; **policy rollouts +
+- `outputs/data/rebot_inference_2026-09-06-v6` (train) + `outputs/data/rebot_inference_val_2026-09-06-v2` (val) — sources of the above; **policy rollouts +
   DAgger interventions, training-ready**: 11 + 1 episodes, 29,229 + 2,886 frames from the 2026-09-06 online recorder runs
   (no-history MolmoAct2 ckpt). Train episodes 0-4 (11:28, 17:39, 18:45, 19:47, 19:54) are pure policy output; 5-10 (20:43 .. 22:06) carry teleop
   interventions (per-frame flag in `meta/online_labels.parquet`, a sidecar the loaders ignore; 52 % of train frames). Val =
@@ -150,7 +150,7 @@ for the current data mixture. No training or validation settings changed in this
 Facts about the external ReBot pool that still hold (from the 2026-09-21 data-mix preparation,
 whose scratch folder is retired; its 40/20/40 split, cache ids and 8-episode validation set are superseded):
 
-- Source release `outputs/rebot_public_annotated_v1`: 261 episodes, 207,344 native frames; nine rejected episodes
+- Source release `outputs/data/rebot_public_annotated_v1`: 261 episodes, 207,344 native frames; nine rejected episodes
   and trimmed tails stay excluded.
 - Recordings at 15/60/120 Hz were resampled to 30 Hz: low-dim linearly interpolated on physical time, RGB/depth by
   nearest timestamp, episode duration not extended, labels on the same timeline. Native 30 Hz trajectories are unchanged.

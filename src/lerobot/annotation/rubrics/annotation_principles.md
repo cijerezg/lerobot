@@ -6,7 +6,7 @@ Why this page exists: the 2026-10-05 steering probe showed the precision and con
 0.04-0.05 of the flow-seed floor, the subtask labels of the bit kit and bits episodes do not tell apart targets that look
 alike, and the quality grades do not survive a look at the frames. The labels were written to fill the tables, not to tell
 the robot what to do. These principles apply to every annotation pass from now on, starting with
-`outputs/rebot_rollouts_2026-10-05-cut-v1`. The per-channel rubrics (`quality_mistake_rubric_v2.md`, `precision_rubric.md`,
+`outputs/data/rebot_rollouts_2026-10-05-cut-v1`. The per-channel rubrics (`quality_mistake_rubric_v2.md`, `precision_rubric.md`,
 `contact_strategy_rubric.md`) stay in force where they do not contradict this page. Rubrics and annotation scripts live in
 `src/lerobot/annotation/` (see its `README.md`), not in the results folders.
 

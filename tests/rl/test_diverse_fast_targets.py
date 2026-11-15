@@ -27,7 +27,7 @@ from lerobot.processor.converters import create_transition  # noqa: E402
 from lerobot.types import TransitionKey  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
 
-BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/MolmoAct2"
+BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/models/MolmoAct2"
 HORIZON = 30
 IMAGE_KEY = f"{OBS_IMAGES}.external_0"
 

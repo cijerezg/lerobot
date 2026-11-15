@@ -28,7 +28,7 @@ The holdout guarantee applies to new runs trained with the accompanying ledger.
 Standalone::
 
     uv run python -m lerobot.probes.embodiment_swap --config config_rl.yaml \
-        --policy.pretrained_path outputs/<run>/checkpoints/<step>/pretrained_model
+        --policy.pretrained_path outputs/runs/<run>/checkpoints/<step>/pretrained_model
 """
 
 import json

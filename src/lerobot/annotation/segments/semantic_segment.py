@@ -37,7 +37,7 @@ Object identity needs vision, so it is carried over from the existing 4 s labels
 majority vote across the carry. Datasets with no prior annotation get "<object>"
 placeholders for a manual pass.
 
-    python semantic_segment.py --data-dir outputs/rebot_sorting_clothes_v1
+    python semantic_segment.py --data-dir outputs/data/rebot_sorting_clothes_v1
     python semantic_segment.py --data-dir DS --write     # replace meta/subtask_windows.json
 """
 

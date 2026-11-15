@@ -1,8 +1,8 @@
 """Loss share and gradient share per data group, same frames across the checkpoints of one run.
 
     uv run python lerobot/adhocs/loss_share/run_loss_share.py --config_path=config_rl.yaml \
-        --run_dir=outputs/rebot-corr10-nodepth-b128-20261111 --steps=400,800,1200,1600,2000 \
-        --out_dir=outputs/loss_share/corr10_2026-11-12
+        --run_dir=outputs/runs/rebot-corr10-nodepth-b128-20261111 --steps=400,800,1200,1600,2000 \
+        --out_dir=outputs/analysis/loss_share/corr10_2026-11-12
 
 ``n_frames`` chunk starts are drawn once from the training mixture (the config's group shares, uniform
 over a group's eligible starts, diverse rows from the training sampler) and held fixed, with a fixed
@@ -60,9 +60,9 @@ COARSE_ORDER = ["internal", "external", "corrections", "diverse"]
 
 @dataclass
 class LossShareConfig(TrainRLServerPipelineConfig):
-    run_dir: str = "outputs/rebot-corr10-nodepth-b128-20261111"
+    run_dir: str = "outputs/runs/rebot-corr10-nodepth-b128-20261111"
     steps: str = "400,800,1200,1600,2000"
-    out_dir: str = "outputs/loss_share/corr10_2026-11-12"
+    out_dir: str = "outputs/analysis/loss_share/corr10_2026-11-12"
     n_frames: int = 1024
     batch: int = 1  # frames per forward/backward (same source); 1 = per-frame gradient norms
     frame_seed: int = 0

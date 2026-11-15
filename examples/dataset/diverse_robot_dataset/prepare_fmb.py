@@ -1315,22 +1315,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pilot-audit",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/fmb_pilot_audit.json"),
+        default=Path("outputs/data/diverse_robot_dataset_build/fmb/pilot/fmb_pilot_audit.json"),
     )
     parser.add_argument(
         "--review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/review"),
+        default=Path("outputs/data/diverse_robot_dataset_build/fmb/pilot/review"),
     )
     parser.add_argument(
         "--raw-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset_build/fmb/production/raw"),
+        default=Path("outputs/data/diverse_robot_dataset_build/fmb/production/raw"),
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb"),
+        default=Path("outputs/data/diverse_robot_dataset/fmb"),
     )
     parser.add_argument(
         "--labels",

@@ -1,7 +1,7 @@
 """Drift of the gradient on fixed probe frames while the model trains.
 
     uv run python lerobot/adhocs/grad_drift/run_grad_drift.py --config_path=config_rl.yaml \
-        --out_dir=outputs/grad_drift/base_2026-11-12 --measure_at=0,1,2,4,8,16,32,64,128,256
+        --out_dir=outputs/analysis/grad_drift/base_2026-11-12 --measure_at=0,1,2,4,8,16,32,64,128,256
 
 ``n_probe`` chunk starts per data group (internal / external / corrections / diverse) are drawn once from
 the training mixture and packed once, with a fixed flow-time grid and fixed noise per frame (the ValLoss
@@ -63,7 +63,7 @@ from lerobot.utils.utils import init_logging  # noqa: E402
 
 @dataclass
 class GradDriftConfig(TrainRLServerPipelineConfig):
-    out_dir: str = "outputs/grad_drift/base_2026-11-12"
+    out_dir: str = "outputs/analysis/grad_drift/base_2026-11-12"
     n_probe: int = 32  # probe frames per data group, one forward/backward per group
     measure_at: str = "0,1,2,4,8,16,32,64,128,256"  # training steps taken before each measurement
     sketch_dim: int = 4096

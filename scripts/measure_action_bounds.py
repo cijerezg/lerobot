@@ -22,10 +22,10 @@ import torch
 from lerobot.robots.rebot_b601_follower.config_rebot_b601_follower import RebotB601FollowerConfig
 
 ROOTS = [
-    "outputs/rebot_socks_basket-annotated-v2",
-    "outputs/rebot_shirts_bin-annotated-v2",
-    "outputs/rebot_two_container-annotated-v2",
-    "outputs/rebot_sorting_clothes_v4-multitask-annotated-v1",
+    "outputs/data/rebot_socks_basket-annotated-v2",
+    "outputs/data/rebot_shirts_bin-annotated-v2",
+    "outputs/data/rebot_two_container-annotated-v2",
+    "outputs/data/rebot_sorting_clothes_v4-multitask-annotated-v1",
 ]
 STATS = "outputs/stats/action_stats_anchor_diverse-rebot-v2.pt"
 STATS_ROW = "rebot_b601_joint7_commanded"

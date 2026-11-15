@@ -46,8 +46,8 @@ usable spans reports "no signal" rather than falling back to a guess.
 
 Example:
     python lerobot/src/lerobot/scripts/check_gripper_polarity.py \\
-        --root outputs/diverse_robot_dataset/corpus/packed_5hz/droid/AUTOLab \\
-        --root outputs/diverse_robot_dataset/corpus/packed_5hz/ur7e/stack_block
+        --root outputs/data/diverse_robot_dataset/corpus/packed_5hz/droid/AUTOLab \\
+        --root outputs/data/diverse_robot_dataset/corpus/packed_5hz/ur7e/stack_block
 """
 
 from __future__ import annotations

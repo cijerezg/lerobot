@@ -106,9 +106,9 @@ the validation set (output lands in
 ``<output_dir>/validation/step_<ckpt>/input_swap`` so ``view_probes <output_dir>`` shows it):
 
     .venv/bin/python -m lerobot.probes.input_swap --config config_rl.yaml \\
-        --policy.pretrained_path=outputs/<run>/checkpoints/<step>/pretrained_model \\
-        --val_dataset_path=outputs/rebot_val-annotated-v3 \\
-        --probe_parameters.output_dir=outputs/probe_runs/<name>
+        --policy.pretrained_path=outputs/runs/<run>/checkpoints/<step>/pretrained_model \\
+        --val_dataset_path=outputs/data/rebot_val-annotated-v3 \\
+        --probe_parameters.output_dir=outputs/runs/<run>/probes/<step>/<name>
 """
 
 from __future__ import annotations

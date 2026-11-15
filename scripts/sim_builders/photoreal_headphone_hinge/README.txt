@@ -61,5 +61,5 @@ build.py after relocation. Prior experiment assets and scripts are dependencies.
 Optional one-episode policy evaluation (not run)
 ----------------------------------------------
   bash lerobot/scripts/sim_builders/photoreal_headphone_hinge/run_eval.sh \
-    outputs/<run>/checkpoints/<step>/pretrained_model nail_ep1
+    outputs/runs/<run>/checkpoints/<step>/pretrained_model nail_ep1
 Accepts nail_ep5, nail_ep1, nail_ep2 or nail_ep3. Outputs stay under policy_runs/.

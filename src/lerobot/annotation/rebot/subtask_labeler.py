@@ -1,7 +1,7 @@
 """Label the subtasks of a ReBot root by hand in the browser.
 
-    uv run python -m lerobot.annotation.rebot.subtask_labeler outputs/<root> --subtasks "approach tube" "grasp tube" ...
-        [--work outputs/_annotation/passes/subtasks_<root>] [--port 7872] [--no-open]
+    uv run python -m lerobot.annotation.rebot.subtask_labeler outputs/data/<root> --subtasks "approach tube" "grasp tube" ...
+        [--work outputs/annotation/passes/subtasks_<root>] [--port 7872] [--no-open]
 
 Renders one clip per episode (top | wrist | wrist depth in one H.264 file: one clock, no drift; missing clips only) into
 <work>/clips, then opens http://127.0.0.1:<port>. The page plays the clip (up to 4x) over the gripper / joint position,
@@ -84,7 +84,7 @@ def main():
     parser.add_argument("--no-open", action="store_true", help="serve without opening a browser tab")
     args = parser.parse_args()
     root = Path(args.root).resolve()
-    work = Path(args.work).resolve() if args.work else WORKSPACE / "outputs/_annotation/passes" / f"subtasks_{root.name}"
+    work = Path(args.work).resolve() if args.work else WORKSPACE / "outputs/annotation/passes" / f"subtasks_{root.name}"
     clips, labels = work / "clips", work / "labels"
     clips.mkdir(parents=True, exist_ok=True)
     if labels.exists():

@@ -2,7 +2,7 @@
 Controls: y metric (mean / best / typical draw error), relative to motion or absolute, color by set / verb /
 object family, set filter. Click pins a point. Thumbnails are decoded once and cached in thumbs.npz.
 
-    uv run python lerobot/adhocs/draw_spread/followup_hover_page.py outputs/draw_spread/internal1200_2026-11-07
+    uv run python lerobot/adhocs/draw_spread/followup_hover_page.py outputs/analysis/draw_spread/internal1200_2026-11-07
 """
 import base64, io, json, os, re, sys
 import numpy as np, pandas as pd

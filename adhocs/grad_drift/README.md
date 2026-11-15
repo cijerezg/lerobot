@@ -20,8 +20,8 @@ predicts the loss change.
 ## Run
 
     uv run python lerobot/adhocs/grad_drift/run_grad_drift.py --config_path=config_rl.yaml \
-        --out_dir=outputs/grad_drift/base_2026-11-12 --measure_at=0,1,2,4,8,16,32,64,128,256
-    uv run python lerobot/adhocs/grad_drift/plot_grad_drift.py outputs/grad_drift/base_2026-11-12
+        --out_dir=outputs/analysis/grad_drift/base_2026-11-12 --measure_at=0,1,2,4,8,16,32,64,128,256
+    uv run python lerobot/adhocs/grad_drift/plot_grad_drift.py outputs/analysis/grad_drift/base_2026-11-12
 
 Start weights are `--policy.pretrained_path` (null = base MolmoAct2). `--n_probe` (32), `--sketch_dim` (4096)
 and `--frame_seed` are the other knobs. A measurement costs one forward and backward per group; the rest of

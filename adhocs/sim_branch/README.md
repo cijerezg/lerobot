@@ -19,7 +19,7 @@ restored by replaying the recorded actions from the scene reset.
 ## Run
 
 Needs a rollout recorded with `--record_inference_dataset=true` under
-`outputs/llm_corrections_sim_2026-11-09/rollouts/validation/step_00000000/sim/<layout>/inference_dataset`
+`outputs/analysis/llm_corrections_sim_2026-11-09/rollouts/validation/step_00000000/sim/<layout>/inference_dataset`
 (`OUT` / `ROLLOUTS` at the top of `simlab.py`). The metrics are written for the close-lid layouts.
 
     MUJOCO_GL=egl PYTHONPATH=lerobot/src .venv/bin/python lerobot/adhocs/sim_branch/simlab.py look twin_l3_close_lid_p2 600
@@ -28,5 +28,5 @@ Needs a rollout recorded with `--record_inference_dataset=true` under
 
 ## Findings
 
-Runs of 2026-11-09 are under `outputs/llm_corrections_sim_2026-11-09/runs/` (`metrics.json` per run). No summary
+Runs of 2026-11-09 are under `outputs/analysis/llm_corrections_sim_2026-11-09/runs/` (`metrics.json` per run). No summary
 was written. The real-robot correction pass that followed is `src/lerobot/annotation/corrections/`.
