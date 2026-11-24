@@ -67,6 +67,7 @@ Each note opens with `> **Status:** ...`. Vocabulary: **idea** Â· **building** Â
 
 | Note                                                                             | Status                        | About                                                                               |
 | -------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
+| [`representation_penalty.md`](notes/representation_penalty.md)                     | built, off 2026-11-23         | Flow loss + per-layer distance to base MolmoAct2 while fine-tuning                  |
 | [`action_trajectory_losses.md`](notes/action_trajectory_losses.md)               | reference, 2026-09-02         | What the flow/FAST trajectory terms are, what is broken, option catalogue           |
 | [`principled_action_losses.md`](notes/principled_action_losses.md)               | decided                       | Which objective change is defensible and what it assumes                            |
 | [`fast_tokenizer_alphabet_bug.md`](notes/fast_tokenizer_alphabet_bug.md)         | fixed 2026-08-08              | Silent DCT coefficient deletion in the FAST tokenizer                               |

@@ -292,8 +292,8 @@ class FutureVisualLossConfig:
 HAND_BLOCK_ACTION_WIDTH = 15  # joints 0..7, hand delta 8..14
 HAND_BLOCK_STATE_WIDTH = 18  # joints 0..7, hand pose 8..17
 HAND_FAST_LAYOUTS = ("joints", "masked", "hand_first")
-# Clauses prompt_clauses_off can name: the control-mode clause and the metadata clauses.
-PROMPT_CLAUSES_OPTIONAL = ("control_mode", "quality", "mistake", "speed", "precision", "contact")
+# Clauses prompt_clauses_off can name: the control-mode clause, the subtask clause and the metadata clauses.
+PROMPT_CLAUSES_OPTIONAL = ("control_mode", "subtask", "quality", "mistake", "speed", "precision", "contact")
 
 
 @dataclass
@@ -416,9 +416,20 @@ class MolmoAct2Config(PreTrainedConfig):
     subtask_dropout: float = 0.0
     metadata_dropout: float = 0.0
     # Prompt clauses left out in training and at inference, from PROMPT_CLAUSES_OPTIONAL
-    # (control_mode, quality, mistake, speed, precision, contact). Empty = all rendered,
+    # (control_mode, subtask, quality, mistake, speed, precision, contact). Empty = all rendered,
     # the prompt of every checkpoint trained before 2026-11-14.
     prompt_clauses_off: list[str] = field(default_factory=list)
+    # The two sentences of the base MolmoAct2 prompt this fork never rendered: "The setup is
+    # <setup_start>{prompt_setup}<setup_end>." after the task and "The expected control mode is
+    # <control_start>{prompt_expected_control_mode}<control_end>." before the question. With every
+    # other clause off the prompt is then the base one. Empty = not rendered.
+    prompt_setup: str = ""
+    prompt_expected_control_mode: str = ""
+    # Representation penalty (docs/notes/representation_penalty.md): representation_beta times the
+    # relative squared distance between this model's residual stream and base MolmoAct2's, on the
+    # same frames, noise and flow times, mean over the language model blocks and the action expert
+    # blocks. None = off (no base copy kept). 0.0 = distances logged, nothing added to the loss.
+    representation_beta: float | None = None
 
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, prompt is

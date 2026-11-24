@@ -103,6 +103,14 @@ def analyse(W, joints, A_D, A_P1, A_P2, k: int, generator: torch.Generator) -> d
     out = {"lam": lam.cpu(), "null": null.cpu(), "kept": kept, "score": float((lam[:kept] - null[0]).sum()),
            "gradient_norm": float(G.norm()), "capture": {},
            "joint_gradient_norm": joints.flatten(1).norm(dim=1).cpu(), "joint_cosine": (flat @ flat.T).cpu()}
+    # along the eigenvectors q_i of the other data's second moment, largest first: the share of the other inputs'
+    # energy, of the task inputs' energy, and of |G|^2 and of each |G_j|^2 (G q_i is what the layer's gradient
+    # asks for when the input is q_i). Leaving out the first r gives what G (I - P_r) keeps.
+    old, Q = torch.linalg.eigh((A_P1 + A_P2) / 2)
+    old, Q = old.flip(0), Q.flip(1)
+    out["old"] = {"other": (old / old.sum()).cpu(), "task": ((Q * (A_D @ Q)).sum(0) / A_D.trace()).cpu(),
+                  "gradient": ((G @ Q).norm(dim=0) ** 2 / G.norm() ** 2).cpu(),
+                  "joint_gradient": ((joints @ Q).norm(dim=1) ** 2 / (joints.flatten(1).norm(dim=1) ** 2)[:, None]).cpu()}
     if kept == 0:
         return out
     Vq = torch.linalg.qr(vecs[:, :kept])[0]

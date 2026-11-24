@@ -1,6 +1,6 @@
 """Tables and figures of ``sta.py``.
 
-    uv run python lerobot/adhocs/sta/report.py outputs/analysis/sta_2026-11-23/m0.pt --blocks 7,14,21,28
+    uv run python lerobot/adhocs/sta/report.py outputs/analysis/sta_2026-11-23/m0_joints.pt --blocks 7,14,21,28
 
 Prints the capture table of ``blocks`` (index into the action expert's blocks, from 0) and writes next to the file:
 ``score.png`` (layer score against depth, one panel per kind of layer), ``capture.png`` (capture against depth, ours
@@ -37,6 +37,31 @@ for block in blocks:
             layer = model["layers"][f"{block}.{kind}"]
             capture = " | ".join(f"{layer['capture'][c]:.1e}" if layer["capture"] else "" for c in COLUMNS)
             print(f"| {block}.{kind} | {name} | {layer['kept']} | {layer['score']:.1f} | {layer['lam'][0]:.1f} | {layer['null'][0]:.2f} | {capture} |")
+
+JOINTS = ["pan", "lift", "elbow", "wrist flex", "wrist yaw", "wrist roll", "gripper"]
+SHARES = [0.9, 0.99, 0.999]
+
+
+def left(old, share, key):
+    """What ``key`` keeps once the largest directions of the other data holding ``share`` of its energy are removed."""
+    rank = int((old["other"].cumsum(0) < share).sum()) + 1
+    return 1 - old[key][..., :rank].sum(-1)
+
+
+print("\nshare of sum_j |G_j|^2 per joint | of |G|^2 left without the other data's directions holding 0.9 / 0.99 / 0.999 of its energy (task input energy left)")
+print("| layer | model | " + " | ".join(JOINTS) + " | " + " | ".join(str(s) for s in SHARES) + " | per joint at 0.99 |\n|" + "---|" * (3 + len(JOINTS) + len(SHARES)))
+for block in blocks:
+    for kind in KINDS:
+        for name, model in models.items():
+            layer = model["layers"][f"{block}.{kind}"]
+            squared = layer["joint_gradient_norm"] ** 2
+            joints = " | ".join(f"{v:.2f}" for v in (squared / squared.sum()).tolist())
+            kept = " | ".join(f"{left(layer['old'], s, 'gradient'):.3f} ({left(layer['old'], s, 'task'):.3f})" for s in SHARES)
+            per_joint = " ".join(f"{v:.2f}" for v in left(layer["old"], 0.99, "joint_gradient").tolist())
+            print(f"| {block}.{kind} | {name} | {joints} | {kept} | {per_joint} |")
+for name, model in models.items():
+    total = sum(layer["gradient_norm"] ** 2 for layer in model["layers"].values())
+    print(name, "all layers:", ", ".join(f"{s}: {sum(float(left(layer['old'], s, 'gradient')) * layer['gradient_norm'] ** 2 for layer in model['layers'].values()) / total:.3f}" for s in SHARES))
 
 
 def panels(title, value, file, log=True):

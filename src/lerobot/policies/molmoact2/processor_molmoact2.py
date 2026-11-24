@@ -309,8 +309,15 @@ def _build_robot_text(
     gripper_torque_levels: int = 0,
     velocity_string: str = "",
     tip_target_clause: str = "",
+    setup: str = "",
+    expected_control_mode: str = "",
 ) -> str:
     """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
+
+    setup, expected_control_mode: the two sentences of the base MolmoAct2 prompt
+    (MolmoAct2Config.prompt_setup / prompt_expected_control_mode), in the base positions:
+    the setup right after the task, the expected control mode right before the question.
+    Empty omits them.
 
     discrete_state_string: the current state as <state_k> digit tokens enclosed in
     STATE_START_TOKEN / STATE_END_TOKEN (_build_discrete_state_string), the
@@ -378,6 +385,12 @@ def _build_robot_text(
     )
     velocity_clause = f" The current velocity of the robot is {velocity_string}." if velocity_string else ""
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
+    setup_clause = f" The setup is <setup_start>{setup}<setup_end>." if setup else ""
+    expected_control_mode_clause = (
+        f" The expected control mode is <control_start>{expected_control_mode}<control_end>."
+        if expected_control_mode
+        else ""
+    )
     depth_clause = (
         f" The depth of the scene is {DEPTH_TOKEN * num_depth_tokens}." if num_depth_tokens > 0 else ""
     )
@@ -403,10 +416,10 @@ def _build_robot_text(
         if "contact" in metadata:
             metadata_clause += f" The contact is {contact_phrase_for(int(metadata['contact']))}."
     prompt = (
-        f"{embodiment_clause}{control_mode_clause}The task is to {task}."
+        f"{embodiment_clause}{control_mode_clause}The task is to {task}.{setup_clause}"
         f"{depth_clause}{subtask_clause}{state_clause}{velocity_clause}{gripper_torque_clause}{tip_target_clause}"
         f"{history_clause}{history_images_clause}"
-        f"{metadata_clause} "
+        f"{metadata_clause}{expected_control_mode_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
     if num_images <= 0:
@@ -1394,8 +1407,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     subtask_dropout: float = 0.0
     metadata_dropout: float = 0.0
     # Clauses left out of every prompt, training and inference
-    # (MolmoAct2Config.prompt_clauses_off): control_mode and the metadata keys.
+    # (MolmoAct2Config.prompt_clauses_off): control_mode, subtask and the metadata keys.
     prompt_clauses_off: list[str] = field(default_factory=list)
+    # The base prompt's setup and expected-control-mode sentences (MolmoAct2Config.prompt_setup,
+    # prompt_expected_control_mode); empty = not rendered.
+    prompt_setup: str = ""
+    prompt_expected_control_mode: str = ""
     # Gripper torque clause: number of levels the complementary column
     # "gripper_torque_level" counts in (GripperTorqueConfig.levels); 0 = clause off.
     gripper_torque_levels: int = 0
@@ -1526,6 +1543,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "subtask_dropout": self.subtask_dropout,
             "metadata_dropout": self.metadata_dropout,
             "prompt_clauses_off": list(self.prompt_clauses_off),
+            "prompt_setup": self.prompt_setup,
+            "prompt_expected_control_mode": self.prompt_expected_control_mode,
             "gripper_torque_levels": self.gripper_torque_levels,
             "velocity_low": list(self.velocity_low),
             "velocity_high": list(self.velocity_high),
@@ -2180,6 +2199,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_dim_is_pad[:, :real_action_dim] = False
 
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
+        if "subtask" in self.prompt_clauses_off:
+            subtask_texts = [None] * batch_size
         embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
         control_modes = self._extract_control_modes(complementary, batch_size)
         if "control_mode" in self.prompt_clauses_off:
@@ -2269,6 +2290,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 gripper_torque_levels=self.gripper_torque_levels,
                 velocity_string=velocity_strings[batch_idx],
                 tip_target_clause=tip_target_clauses[batch_idx],
+                setup=self.prompt_setup,
+                expected_control_mode=self.prompt_expected_control_mode,
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -2648,6 +2671,8 @@ def make_molmoact2_pre_post_processors(
             subtask_dropout=config.subtask_dropout,
             metadata_dropout=config.metadata_dropout,
             prompt_clauses_off=list(getattr(config, "prompt_clauses_off", [])),
+            prompt_setup=config.prompt_setup,
+            prompt_expected_control_mode=config.prompt_expected_control_mode,
             gripper_torque_levels=gripper_torque_levels,
             history_dropout=history_dropout,
             history_stride_seconds=config.history_stride_seconds,

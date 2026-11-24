@@ -288,6 +288,12 @@ class ValLoss:
                     )
                     totals[destination] += float(metrics[source]) * metric_count
                     counts[destination] += metric_count
+                # Representation distances to base (rep/..., modeling_molmoact2._relative_distance).
+                for source, value in metrics.items():
+                    if source.startswith("rep/"):
+                        destination = f"val_{source}"
+                        totals[destination] = totals.get(destination, 0.0) + value * count
+                        counts[destination] = counts.get(destination, 0) + count
                 # Tip adapter numbers: means over the frames with a target row / with the target
                 # in the wrist view (policies/molmoact2/tip_target.py).
                 tip_keys = {

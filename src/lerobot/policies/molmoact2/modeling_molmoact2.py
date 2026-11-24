@@ -585,6 +585,18 @@ def _sample_beta_timesteps(
     return time_offset + scale * samples
 
 
+def _relative_distance(new: Tensor, base: Tensor, valid: Tensor) -> tuple[Tensor, Tensor]:
+    """Relative squared distance |new - base|^2 / |base|^2 per token, and its norm part
+    (|new| / |base| - 1)^2; the rest, 2 |new| / |base| (1 - cos), is the cosine part. Each is a mean
+    over the valid tokens of an example. Only the distance carries gradient."""
+    new, base = new.float(), base.float()
+    base_norm = base.norm(dim=-1).clamp_min(1e-6)
+    distance = (new - base).square().sum(-1) / base_norm.square()
+    norm_part = (new.detach().norm(dim=-1) / base_norm - 1).square()
+    weights = valid / valid.sum(-1, keepdim=True).clamp_min(1.0)
+    return (distance * weights).sum(-1), (norm_part * weights).sum(-1)
+
+
 def _patch_batched_image_attention_bias(backbone: Any) -> None:
     original = getattr(backbone, "_build_native_attention_bias", None)
     if original is None:
@@ -1730,6 +1742,17 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
 
+        # Representation penalty: base MolmoAct2's language model blocks and action expert, copied
+        # here, before any checkpoint is loaded over the model. Held in a list so the copy is not a
+        # submodule: not saved, not trained, and moved to the device by the joint loop.
+        self._representation_reference: list[nn.Module] = []
+        if self.config.representation_beta is not None:
+            self._representation_reference = [
+                copy.deepcopy(self._backbone().transformer.blocks).requires_grad_(False).eval(),
+                copy.deepcopy(self._backbone()._require_action_expert()).requires_grad_(False).eval(),
+            ]
+        self._representation: tuple[Tensor, dict[str, float]] | None = None
+
         # Point-map depth mirrors Molmo's image path after patch extraction. The CNN
         # emits a 24x32 fine grid; independent copies of seven pretrained RGB ViT
         # blocks produce H3/H7, then copied RGB pooling/projector modules produce the
@@ -2846,12 +2869,39 @@ class MolmoAct2Policy(PreTrainedPolicy):
             and torch.is_grad_enabled()
         )
 
+        # Representation penalty: base's blocks run next to the model's, from the same input
+        # embeddings (the vision tower and the embeddings are frozen), noise and flow times.
+        reference = self._representation_reference
+        reference_hidden = reference_action_hidden = None
+        if reference:
+            reference_blocks, reference_expert = (module.to(device) for module in reference)
+            with torch.no_grad():
+                reference_conditioning = self._action_time_conditioning(reference_expert, timesteps_flat)
+                reference_action_hidden = reference_expert.action_embed(xt_flat)
+                if valid_action is not None:
+                    reference_action_hidden = reference_action_hidden * valid_action
+            reference_hidden = hidden_states.detach()
+            attention_mask = model_inputs.get("attention_mask")
+            token_valid = (
+                attention_mask.float()
+                if torch.is_tensor(attention_mask)
+                else torch.ones(hidden_states.shape[:2], device=device)
+            )
+            action_valid = (
+                valid_action.squeeze(-1).float()
+                if valid_action is not None
+                else torch.ones(action_hidden.shape[:2], device=device)
+            )
+
         def run_layer(
             layer_idx: int,
             layer_hidden: Tensor,
             layer_action_hidden: Tensor,
+            decoder_blocks: nn.Module = transformer.blocks,
+            action_expert: nn.Module = action_expert,
+            conditioning: Tensor = conditioning,
         ) -> tuple[Tensor, Tensor]:
-            decoder_block = transformer.blocks[layer_idx]
+            decoder_block = decoder_blocks[layer_idx]
             action_block = action_expert.blocks[layer_idx]
             if transformer.config.rope_scaling_layers is not None:
                 position_embeddings_i = (
@@ -2917,20 +2967,63 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 next_action_hidden = next_action_hidden * valid_action
             return next_hidden, next_action_hidden
 
+        distances: list[tuple[Tensor, ...]] = []
         for layer_idx in range(int(transformer.config.num_hidden_layers)):
+            if reference:
+                with torch.no_grad():
+                    reference_hidden, reference_action_hidden = run_layer(
+                        layer_idx,
+                        reference_hidden,
+                        reference_action_hidden,
+                        reference_blocks,
+                        reference_expert,
+                        reference_conditioning,
+                    )
+
+            # The distances are computed inside the checkpoint unit, so their float32
+            # intermediates are not kept for 36 layers.
+            def step(
+                layer_hidden: Tensor,
+                layer_action_hidden: Tensor,
+                idx: int = layer_idx,
+                base_hidden: Tensor | None = reference_hidden,
+                base_action_hidden: Tensor | None = reference_action_hidden,
+            ) -> tuple[Tensor, ...]:
+                next_hidden, next_action_hidden = run_layer(idx, layer_hidden, layer_action_hidden)
+                if not reference:
+                    return next_hidden, next_action_hidden
+                return (
+                    next_hidden,
+                    next_action_hidden,
+                    *_relative_distance(next_hidden, base_hidden, token_valid),
+                    *_relative_distance(next_action_hidden, base_action_hidden, action_valid),
+                )
+
             if use_gradient_checkpointing:
-                hidden_states, action_hidden = torch.utils.checkpoint.checkpoint(
-                    lambda layer_hidden, layer_action_hidden, idx=layer_idx: run_layer(
-                        idx,
-                        layer_hidden,
-                        layer_action_hidden,
-                    ),
-                    hidden_states,
-                    action_hidden,
-                    use_reentrant=False,
+                outputs = torch.utils.checkpoint.checkpoint(
+                    step, hidden_states, action_hidden, use_reentrant=False
                 )
             else:
-                hidden_states, action_hidden = run_layer(layer_idx, hidden_states, action_hidden)
+                outputs = step(hidden_states, action_hidden)
+            hidden_states, action_hidden = outputs[:2]
+            distances.append(outputs[2:])
+
+        self._representation = None
+        if reference:
+            # [layers, B] for the language model, [layers, B * flow times] for the expert.
+            lm, lm_norm, expert, expert_norm = (torch.stack(parts) for parts in zip(*distances, strict=True))
+            penalty = (lm.mean(0) + expert.view(len(distances), batch_size, -1).mean((0, 2))) / 2
+            representation_metrics: dict[str, float] = {}
+            for name, distance, norm_part in (("lm", lm, lm_norm), ("expert", expert, expert_norm)):
+                distance = distance.detach().mean(1)
+                norm_part = norm_part.mean(1)
+                representation_metrics[f"rep/{name}"] = distance.mean().item()
+                for layer, (norm_value, cos_value) in enumerate(
+                    zip(norm_part.tolist(), (distance - norm_part).tolist(), strict=True)
+                ):
+                    representation_metrics[f"rep/{name}_norm/{layer:02d}"] = norm_value
+                    representation_metrics[f"rep/{name}_cos/{layer:02d}"] = cos_value
+            self._representation = (penalty, representation_metrics)
 
         hidden_states = transformer.ln_f(hidden_states)
         pred_velocity = action_expert.final_layer(action_hidden, conditioning)
@@ -3791,6 +3884,17 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 )
             if flow_diagnostics_requested:
                 metrics.update(flow_diagnostics)
+
+        if self._representation is not None:
+            penalty, representation_metrics = self._representation
+            self._representation = None
+            if reduction == "mean":
+                penalty = penalty.mean()
+            if self.config.representation_beta > 0:
+                losses.append(self.config.representation_beta * penalty)
+            metrics.update(representation_metrics)
+            # Kept with its graph: the trainer reads the penalty's gradient from it.
+            metrics["representation_penalty"] = penalty
 
         # Hand-block scalars (block means of the flow loss, the FK term) from the flow pass.
         metrics.update(getattr(self, "_hand_loss_metrics", None) or {})

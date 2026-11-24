@@ -263,6 +263,32 @@ _FORWARDED_COMPLEMENTARY = (
 
 # EE mixture loss telemetry (policies/molmoact2/hand_loss.py): the model's batch means of
 # the joint block, the hand block and the FK term -> the logged loss terms, train and val.
+def _representation_gradients(
+    policy: nn.Module, parameters: list[nn.Parameter], penalty_grads: tuple, grad_accum: int
+) -> dict[str, float]:
+    """Norms of the loss gradient and of the representation penalty gradient, and their cosine, over
+    the action expert's parameters and over the rest (the language model). Read after the first
+    microbatch's backward, when p.grad = (loss gradient + beta * penalty gradient) / grad_accum."""
+    beta = policy.config.representation_beta
+    names = {id(parameter): name for name, parameter in policy.named_parameters()}
+    sums = {"lm": [0.0, 0.0, 0.0], "expert": [0.0, 0.0, 0.0]}
+    for parameter, penalty_grad in zip(parameters, penalty_grads, strict=True):
+        if penalty_grad is None or parameter.grad is None:
+            continue
+        penalty_grad = penalty_grad.float()
+        loss_grad = parameter.grad.float() * grad_accum - beta * penalty_grad
+        group = sums["expert" if ".action_expert." in names[id(parameter)] else "lm"]
+        group[0] += loss_grad.square().sum().item()
+        group[1] += penalty_grad.square().sum().item()
+        group[2] += (loss_grad * penalty_grad).sum().item()
+    out = {}
+    for name, (loss_square, penalty_square, dot) in sums.items():
+        out[f"rep/grad_norm_loss_{name}"] = loss_square**0.5
+        out[f"rep/grad_norm_penalty_{name}"] = penalty_square**0.5
+        out[f"rep/grad_cos_{name}"] = dot / max((loss_square * penalty_square) ** 0.5, 1e-30)
+    return out
+
+
 _HAND_TERM_KEYS = {
     "hand_flow_joint": "loss_hand_joint",
     "hand_flow_hand": "loss_hand_pose",
@@ -1318,6 +1344,17 @@ class MolmoAct2Trainer(Trainer):
 
             adv_weights = adv_weights_per_batch[accum_idx] if advantage_weighting else None
 
+            # Representation penalty: its gradient next to the loss gradient, on the first microbatch
+            # of a logged step. A forward of its own (own noise draw): keeping the main graph for a
+            # second backward holds every checkpointed layer in memory.
+            penalty_grads = None
+            if raw_policy.config.representation_beta is not None and capture_modality_telemetry and accum_idx == 0:
+                _, penalty_metrics = raw_policy(fwd_batch, reduction="none", return_diagnostics=True)
+                penalty_grads = torch.autograd.grad(
+                    penalty_metrics["representation_penalty"].mean(), actor_params, allow_unused=True
+                )
+                del penalty_metrics
+
             with runtime.no_sync(policy, accum_idx, grad_accum):
                 # Calling the wrapper enters DDP's reducer for this microbatch.
                 loss, metrics = policy(fwd_batch, reduction="none", return_diagnostics=True)
@@ -1363,7 +1400,10 @@ class MolmoAct2Trainer(Trainer):
                     if isinstance(loss, torch.Tensor)
                     else torch.as_tensor(loss, device=actions.device)
                 )
+                metrics.pop("representation_penalty", None)
                 runtime.backward(loss_for_backward / grad_accum)
+                if penalty_grads is not None:
+                    accum.update(_representation_gradients(raw_policy, actor_params, penalty_grads, grad_accum))
 
                 # Subtask-generation CE (two-prompt design): separate forward on the
                 # generation prompt for annotated samples; grads accumulate alongside.
@@ -1390,7 +1430,7 @@ class MolmoAct2Trainer(Trainer):
                 )
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
             for key, value in metrics.items():
-                if key.startswith("future_visual_"):
+                if key.startswith(("future_visual_", "rep/")):
                     accum[key] = accum.get(key, 0.0) + float(value) / grad_accum
             for source, destination in _HAND_TERM_KEYS.items():
                 if source in metrics:
@@ -1886,7 +1926,7 @@ class MolmoAct2Trainer(Trainer):
         return {
             key: value
             for key, value in training_infos.items()
-            if key in cls._AIM_METRIC_KEYS or key.startswith(("optim/", "awr/", "tip/", "val_tip_"))
+            if key in cls._AIM_METRIC_KEYS or key.startswith(("optim/", "awr/", "tip/", "val_tip_", "rep/", "val_rep/"))
         }
 
     def log_metrics(
@@ -1956,6 +1996,10 @@ class MolmoAct2Trainer(Trainer):
             "depth_grad_norm_preclip",
             "optim/moved_frac/total",
             "optim/rn_moved_frac/total",
+            "rep/lm",
+            "rep/expert",
+            "val_rep/lm",
+            "val_rep/expert",
         )
         console_scalars = {
             k: training_infos[k] for k in console_keys if isinstance(training_infos.get(k), (int, float))
