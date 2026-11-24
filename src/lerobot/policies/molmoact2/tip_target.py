@@ -134,6 +134,23 @@ def tip_vector(scores, points):
     return p[:, -1], (weights[..., None] * points[..., :3].reshape(b, -1, 3)).sum(1)
 
 
+def tip_label(target):
+    """target [B, 6] rows of utils/tip_target.py -> the label [B, 730]: a bump around the target pixel over the
+    wrist patches, or everything on "no target" (target out of the wrist view, no target, or a NaN row)."""
+    b = target.shape[0]
+    in_view = ~torch.isnan(target).any(-1) & (target[:, 0] > 0)
+    gu, gv = target[:, 4] * GRID / 640, target[:, 5] * GRID / 480
+    centre = torch.arange(GRID, device=target.device) + 0.5
+    bump = torch.exp(
+        -((centre[None, :, None] - gv[:, None, None]) ** 2 + (centre[None, None, :] - gu[:, None, None]) ** 2)
+        / (2 * LABEL_SIGMA**2)
+    ).reshape(b, -1)
+    label = target.new_zeros(b, GRID * GRID + 1)
+    label[in_view, :-1] = (bump / bump.sum(1, keepdim=True))[in_view]
+    label[~in_view, -1] = 1
+    return label
+
+
 def tip_target_loss(scores, target, points, reduction):
     """scores [B, 730] (float32); target [B, 6] rows of utils/tip_target.py; points [B, 27, 27, 4] from patch_points.
 
@@ -142,18 +159,10 @@ def tip_target_loss(scores, target, points, reduction):
     tip_loss and tip_none_accuracy are means over the tip_frames rows with a target row; tip_peak_on_patch,
     tip_peak_within_one and tip_vector_error_cm (adapter vector against the target offset) are means over the
     tip_target_frames rows whose target is in the wrist view."""
-    b = scores.shape[0]
     known = ~torch.isnan(target).any(-1)
     in_view = known & (target[:, 0] > 0)
     gu, gv = target[:, 4] * GRID / 640, target[:, 5] * GRID / 480
-    centre = torch.arange(GRID, device=scores.device) + 0.5
-    bump = torch.exp(
-        -((centre[None, :, None] - gv[:, None, None]) ** 2 + (centre[None, None, :] - gu[:, None, None]) ** 2)
-        / (2 * LABEL_SIGMA**2)
-    ).reshape(b, -1)
-    label = torch.zeros_like(scores)
-    label[in_view, :-1] = (bump / bump.sum(1, keepdim=True))[in_view]
-    label[~in_view, -1] = 1
+    label = tip_label(target)
     per_frame = -(label * scores.log_softmax(-1)).sum(-1) * known
 
     with torch.no_grad():

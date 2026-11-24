@@ -115,6 +115,12 @@ class RemotePolicy(nn.Module):
         self._conn.send((_to_numpy(batch), _to_numpy(kwargs)))
         return torch.from_numpy(self._conn.recv()).to(self._device_anchor.device)
 
+    @torch.no_grad()
+    def predict_tip_target(self, batch: dict) -> torch.Tensor:
+        # Same connection; the server tells the two calls apart by the "tip_target" keyword.
+        self._conn.send((_to_numpy(batch), {"tip_target": True}))
+        return torch.from_numpy(self._conn.recv()).to(self._device_anchor.device)
+
 
 class RemotePolicyTrainer:
     """The config's trainer, except that the policy it makes is the remote one."""
@@ -174,6 +180,12 @@ def serve(cfg: RemoteInferenceConfig) -> None:
         start = time.perf_counter()
         for group in groups.values():
             conns, generators, batches, kwargs = zip(*group, strict=True)
+            if kwargs[0].get("tip_target"):  # RemotePolicy.predict_tip_target: rows [in_view, x, y, z]
+                with torch.no_grad():
+                    rows = policy.predict_tip_target(_to_tensor(_concatenate(batches), device))
+                for conn, row in zip(conns, rows.float().cpu().numpy(), strict=True):
+                    conn.send(row[None])
+                continue
             with torch.no_grad():
                 torch.compiler.cudagraph_mark_step_begin()
                 chunks = policy.predict_action_chunk(

@@ -93,6 +93,9 @@ Each note opens with `> **Status:** ...`. Vocabulary: **idea** Â· **building** Â
 Saved analyses. The HTML embeds its numbers and opens without a model or server; frame links
 inside point at the original `outputs/probe_runs/...` directory on the training machine.
 
+- [`vlm_parts_2026-11-17.md`](reports/vlm_parts_2026-11-17.md): which part of the fine-tuned
+  model carries the robot skill; base vision encoder / language model / action expert put back
+  one at a time, recorded frames and sim (2026-11-17).
 - [`lid_solvability/`](reports/lid_solvability/README.md): can the gripper close the sim
   headphone-case lid; scripted grasps, kinematic ceiling per rim, demo case pose (2026-10-28).
 - [`embodiment_stats_recompute/`](reports/embodiment_stats_recompute/README.md): q01/q99 bands

@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Layer by layer</title>
+<script src="/plotly.js"></script>
+<style>
+  :root { color-scheme: dark; --bg: #15171a; --panel: #1d2024; --line: #30353c; --text: #e6e8eb; --dim: #8b929c;
+          --accent: #4c9aff; --act: #f0a04b; --bad: #ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+  #layout { display: grid; grid-template-columns: 340px 1fr; min-height: 100vh; }
+  #side { background: var(--panel); border-right: 1px solid var(--line); padding: 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  #main { padding: 18px 22px 60px; min-width: 0; }
+  h2 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 18px 0 8px; font-weight: 600; }
+  h2:first-child { margin-top: 0; }
+  select, input[type=number] { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; padding: 5px 8px; }
+  #side select { width: 100%; }
+  #frames { height: 230px; font-size: 12px; padding: 2px; }
+  .thumbs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 8px; }
+  .thumbs img { width: 100%; border-radius: 6px; display: block; }
+  .field { display: grid; grid-template-columns: 74px 1fr; gap: 6px 8px; align-items: center; color: var(--dim); font-size: 13px; }
+  .field input[type=range] { width: 100%; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  .tab { padding: 8px 18px; cursor: pointer; color: var(--dim); border-bottom: 2px solid transparent; font-weight: 600; }
+  .tab.on { color: var(--text); border-color: var(--accent); }
+  .pane { display: none; } .pane.on { display: block; }
+  .hint { color: var(--dim); font-size: 13px; margin: 0 0 8px; max-width: 110ch; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 0 0 10px; }
+  .row label { color: var(--dim); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg span { padding: 4px 11px; cursor: pointer; color: var(--dim); font-size: 13px; border-right: 1px solid var(--line); user-select: none; }
+  .seg span:last-child { border-right: 0; }
+  .seg span.on { background: #4c9aff2a; color: var(--text); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; cursor: pointer; color: var(--dim); font-size: 12px; user-select: none; }
+  .chip.on { color: var(--text); background: #ffffff10; }
+  button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 6px 12px; cursor: pointer; }
+  button.go { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 7px 22px; }
+  #status { color: var(--dim); font-size: 13px; margin-top: 8px; min-height: 2.6em; }
+  #status.bad { color: var(--bad); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-top: 14px; padding: 6px; }
+  .two { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; } .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .two .card, .three .card { margin-top: 0; min-width: 0; }
+  .plot { height: 440px; } .plot.small { height: 340px; } .plot.tall { height: 560px; }
+  table { border-collapse: collapse; margin: 6px 8px 10px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 5px 16px 5px 6px; text-align: right; }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; } td:first-child, th:first-child { text-align: left; }
+  dl { margin: 8px 10px; font-size: 13px; display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; max-width: 120ch; }
+  dt { color: var(--text); font-weight: 600; } dd { margin: 0; color: var(--dim); }
+  code { color: var(--text); }
+</style>
+</head>
+<body>
+<div id="layout">
+<div id="side">
+  <h2>Frames</h2>
+  <div class="seg" id="scope" style="margin-bottom:8px"><span data-v="one" class="on">one frame</span><span data-v="episode">its episode</span><span data-v="all">all frames</span></div>
+  <select id="frames" size="12"></select>
+  <div class="thumbs" id="thumbs"></div>
+  <h2>Input A (the reference)</h2>
+  <div class="field" id="specA"></div>
+  <h2>Input B</h2>
+  <div class="field" id="specB"></div>
+  <p class="hint" style="margin-top:12px">An input is what the language model gets at the image positions: own tokens + fraction x (source tokens - own tokens), on the chosen positions. Everything else of the prompt is the frame's own.</p>
+  <button class="go" id="run">Run</button>
+  <div id="status"></div>
+  <p class="hint" id="about"></p>
+</div>
+<div id="main">
+  <div class="tabs" id="tabs">
+    <div class="tab on" data-v="layers">Layers</div><div class="tab" data-v="map">Map</div><div class="tab" data-v="read">Expert read</div>
+    <div class="tab" data-v="output">Output</div><div class="tab" data-v="sweep">Sweep</div>
+  </div>
+
+  <div class="pane on" id="pane-layers">
+    <div class="row">
+      <div class="seg" id="measure"></div>
+      <label><input type="checkbox" id="log"> log axis</label>
+    </div>
+    <div class="row">
+      <div class="seg" id="quantity"><span data-v="hidden" class="on">block outputs</span><span data-v="keys">keys read by the expert</span><span data-v="values">values read by the expert</span></div>
+      <label><input type="checkbox" id="showNext" checked> images 1 s later (dashed)</label>
+      <label><input type="checkbox" id="showOther" checked> another episode (dotted)</label>
+      <label><input type="checkbox" id="showSeed"> another flow seed (dash-dot, expert)</label>
+    </div>
+    <div class="chips" id="kinds"></div>
+    <div class="two" style="margin-top:14px">
+      <div class="card"><div class="plot" id="plot-lm"></div></div>
+      <div class="card"><div class="plot" id="plot-expert"></div></div>
+    </div>
+    <p class="hint" style="margin-top:10px">Solid: input B against input A. Dashed and dotted: the own tokens of the camera images 1 s later / of another episode against the frame's own tokens (the size of a real change of the picture). Dash-dot, expert only: the own tokens under another flow seed (far larger than the rest in the first blocks, where the expert holds mostly its noise). One line per kind of position: the median over the positions of that kind, then the mean over the frames.</p>
+    <div class="card"><dl id="definitions"></dl></div>
+  </div>
+
+  <div class="pane" id="pane-map">
+    <div class="row">
+      <select id="mapQuantity"><option value="hidden">block outputs</option><option value="keys">keys read by the expert</option><option value="values">values read by the expert</option><option value="cross">expert, cross-attention output</option><option value="expert">expert, block output</option></select>
+      <select id="mapMeasure"></select>
+      <label><input type="checkbox" id="mapLog"> log colour</label>
+      <label>layer <input type="range" id="mapLayer" min="0" max="36" value="36"> <span id="mapLayerText"></span></label>
+    </div>
+    <p class="hint">Input B against input A at every layer (rows) and attended position (columns) of the selected frame (always one frame). Click a cell: its layer goes to the pictures below, its position to the curve; click a patch of a picture for its curve. The colour scale stops at the 98th percentile (not for the cosines); the hover shows the value.</p>
+    <div class="card"><div class="plot" id="plot-map"></div></div>
+    <div class="three" style="margin-top:14px" id="mapLower"></div>
+  </div>
+
+  <div class="pane" id="pane-read">
+    <div class="row">
+      <div class="seg" id="readQuantity"><span data-v="values" class="on">values</span><span data-v="keys">keys</span></div>
+      <div class="seg" id="readMeasure"></div>
+      <label><input type="checkbox" id="readLog"> log axis</label>
+    </div>
+    <p class="hint">What the action expert receives. Left: the share of the expert's cross-attention on each kind of position (input A, first flow step, mean over heads and action positions). Right: the change of what it reads. Thin lines: median over the positions of a kind. Thick blue: mean over all positions weighted by that attention. Thick orange: the change of the cross-attention output itself at the action positions (what the expert pulled out). Dashed: the same for the camera images 1 s later.</p>
+    <div class="two" style="grid-template-columns: 1fr 1.4fr">
+      <div class="card"><div class="plot" id="plot-mass"></div></div>
+      <div class="card"><div class="plot" id="plot-read"></div></div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-output">
+    <p class="hint">Tip distance: the tip path of each chunk (filtered as deployed, forward kinematics), distance between two chunks under the same flow seed, mean over the chunk and the flow seeds. KL: between the next-token distributions of the training forward at the recorded action tokens, KL(A || B), mean over the tokens. Open loop on recorded frames.</p>
+    <div class="card"><table id="outputTable"></table></div>
+    <div class="card"><div class="plot tall" id="plot-paths"></div></div>
+  </div>
+
+  <div class="pane" id="pane-sweep">
+    <div class="row"><button class="go" id="runSweep">Run the sweep</button><span class="hint" style="margin:0">Input B at fractions 0, 0.1, 0.25, 0.5, 0.75, 1 of its source, against input A, over the chosen frames. A straight line = the output follows the change in proportion.</span></div>
+    <div class="three">
+      <div class="card"><div class="plot small" id="plot-sweep-cm"></div></div>
+      <div class="card"><div class="plot small" id="plot-sweep-kl"></div></div>
+      <div class="card"><div class="plot small" id="plot-sweep-last"></div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const Q = s => document.querySelector(s);
+const MEASURES = {
+  ratio: ["distance / spread", "|x - a| / |a - m|. x: the vector under input B, a: under input A, m: the mean of the own-token runs over the frames of the page at the same layer and position (the same image patch, depth, state or end-of-prompt token; for the task, step and quality clauses, whose length varies, over the tokens of the clause; in the expert the same action position, all runs under the same flow noise). |a - m| is how far this frame is from the average frame. 0 = identical; about 1.4 = as far apart as two unrelated frames."],
+  vs1s: ["distance / distance of 1 s later", "|x - a| of input B divided by |x - a| of the camera images 1 s later (medians over positions, means over frames). 1 = the change is as large as that of the picture 1 s later."],
+  centered: ["cosine, mean removed", "cos(x - m, a - m). 1 = identical, 0 = as unrelated as two different frames."],
+  cosine: ["cosine, raw", "cos(x, a). High whenever both vectors share the large common part m, so it says little alone."],
+  distance: ["distance", "|x - a| in the units of the layer."],
+  length: ["length", "|a|, the length of the vector under input A (for the scale of the distance)."],
+};
+const SOURCES = {own: "own tokens", base: "base vision path", next: "camera images 1 s later", other: "camera images of another episode", mean: "mean token over frames (no picture)", random: "random direction, length of (base - own)"};
+const WHERE = {all: "all image positions", ordinary: "ordinary image tokens only", long: "long image tokens only"};
+const COLORS = ["#4c9aff", "#ff6b6b", "#3ecf8e", "#f0a04b", "#c58af9", "#e6e8eb", "#f472b6", "#facc15", "#8b929c"];
+const FRACTIONS = [0, 0.1, 0.25, 0.5, 0.75, 1];
+const state = {tab: "layers", scope: "one", measure: "ratio", quantity: "hidden", readQuantity: "values", readMeasure: "ratio", kinds: new Set(), job: 0};
+let info, data, first, map, sweep;
+
+async function get(url) {
+  const response = await fetch(url), json = JSON.parse((await response.text()).replace(/\bNaN\b/g, "null"));
+  if (json.error) throw new Error(json.error);
+  return json;
+}
+function status(text, bad) { Q("#status").textContent = text; Q("#status").className = bad ? "bad" : ""; }
+function seg(id, key, render) {
+  Q(id).addEventListener("click", event => {
+    if (!event.target.dataset.v) return;
+    state[key] = event.target.dataset.v;
+    Q(id).querySelectorAll("[data-v]").forEach(s => s.classList.toggle("on", s === event.target));
+    render();
+  });
+}
+function fold(acc, x) {  // sums of nested numbers, with a count per leaf
+  if (x === null || x === undefined) return acc;
+  if (typeof x === "number") { acc = acc || {leaf: true, s: 0, n: 0}; acc.s += x; acc.n += 1; return acc; }
+  if (Array.isArray(x)) { acc = acc || []; x.forEach((v, i) => { acc[i] = fold(acc[i], v); }); return acc; }
+  acc = acc || {};
+  for (const key in x) acc[key] = fold(acc[key], x[key]);
+  return acc;
+}
+function mean(acc) {
+  if (acc === undefined || acc === null) return null;
+  if (acc.leaf) return acc.s / acc.n;
+  if (Array.isArray(acc)) return acc.map(mean);
+  return Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, mean(v)]));
+}
+function spec(which) { return ["source", "where", "fraction"].map(k => Q(`#spec${which} [data-k=${k}]`).value).join("|"); }
+function specText(which) {
+  const [source, where, fraction] = spec(which).split("|");
+  return source === "own" || +fraction === 0 ? "own tokens" : `${SOURCES[source]}, ${WHERE[where]}${+fraction < 1 ? `, fraction ${fraction}` : ""}`;
+}
+function chosen() {
+  const at = +Q("#frames").value, f = info.frames[at];
+  if (state.scope === "one") return [at];
+  return info.frames.map((g, i) => i).filter(i => state.scope === "all" || info.frames[i].episode === f.episode);
+}
+async function over(frames, url, label, job) {  // the mean of a request over frames; the first frame's answer too
+  let acc, head;
+  for (const [i, at] of frames.entries()) {
+    status(`${label}: frame ${i + 1} of ${frames.length} ...`);
+    const answer = await get(url(at));
+    if (job !== state.job) return [null, null];
+    head = head || answer;
+    const {paths, ...numbers} = answer;
+    acc = fold(acc, numbers);
+  }
+  return [mean(acc), head];
+}
+
+// plots
+const AXIS = {gridcolor: "#30353c", zerolinecolor: "#30353c", linecolor: "#30353c"};
+function plot(id, traces, layout) {
+  const base = {paper_bgcolor: "#1d2024", plot_bgcolor: "#1d2024", font: {color: "#e6e8eb", size: 12}, margin: {l: 62, r: 16, t: 40, b: 50},
+                legend: {orientation: "h", y: -0.2, font: {size: 11}}, hovermode: "closest"};
+  for (const key of ["xaxis", "yaxis", "yaxis2"]) if (layout[key]) layout[key] = Object.assign({}, AXIS, layout[key]);
+  Plotly.react(id, traces, Object.assign(base, layout), {displaylogo: false, responsive: true});
+}
+function curve(pair, quantity, kind, measure) {
+  const of = name => ((data.pairs[name] || {}).curves || {})[quantity]?.[kind];
+  const own = of(pair);
+  if (!own) return null;
+  if (measure !== "vs1s") return own[measure];
+  const scale = of("next");
+  return scale ? own.distance.map((v, i) => v / scale.distance[i]) : null;
+}
+function line(pair, quantity, kind, measure, name, color, extra) {
+  const y = curve(pair, quantity, kind, measure);
+  if (!y) return [];
+  const x = y.map((_, i) => i + (quantity === "hidden" ? 0 : 1));
+  return [Object.assign({x, y, name, mode: "lines", line: {color, width: 2}, hovertemplate: `${name}<br>layer %{x}: %{y:.3f}<extra></extra>`}, extra)];
+}
+function scaleLines(quantity, kind, measure, color, group, withSeed) {
+  if (measure === "length") return [];
+  const out = [];
+  const add = (pair, dash, label) => out.push(...line(pair, quantity, kind, measure, `${group}: ${label}`, color, {line: {color, width: 1.3, dash}, legendgroup: group, showlegend: false}));
+  if (Q("#showNext").checked) add("next", "dash", "images 1 s later");
+  if (Q("#showOther").checked) add("other", "dot", "another episode");
+  if (withSeed && Q("#showSeed").checked) add("seed", "dashdot", "another flow seed");
+  return out;
+}
+function yAxis(measure, log) {
+  const axis = {title: {text: MEASURES[measure][0]}, type: log ? "log" : "linear"};
+  if (!log && (measure === "centered" || measure === "cosine")) axis.range = [-0.1, 1.05];
+  return axis;
+}
+function renderLayers() {
+  if (!data) return;
+  const {measure, quantity} = state, log = Q("#log").checked, traces = [];
+  info.kinds.concat(quantity === "hidden" ? [] : [info.weighted]).forEach((kind, i) => {
+    if (!state.kinds.has(kind) && kind !== info.weighted) return;
+    const color = kind === info.weighted ? "#ffffff" : COLORS[i];
+    traces.push(...line("b", quantity, kind, measure, kind, color, {legendgroup: kind, line: {color, width: kind === info.weighted ? 3.5 : 2}}), ...scaleLines(quantity, kind, measure, color, kind));
+  });
+  const names = {hidden: "language model, block outputs (0 = input of the first block)", keys: "language model, keys read by expert block n", values: "language model, values read by expert block n"};
+  plot("plot-lm", traces, {title: {text: names[quantity], font: {size: 13}}, xaxis: {title: {text: "layer"}}, yaxis: yAxis(measure, log)});
+  const expert = [];
+  [["cross", "cross-attention output", "#4c9aff"], ["expert", "block output", "#f0a04b"]].forEach(([q, name, color]) => {
+    expert.push(...line("b", q, info.action, measure, name, color, {legendgroup: name}), ...scaleLines(q, info.action, measure, color, name, true));
+  });
+  plot("plot-expert", expert, {title: {text: "action expert, action positions, first flow step", font: {size: 13}}, xaxis: {title: {text: "expert block"}}, yaxis: yAxis(measure, log)});
+}
+function renderRead() {
+  if (!data) return;
+  const q = state.readQuantity, measure = state.readMeasure, log = Q("#readLog").checked;
+  const mass = Object.entries(data.attention).map(([kind, y]) => ({x: y.map((_, i) => i + 1), y, name: kind, type: "bar", marker: {color: COLORS[info.kinds.indexOf(kind)]}}));
+  plot("plot-mass", mass, {legend: {orientation: "h", y: -0.32, font: {size: 11}}, barmode: "stack", bargap: 0, title: {text: "share of the expert's cross-attention", font: {size: 13}}, xaxis: {title: {text: "expert block"}}, yaxis: {range: [0, 1]}});
+  const traces = [];
+  ["image, ordinary", "image, long", "depth", "state"].forEach(kind => traces.push(...line("b", q, kind, measure, `${q}: ${kind}`, COLORS[info.kinds.indexOf(kind)], {line: {color: COLORS[info.kinds.indexOf(kind)], width: 1.2}})));
+  traces.push(...line("b", q, info.weighted, measure, `${q}: weighted by attention`, "#4c9aff", {line: {color: "#4c9aff", width: 3.5}}));
+  traces.push(...line("b", "cross", info.action, measure, "cross-attention output", "#f0a04b", {line: {color: "#f0a04b", width: 3.5}}));
+  if (measure !== "length") {
+    traces.push(...line("next", q, info.weighted, measure, "1 s later: weighted by attention", "#4c9aff", {line: {color: "#4c9aff", width: 1.6, dash: "dash"}}));
+    traces.push(...line("next", "cross", info.action, measure, "1 s later: cross-attention output", "#f0a04b", {line: {color: "#f0a04b", width: 1.6, dash: "dash"}}));
+  }
+  plot("plot-read", traces, {title: {text: `input B against input A: ${q} read, and what comes out of the cross-attention`, font: {size: 13}}, xaxis: {title: {text: "expert block"}}, yaxis: yAxis(measure, log)});
+}
+function renderOutput() {
+  if (!data) return;
+  const f = (v, d = 2) => v === null || v === undefined ? "" : v.toFixed(d), out = name => (data.pairs[name] || {}).output || {};
+  const rows = [
+    ["input B against input A", out("b").cm, out("b").kl, out("b").ce],
+    ["camera images 1 s later against own tokens", out("next").cm, out("next").kl, out("next").ce],
+    ["camera images of another episode against own tokens", out("other").cm, out("other").kl, out("other").ce],
+    [`two flow seeds of input A`, data.two_seeds, null, null],
+    ["input A to the recorded chunk", data.to_recorded.a, null, null],
+    ["input B to the recorded chunk", data.to_recorded.b, null, null],
+  ];
+  Q("#outputTable").innerHTML = "<tr><th></th><th>tip distance (cm)</th><th>KL of the action-token distributions</th><th>rise of the cross-entropy on the recorded tokens</th></tr>" +
+    rows.map(([name, cm, kl, ce]) => `<tr><td>${name}</td><td>${f(cm)}</td><td>${f(kl, 4)}</td><td>${f(ce, 4)}</td></tr>`).join("");
+  const traces = [], path = (p, name, color, width, show) => ({type: "scatter3d", mode: "lines", x: p.map(v => v[0]), y: p.map(v => v[1]), z: p.map(v => v[2]), name, legendgroup: name, showlegend: show, line: {color, width}});
+  first.paths.a.forEach((p, i) => traces.push(path(p, "input A", "#4c9aff", 4, i === 0)));
+  first.paths.b.forEach((p, i) => traces.push(path(p, "input B", "#f0a04b", 4, i === 0)));
+  traces.push(path(first.paths.recorded, "recorded", "#e6e8eb", 3, true));
+  const axis = t => Object.assign({title: {text: t}, backgroundcolor: "#1d2024"}, AXIS);
+  plot("plot-paths", traces, {title: {text: `tip paths (cm), ${info.seeds} flow seeds, frame ${first.name}`, font: {size: 13}}, scene: {aspectmode: "data", xaxis: axis("x"), yaxis: axis("y"), zaxis: axis("z")}, margin: {l: 0, r: 0, t: 40, b: 0}});
+}
+
+// map
+async function loadMap() {
+  if (!data) return;
+  const at = +Q("#frames").value, job = state.job;
+  status("map ...");
+  try {
+    const answer = await get(`/map?frame=${at}&a=${spec("A")}&b=${spec("B")}&quantity=${Q("#mapQuantity").value}&measure=${Q("#mapMeasure").value}`);
+    if (job !== state.job) return;
+    map = Object.assign(answer, {frame: at, position: map && map.tokens.length === answer.tokens.length ? map.position : Math.max(0, answer.image.findIndex(v => v >= 0))});
+    Q("#mapLayer").max = map.z.length - 1;
+    Q("#mapLayer").value = Math.min(+Q("#mapLayer").value, map.z.length - 1);
+    status(state.text || "");
+    renderMap();
+  } catch (error) { status(error.message, true); }
+}
+function cap(rows) {  // the 98th percentile of a map, so that a few cells do not take the whole colour scale
+  const values = rows.flat().filter(v => v !== null && isFinite(v)).sort((x, y) => x - y);
+  return ["centered", "cosine"].includes(Q("#mapMeasure").value) || !values.length ? {} : {zmin: values[0], zmax: values[Math.floor(0.98 * (values.length - 1))]};
+}
+function shade(v) { return Q("#mapLog").checked ? (v > 0 ? Math.log10(v) : null) : v; }
+function renderMap() {
+  if (!map || state.tab !== "map") return;
+  const offset = Q("#mapQuantity").value === "hidden" ? 0 : 1, layer = +Q("#mapLayer").value, name = Q("#mapMeasure").selectedOptions[0].textContent + (Q("#mapLog").checked ? " (log10)" : "");
+  Q("#mapLayerText").textContent = layer + offset;
+  const text = map.tokens.map((t, i) => `${JSON.stringify(t)} · ${map.kinds[i]}`);
+  const shaded = map.z.map(row => row.map(shade));
+  plot("plot-map", [Object.assign({type: "heatmap", z: shaded, y: map.z.map((_, i) => i + offset), text: map.z.map(() => text), colorscale: "Viridis",
+                    hovertemplate: "layer %{y}, position %{x}<br>%{text}<br>%{z:.3f}<extra></extra>", colorbar: {title: {text: name, side: "right"}}}, cap(shaded))],
+       {title: {text: `frame ${info.frames[map.frame].name}: ${specText("B")} against ${specText("A")}`, font: {size: 13}}, xaxis: {title: {text: "attended position, in prompt order"}}, yaxis: {title: {text: "layer"}}});
+  Q("#plot-map").removeAllListeners("plotly_click");
+  Q("#plot-map").on("plotly_click", event => { const p = event.points[0]; Q("#mapLayer").value = p.pointIndex[0]; map.position = p.pointIndex[1]; renderMap(); });
+
+  const lower = Q("#mapLower");
+  const cameras = map.image.some(v => v >= 0) ? info.cameras : [];
+  const ids = ["plot-map-curve", ...cameras.map((_, i) => `plot-map-image-${i}`)];
+  if (lower.dataset.ids !== ids.join()) { lower.innerHTML = ids.map(id => `<div class="card"><div class="plot small" id="${id}"></div></div>`).join(""); lower.dataset.ids = ids.join(); }
+  plot("plot-map-curve", [{x: map.z.map((_, i) => i + offset), y: map.z.map(row => row[map.position]), mode: "lines", line: {color: "#4c9aff", width: 2}}],
+       {title: {text: `position ${map.position}: ${text[map.position]}`, font: {size: 13}}, xaxis: {title: {text: "layer"}}, yaxis: {title: {text: name.replace(" (log10)", "")}, type: Q("#mapLog").checked ? "log" : "linear"},
+        shapes: [{type: "line", x0: layer + offset, x1: layer + offset, yref: "paper", y0: 0, y1: 1, line: {color: "#8b929c", width: 1, dash: "dot"}}]});
+  cameras.forEach((camera, i) => {
+    const z = Array.from({length: 14}, () => Array(14).fill(null)), where = Array.from({length: 14}, () => Array(14).fill(-1));
+    map.image.forEach((number, position) => {
+      if (number < camera.slot * 196 || number >= (camera.slot + 1) * 196) return;
+      const cell = number - camera.slot * 196, row = Math.floor(cell / 14), column = cell % 14;
+      z[13 - row][column] = shade(map.z[layer][position]); where[13 - row][column] = position;
+    });
+    const id = `plot-map-image-${i}`;
+    plot(id, [Object.assign({type: "heatmap", z, customdata: where, x0: 0.5, dx: 1, y0: 0.5, dy: 1, opacity: 0.6, colorscale: "Viridis", hovertemplate: "position %{customdata}<br>%{z:.3f}<extra></extra>", colorbar: {thickness: 10}}, cap(z))],
+         {title: {text: `${camera.key.split(".").pop()}, layer ${layer + offset}`, font: {size: 13}}, margin: {l: 10, r: 10, t: 40, b: 10},
+          xaxis: {range: [0, 14], visible: false}, yaxis: {range: [0, 14], visible: false, scaleanchor: "x", scaleratio: 0.75},
+          images: [{source: `/image/${map.frame}/own/${camera.key}`, xref: "x", yref: "y", x: 0, y: 14, sizex: 14, sizey: 14, sizing: "stretch", layer: "below"}]});
+    Q(`#${id}`).removeAllListeners("plotly_click");
+    Q(`#${id}`).on("plotly_click", event => { const p = event.points[0].customdata; if (p >= 0) { map.position = p; renderMap(); } });
+  });
+}
+
+// sweep
+async function runSweep() {
+  const frames = chosen(), job = ++state.job, [source, where] = spec("B").split("|"), a = spec("A");
+  sweep = {name: `${SOURCES[source]}, ${WHERE[where]}`, points: []};
+  try {
+    for (const fraction of FRACTIONS) {
+      const [result] = await over(frames, at => `/compare?frame=${at}&a=${a}&b=${source}|${where}|${fraction}&scales=0`, `sweep, fraction ${fraction}`, job);
+      if (job !== state.job) return;
+      sweep.points.push(result);
+      renderSweep();
+    }
+    status(`sweep done: ${frames.length} frame${frames.length > 1 ? "s" : ""}`);
+  } catch (error) { status(error.message, true); }
+}
+function renderSweep() {
+  if (!sweep || state.tab !== "sweep") return;
+  const x = FRACTIONS.slice(0, sweep.points.length), flat = (y, name) => y === undefined || y === null ? [] : [{x: [0, 1], y: [y, y], name, mode: "lines", line: {color: "#8b929c", width: 1.3, dash: "dash"}}];
+  const one = (y, name, color) => ({x, y, name, mode: "lines+markers", line: {color, width: 2}});
+  const scales = data ? data.pairs : {};
+  plot("plot-sweep-cm", [one(sweep.points.map(p => p.pairs.b.output.cm), "input B against input A", "#4c9aff"), ...flat(data && data.two_seeds, "two flow seeds"), ...flat(scales.next && scales.next.output.cm, "images 1 s later")],
+       {legend: {orientation: "h", y: -0.32, font: {size: 11}}, title: {text: "tip distance (cm)", font: {size: 13}}, xaxis: {title: {text: `fraction of: ${sweep.name}`}}, yaxis: {rangemode: "tozero"}});
+  plot("plot-sweep-kl", [one(sweep.points.map(p => p.pairs.b.output.kl), "input B against input A", "#4c9aff"), ...flat(scales.next && scales.next.output.kl, "images 1 s later")],
+       {legend: {orientation: "h", y: -0.32, font: {size: 11}}, title: {text: "KL of the action-token distributions", font: {size: 13}}, xaxis: {title: {text: "fraction"}}, yaxis: {rangemode: "tozero"}});
+  const last = [];
+  info.kinds.forEach((kind, i) => {
+    if (!state.kinds.has(kind)) return;
+    const y = sweep.points.map(p => p.pairs.b.curves.hidden[kind]?.ratio.at(-1));
+    if (y.every(v => v !== undefined)) last.push(one(y, kind, COLORS[i]));
+  });
+  last.push(Object.assign(one(sweep.points.map(p => p.pairs.b.curves.expert[info.action].ratio.at(-1)), "expert, block output", "#ffffff"), {line: {color: "#ffffff", width: 3.5}}));
+  plot("plot-sweep-last", last, {legend: {orientation: "h", y: -0.32, font: {size: 11}}, title: {text: "last layer: distance / spread", font: {size: 13}}, xaxis: {title: {text: "fraction"}}, yaxis: {rangemode: "tozero"}});
+}
+
+// page
+function render() { ({layers: renderLayers, map: renderMap, read: renderRead, output: renderOutput, sweep: renderSweep})[state.tab](); }
+async function run() {
+  const frames = chosen(), job = ++state.job, a = spec("A"), b = spec("B");
+  try {
+    const [result, head] = await over(frames, at => `/compare?frame=${at}&a=${a}&b=${b}`, "running", job);
+    if (job !== state.job) return;
+    data = result; first = Object.assign(head, {name: info.frames[frames[0]].name});
+    state.text = `${specText("B")} against ${specText("A")}: ${frames.length} frame${frames.length > 1 ? "s" : ""}`;
+    status(state.text);
+    render();
+    if (state.tab === "map") loadMap(); else map = null;
+  } catch (error) { status(error.message, true); }
+}
+function thumbs() {
+  const at = +Q("#frames").value, f = info.frames[at];
+  Q("#thumbs").innerHTML = info.cameras.map(c => `<img src="/image/${at}/own/${c.key}" title="${c.key}">`).join("");
+  Q("#about").innerHTML = `Step: ${f.step || "(none)"}<br>1 s later = frame ${f.next} of the episode; another episode = episode ${f.other}.<br><br>Model ${info.model}; the other vision path: ${info.vision}. ${info.frames.length} frames of ${info.root}. Long image token: own token longer than ${info.long} x the median of the frame.`;
+}
+async function start() {
+  info = await get("/frames");
+  info.frames.forEach(f => { f.name = `episode ${f.episode}, ${f.frame}`; });
+  Q("#frames").innerHTML = info.frames.map((f, i) => `<option value="${i}">ep ${f.episode} · ${f.frame} · ${f.step || f.task}</option>`).join("");
+  Q("#frames").value = 0;
+  for (const [which, source] of [["A", "own"], ["B", "base"]]) {
+    Q(`#spec${which}`).innerHTML = `<span>source</span><select data-k="source">${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>
+      <span>positions</span><select data-k="where">${Object.entries(WHERE).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>
+      <span>fraction <b data-k="text">1</b></span><input type="range" data-k="fraction" min="0" max="1" step="0.05" value="1">`;
+    Q(`#spec${which} [data-k=source]`).value = source;
+    Q(`#spec${which} [data-k=fraction]`).addEventListener("input", event => { Q(`#spec${which} [data-k=text]`).textContent = event.target.value; });
+  }
+  const segs = Object.entries(MEASURES).map(([k, v]) => `<span data-v="${k}">${v[0]}</span>`).join("");
+  Q("#measure").innerHTML = segs; Q("#readMeasure").innerHTML = segs;
+  for (const id of ["#measure", "#readMeasure"]) Q(`${id} [data-v=ratio]`).classList.add("on");
+  Q("#mapMeasure").innerHTML = Object.entries(MEASURES).filter(([k]) => k !== "vs1s").map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join("");
+  Q("#definitions").innerHTML = Object.values(MEASURES).map(([name, text]) => `<dt>${name}</dt><dd>${text}</dd>`).join("");
+  ["image, ordinary", "image, long", "depth", "state", "end of prompt"].forEach(k => state.kinds.add(k));
+  Q("#kinds").innerHTML = info.kinds.map((k, i) => `<span class="chip ${state.kinds.has(k) ? "on" : ""}" data-v="${k}" style="border-color:${COLORS[i]}">${k}</span>`).join("");
+  Q("#kinds").addEventListener("click", event => {
+    const kind = event.target.dataset.v;
+    if (!kind) return;
+    state.kinds.has(kind) ? state.kinds.delete(kind) : state.kinds.add(kind);
+    event.target.classList.toggle("on");
+    render();
+  });
+  seg("#measure", "measure", renderLayers); seg("#quantity", "quantity", renderLayers); seg("#scope", "scope", () => {});
+  seg("#readQuantity", "readQuantity", renderRead); seg("#readMeasure", "readMeasure", renderRead);
+  seg("#tabs", "tab", () => {
+    document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === `pane-${state.tab}`));
+    if (state.tab === "map" && data && (!map || map.frame !== +Q("#frames").value)) loadMap(); else render();
+  });
+  for (const id of ["#log", "#showNext", "#showOther", "#showSeed"]) Q(id).addEventListener("change", renderLayers);
+  Q("#readLog").addEventListener("change", renderRead);
+  for (const id of ["#mapQuantity", "#mapMeasure"]) Q(id).addEventListener("change", loadMap);
+  Q("#mapLog").addEventListener("change", renderMap); Q("#mapLayer").addEventListener("input", renderMap);
+  Q("#frames").addEventListener("change", () => { thumbs(); run(); });
+  Q("#run").addEventListener("click", run); Q("#runSweep").addEventListener("click", runSweep);
+  thumbs();
+  run();
+}
+start().catch(error => status(error.message, true));
+</script>
+</body>
+</html>

@@ -246,6 +246,7 @@ def _quiet_probe_logging(probe_output_dir: str):
 _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_objective", "lerobot.probes.objective", "objective"),
     _ValidationProbeSpec("enable_hand_terms", "lerobot.probes.hand_terms", "hand_terms"),
+    _ValidationProbeSpec("enable_tip_target", "lerobot.probes.tip_target", "tip_target"),
     _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
     _ValidationProbeSpec("enable_action_trace", "lerobot.probes.action_trace_probe", "action_trace"),
     # Must follow action_trace: plays its action_trace_records.npz.
@@ -370,7 +371,7 @@ def _run_validation_probes(
                             probe_output_dir,
                             eval_dataset=val_dataset,
                         )
-                    elif spec.output_subdir in {"objective", "hand_terms"}:
+                    elif spec.output_subdir in {"objective", "hand_terms", "tip_target"}:
                         summary = run_probe(
                             adapter,
                             val_dataset,

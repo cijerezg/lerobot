@@ -166,6 +166,11 @@ else
     grep -hoE '(^|[[:space:]])(root|val_dataset_path|buffer_cache_dir|base_path|discrete_action_tokenizer|action_encoding_stats_path|embodiment_stats_path):[[:space:]]*[^[:space:]#]+' "$CONFIG" \
       | sed -E 's/.*:[[:space:]]*//; s/^"//; s/"$//' | grep -v '^null$' | sort -u
   )
+  # diverse.enabled: false: the corpus root is not read (2026-11-15: it is on neither machine).
+  if grep -A1 '^diverse:' "$CONFIG" | grep -qE '^[[:space:]]+enabled:[[:space:]]*false'; then
+    diverse_root="$(sed -n '/^diverse:/,/^[^[:space:]#]/{s/^[[:space:]]+root:[[:space:]]*([^[:space:]#]+).*/\1/p}' -E "$CONFIG" | head -1)"
+    mapfile -t ASSETS < <(printf '%s\n' "${ASSETS[@]}" | grep -vxF "$diverse_root")
+  fi
   missing=""
   (( DRY )) || missing="$(sshx "cd '$WS' 2>/dev/null || { echo '__NOWS__'; exit 0; }
                    [ -x '$VENV/bin/python' ] || echo 'venv: $VENV'
@@ -192,6 +197,10 @@ else
   (( ! WITH_SIM )) || run rsync -a -e "ssh ${SSH_OPTS[*]}" "$SIM_CONFIG" "$HOST:$REMOTE_SIM_CONFIG" || die "sim config rsync failed"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/run_probes.sh" "$WS/lerobot/scripts/run_sim_eval.sh" "$HOST:$WS/lerobot/scripts/" || die "probe launcher rsync failed"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/probes/" "$HOST:$WS/lerobot/scripts/probes/" || die "probe helpers rsync failed"
+  # Tip target rows (utils/tip_target.py, policy.tip_target): read by root name from the repo, not from the dataset root.
+  if [[ -d "$WS/lerobot/annotation_data/tip_offset" ]]; then
+    run sshx "mkdir -p '$WS/lerobot/annotation_data'" && run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/annotation_data/tip_offset" "$HOST:$WS/lerobot/annotation_data/" || die "tip target rsync failed"
+  fi
 
   # ── Sync checkpoint ───────────────────────────────────────────────────────────
   info "sync checkpoint ($(du -sh "$MODEL" | cut -f1))"

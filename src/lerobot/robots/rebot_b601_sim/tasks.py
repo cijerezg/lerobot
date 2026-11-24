@@ -30,6 +30,11 @@ Tube set (2026-11-15, scenes tube_peg_{left,right,two,three}_p1, scripts/sim_bui
 with its own peg holder, on the twin desk for the v2 tube policy, tier ``tube``, scorer tube_task.py. Not in LAYOUTS (run with LAYOUTS="$(... tube_layouts)"). Task and
 subtask strings are the tube recordings' ("put the tube in the peg", "... on the left / right", "return home"); the layouts also
 set two robot fields (``Task.robot``): the finger force cap and the joint zero correction.
+
+Choice set (2026-11-17, scenes choice_<pair>_ask_<object>_p<1-6>, scripts/sim_builders/object_choice): the basket and two objects, the
+task names one ("Put the banana in the basket"), tier ``choice``, scorer choice_tasks.py (the named object's ladder + which object
+the arm went to). Not in LAYOUTS (run with LAYOUTS="$(... choice_layouts)"). The banana and the mug are not in the training data;
+both instructions of a pair use the same contact word, so they differ in the noun only.
 """
 
 import json
@@ -38,15 +43,16 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .choice_tasks import choice_scorer
 from .easy_tasks import BottleBasketScorer, CloseLidScorer, LiftBottleScorer
 from .nail_task import NailTaskScorer
 from .scorer import TaskScorer
 from .tube_task import tube_peg_scorer
 from .twin_tasks import FoldKitScorer, pick_place_scorer, sequence_scorer
 
-TIERS = ("easy", "hard", "twin_l1", "twin_l2", "twin_l3", "twin_l4", "tube")
+TIERS = ("easy", "hard", "twin_l1", "twin_l2", "twin_l3", "twin_l4", "tube", "choice")
 TWIN_TIERS = TIERS[2:6]
-TIER_TIME_S = {"twin_l1": 30.0, "twin_l2": 45.0, "twin_l3": 90.0, "twin_l4": 120.0, "tube": 45.0}  # episode budget per twin tier (user 2026-10-30);
+TIER_TIME_S = {"twin_l1": 30.0, "twin_l2": 45.0, "twin_l3": 90.0, "twin_l4": 120.0, "tube": 45.0, "choice": 30.0}  # episode budget per twin tier (user 2026-10-30);
 # res600 run at 60 s: L1 successes finished by 25 s, L2 by 50 s (one), L4 sequences cannot finish in 60 s. Old tiers keep the config's value.
 SCENES_DIR = Path(__file__).resolve().parent / "scenes"
 
@@ -126,6 +132,9 @@ _TWIN_BASKET = {
     # hex bits: T056/T057 wording, "grasp the bit" annotated precision 5 / top-pinch there; no return step (as T056)
     "bit_1": ("the bit", None, "top-pinch", False),
     "bit_2": ("the other bit", None, "top-pinch", False),
+    # choice set only (not in the training data); side-pinch as the bottles they are paired with
+    "banana": ("the banana", None, "side-pinch", True),
+    "mug": ("the mug", None, "side-pinch", True),
 }
 _GRASP_PRECISION = {"bit_1": 5, "bit_2": 5}  # grasp step precision; 3 otherwise
 
@@ -216,6 +225,19 @@ TASKS.update({"tube_peg_left": _tube_task("left"), "tube_peg_right": _tube_task(
               "tube_peg_two": _tube_task("left", "right"), "tube_peg_three": _tube_task("left", "right", "dark")})
 TUBE_LAYOUTS = ("tube_peg_left", "tube_peg_right", "tube_peg_two", "tube_peg_three")
 
+
+
+def _choice_task(asked: str, other: str) -> Task:
+    task = _basket_task("choice", asked)
+    return Task(**{k: getattr(task, k) for k in ("tier", "task", "sheet_id", "eval_subtasks", "eval_subtask_precisions", "eval_subtask_contacts")},
+                scorer=choice_scorer(asked, other, (0, 0, 1, 1, 2, 3)))
+
+
+_CHOICE_PAIRS = {"pill_roar": ("pill_bottle", "roar_bottle"), "pill_banana": ("pill_bottle", "banana"), "pill_mug": ("pill_bottle", "mug")}
+TASKS.update({f"choice_{pair}_ask_{asked.split('_')[0]}": _choice_task(asked, other)
+              for pair, (a, b) in _CHOICE_PAIRS.items() for asked, other in ((a, b), (b, a))})
+CHOICE_LAYOUTS = tuple(name for name in TASKS if name.startswith("choice_"))
+
 # The eval set (run_sim_eval.sh): the twin levels in order; a layout runs through its placements twin_<...>_p<k> on disk (``variants``).
 LAYOUTS = tuple(name for name in TASKS if name.startswith("twin_"))
 
@@ -249,6 +271,8 @@ def main() -> None:
         print(" ".join(eval_layouts()))
     elif sys.argv[1] == "tube_layouts":
         print(" ".join(eval_layouts(TUBE_LAYOUTS)))
+    elif sys.argv[1] == "choice_layouts":
+        print(" ".join(eval_layouts(CHOICE_LAYOUTS)))
     elif sys.argv[1] == "overrides":
         print("\n".join(task_for(sys.argv[2]).overrides()))
 

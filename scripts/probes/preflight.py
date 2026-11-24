@@ -11,32 +11,35 @@ from lerobot.rl.data_sources.diverse_actor_cache import find_cache
 from lerobot.rl.buffer import ReplayBuffer
 p=argparse.ArgumentParser();p.add_argument('--config',default='config_rl_validate.yaml');args=p.parse_args()
 cfg=yaml.safe_load(Path(args.config).read_text());root=Path(cfg['diverse']['root'])
-selection=select_actor_anchors(open_federated_corpus(root));held=holdout_episode_ids(root)
-assert len(held)==18 and not set(selection.episode_ids)&held
-# select_actor_anchors verifies corrected corpora against their audited manifest.
-# Compare caches and statistics to that selection, rather than the old v3 totals.
-anchors,episodes=len(selection.rows),len(selection.episode_ids)
+# diverse.enabled: false (2026-11-15, tube-only run): the corpus is not read, so none of its checks apply.
+diverse_on=bool(cfg['diverse'].get('enabled'));episodes=anchors=0;diverse_outside_pool=False;stats_root=None
 stats=torch.load(cfg['policy']['embodiment_stats_path'],map_location='cpu',weights_only=False)
-# Older artifacts recorded the holdout explicitly; current ones use per-layout counts.
-if 'probe_holdout' in stats:
-    assert set(stats['probe_holdout'])==held
 assert stats['chunk_size']==cfg['policy']['chunk_size']
 assert stats['encoding']==cfg['policy']['action_encoding']
 if cfg['policy'].get('hand_block'):
     assert stats.get('hand_block'), 'Configured hand block needs hand normalization statistics'
-# The artifact records the diverse corpus it was built from. A re-keyed corpus (task renames,
-# excluded_episodes.json) is a different selection; as for ReBot roots below, that is listed, not
-# fatal: with a pretrained_path that carries processors the artifact is not read. The counts are
-# then checked against the recorded corpus, so the artifact is at least self-consistent.
-stats_diverse={r.split(':',1)[1] for rows in stats['roots'].values() for r in rows if r.startswith('diverse:')}
-assert len(stats_diverse)==1,stats_diverse
-stats_root=Path(next(iter(stats_diverse)));diverse_outside_pool=stats_root.resolve()!=root.resolve()
-stats_selection=select_actor_anchors(open_federated_corpus(stats_root)) if diverse_outside_pool else selection
-for i,count in Counter(int(row['action_layout_id']) for row in stats_selection.rows).items():
-    assert tuple(stats['counts'][i].tolist())==(count,count),(i,stats['counts'][i],count)
-cache=find_cache(root,cfg['diverse']['cache_dir'],DiverseSampleSpec(),anchors=anchors,episodes=episodes)
-assert cache is not None,'Configured diverse cache is missing'
-meta=json.loads((cache/'metadata.json').read_text());assert meta['built_rows']==anchors and not meta['partial']
+if diverse_on:
+    selection=select_actor_anchors(open_federated_corpus(root));held=holdout_episode_ids(root)
+    assert len(held)==18 and not set(selection.episode_ids)&held
+    # select_actor_anchors verifies corrected corpora against their audited manifest.
+    # Compare caches and statistics to that selection, rather than the old v3 totals.
+    anchors,episodes=len(selection.rows),len(selection.episode_ids)
+    # Older artifacts recorded the holdout explicitly; current ones use per-layout counts.
+    if 'probe_holdout' in stats:
+        assert set(stats['probe_holdout'])==held
+    # The artifact records the diverse corpus it was built from. A re-keyed corpus (task renames,
+    # excluded_episodes.json) is a different selection; as for ReBot roots below, that is listed, not
+    # fatal: with a pretrained_path that carries processors the artifact is not read. The counts are
+    # then checked against the recorded corpus, so the artifact is at least self-consistent.
+    stats_diverse={r.split(':',1)[1] for rows in stats['roots'].values() for r in rows if r.startswith('diverse:')}
+    assert len(stats_diverse)==1,stats_diverse
+    stats_root=Path(next(iter(stats_diverse)));diverse_outside_pool=stats_root.resolve()!=root.resolve()
+    stats_selection=select_actor_anchors(open_federated_corpus(stats_root)) if diverse_outside_pool else selection
+    for i,count in Counter(int(row['action_layout_id']) for row in stats_selection.rows).items():
+        assert tuple(stats['counts'][i].tolist())==(count,count),(i,stats['counts'][i],count)
+    cache=find_cache(root,cfg['diverse']['cache_dir'],DiverseSampleSpec(),anchors=anchors,episodes=episodes)
+    assert cache is not None,'Configured diverse cache is missing'
+    meta=json.loads((cache/'metadata.json').read_text());assert meta['built_rows']==anchors and not meta['partial']
 sources=cfg['dataset']['sources']
 # The ReBot stats pool is matched by data (frame + episode counts), not by path: a re-keyed
 # root (hardlink twin under a new name) is the same data. Sources the pool never saw are
@@ -74,4 +77,4 @@ if parameters.get('enable_subtask_scene_sweep'):
         assert labels==[frame['gt_subtask']], (frame,labels)
         assert frame['gt_subtask'] in ['grasp '+name for name in frame['present']]+['return to home'],frame
 
-print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), diverse root {"outside the stats pool: "+str(stats_root) if diverse_outside_pool else "in the stats pool"}, {vi["total_episodes"]} validation episodes; {episodes} diverse training episodes / {anchors} anchors; configured stats and caches agree.')
+print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), diverse {"off" if not diverse_on else "root outside the stats pool: "+str(stats_root) if diverse_outside_pool else "root in the stats pool"}, {vi["total_episodes"]} validation episodes; {episodes} diverse training episodes / {anchors} anchors; configured stats and caches agree.')

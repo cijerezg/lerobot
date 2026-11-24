@@ -426,9 +426,10 @@ class MolmoAct2Adapter(ProbablePolicy):
         stacked = {
             key: torch.cat([o[key].to(device) for o in observations], dim=0) for key in observations[0]
         }
+        stacked, prepared = split_probe_complementary(stacked)
         stacked, presence = self._fill_absent_cameras(stacked)
         flat: dict = {**stacked, "task": [task_str] * n}
-        complementary: dict = {**self._identity_columns, **presence}
+        complementary: dict = {**self._identity_columns, **presence, **prepared}
         if isinstance(subtask, (list, tuple)):
             if len(subtask) != n:
                 raise ValueError(f"subtask list must have length {n}, got {len(subtask)}.")

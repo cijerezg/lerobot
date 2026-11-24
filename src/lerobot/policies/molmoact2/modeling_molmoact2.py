@@ -3883,6 +3883,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
         carries the wrist depth frame under TIP_DEPTH_KEY. Training renders the true offset in the prompt's tip
         target clause; a rollout has none, so the actor renders this row (build_inference_batch). The image tokens
         do not depend on the prompt, so the batch is one packed without the clause."""
+        none, vector = tip_vector(*self.tip_scores(batch))
+        return torch.cat([(none <= 0.5).float()[:, None], vector], 1)
+
+    @torch.no_grad()
+    def tip_scores(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
+        """The tip adapter's scores [B, 730] and wrist depth points [B, 27, 27, 4] for a preprocessed batch that
+        carries the wrist depth frame under TIP_DEPTH_KEY: the vision tower only, no prompt forward."""
         backbone = self._backbone()
         model_dtype = _torch_dtype(self.config.dtype)
         device = next(self.parameters()).device
@@ -3899,9 +3906,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 image_grids=batch.get("image_grids"),
                 image_num_crops=batch.get("image_num_crops"),
             )
-            scores, points = self._tip_scores(backbone.vision_backbone(images, token_pooling), batch)
-        none, vector = tip_vector(scores, points)
-        return torch.cat([(none <= 0.5).float()[:, None], vector], 1)
+            return self._tip_scores(backbone.vision_backbone(images, token_pooling), batch)
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:

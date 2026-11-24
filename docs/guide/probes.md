@@ -459,3 +459,36 @@ The sampler floor is $\tau=Q_{0.9}(|\Delta(\mathrm{emptied}')|)$. A frame is hel
 | `random_seed` | `42` | Frame-sampling and flow-noise seed |
 
 ---
+
+## 12. Tip Adapter
+
+`probes/tip_target.py`. Runs the tip adapter alone (vision tower, no prompt forward) on frames spread over every validation episode and on a sample of the training roots, against the rows of `annotation_data/tip_offset/<root>/targets.parquet`. Skipped when `policy.tip_target` is off or the root has no targets.
+
+### Computation
+
+Per frame: the loss, whether "target in view or not" is right, whether the peak patch is the target's patch or next to it, and the vector error $100\,\lVert \hat v - v \rVert$ in cm. The last three are means over the frames whose target is in the wrist view. Two references:
+
+- **Floor**: the error of always answering the mean in-view offset of the training roots.
+- **Ceiling**: the error of the vector read through the true label instead of the adapter's scores (what the depth readout alone costs).
+
+### Outputs
+
+| File | Description |
+|------|-------------|
+| `tip_target.json` | Val and train summary, mean training offset |
+| `frames.json` | Per-frame rows (val, then train) |
+| `val_probabilities.npz` | The adapter's distribution [frames, 730] on the val frames |
+| `timeline_ep*.png` | Per val episode: adapter error, floor, ceiling and distance to the target against time; probability of "no target" below; gripper events as vertical lines |
+| `heatmaps_ep*.png` | Per val episode: the distribution over the wrist image, true target pixel (+) and peak patch (x) |
+| `index.json` | Manifest consumed by `view_probes` |
+
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_tip_target` | `false` | Enable this probe |
+| `tip_target_n_frames_per_episode` | `200` | Val frames per episode |
+| `tip_target_n_train_frames_per_episode` | `30` | Training frames per episode, every training root |
+| `tip_target_n_heatmaps_per_episode` | `8` | Frames per val episode in the heatmap figure |
+
+---

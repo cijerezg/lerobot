@@ -1886,7 +1886,7 @@ class MolmoAct2Trainer(Trainer):
         return {
             key: value
             for key, value in training_infos.items()
-            if key in cls._AIM_METRIC_KEYS or key.startswith(("optim/", "awr/"))
+            if key in cls._AIM_METRIC_KEYS or key.startswith(("optim/", "awr/", "tip/", "val_tip_"))
         }
 
     def log_metrics(
@@ -1927,6 +1927,12 @@ class MolmoAct2Trainer(Trainer):
             "val_loss_discrete_aux",
             "loss_depth_event",
             "val_loss_depth_event",
+            "tip/loss",
+            "val_tip_loss",
+            "tip/vector_error_cm",
+            "val_tip_vector_error_cm",
+            "tip/none_accuracy",
+            "val_tip_none_accuracy",
             "future_visual_loss",
             "val_loss_future_visual",
             "depth_event/close_bce",

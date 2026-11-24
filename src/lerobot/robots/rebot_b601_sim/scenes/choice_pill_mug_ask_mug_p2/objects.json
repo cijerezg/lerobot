@@ -1,0 +1,173 @@
+{
+ "config": "choice_pill_mug_ask_mug",
+ "placement": 2,
+ "tier": "choice",
+ "note": "one on each side",
+ "asked": "mug",
+ "other": "pill_bottle",
+ "sides": {
+  "pill_bottle": {
+   "xy": [
+    0.25,
+    -0.221
+   ],
+   "side_robot": "right",
+   "image_uv": [
+    216.1,
+    206.3
+   ],
+   "side_image": "left"
+  },
+  "mug": {
+   "xy": [
+    0.25,
+    0.207
+   ],
+   "side_robot": "left",
+   "image_uv": [
+    416.6,
+    208.4
+   ],
+   "side_image": "right"
+  }
+ },
+ "swapped_with": "p1",
+ "generator": "lerobot/scripts/sim_builders/object_choice/build_choice_envs.py",
+ "twin_snapshot": "2026-10-30 11:05",
+ "rules": {
+  "margin_m": 0.02,
+  "settle_s": 1.0,
+  "settle_tol_m": 0.005,
+  "start_contact_tol_m": 0.001
+ },
+ "objects": {
+  "basket": {
+   "xy": [
+    0.47,
+    0.03
+   ],
+   "z": 0.002,
+   "yaw_deg": 0.0,
+   "quat_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "radius_from_base_m": 0.471,
+   "role": "basket",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "pill_bottle": {
+   "xy": [
+    0.25,
+    -0.22
+   ],
+   "z": 0.002,
+   "yaw_deg": 0.0,
+   "quat_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "radius_from_base_m": 0.333,
+   "role": "target",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  },
+  "mug": {
+   "xy": [
+    0.25,
+    0.22
+   ],
+   "z": 0.002,
+   "yaw_deg": 0.0,
+   "quat_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "radius_from_base_m": 0.333,
+   "role": "target",
+   "placed": true,
+   "jittered": false,
+   "jitter": null
+  }
+ },
+ "ik": {
+  "pill_bottle": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 0.0,
+   "q_deg": [
+    -41.3,
+    -104.9,
+    -87.6,
+    72.7,
+    0.0,
+    -35.9
+   ],
+   "target": [
+    0.25,
+    -0.22,
+    0.113
+   ]
+  },
+  "mug": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 0.0,
+   "q_deg": [
+    41.3,
+    -104.7,
+    -93.3,
+    78.6,
+    -0.0,
+    35.9
+   ],
+   "target": [
+    0.25,
+    0.22,
+    0.1387
+   ]
+  },
+  "basket": {
+   "ok": true,
+   "pos_err_mm": 0.0,
+   "angle_err_deg": 62.69,
+   "q_deg": [
+    3.1,
+    -83.8,
+    -67.5,
+    11.0,
+    -1.4,
+    -0.0
+   ],
+   "target": [
+    0.47,
+    0.03,
+    0.264
+   ]
+  }
+ },
+ "start_contact_mm": 0.0,
+ "settle": {
+  "moved_mm": {
+   "basket": 2.02,
+   "pill_bottle": 2.21,
+   "mug": 2.09
+  },
+  "max_moved_mm": 2.21,
+  "contact_dist_mm": {
+   "basket": -1.16,
+   "pill_bottle": -1.32,
+   "mug": -1.21
+  },
+  "worst_contact_dist_mm": -1.32
+ }
+}

@@ -1,0 +1,24 @@
+{
+ "name": "banana",
+ "source": "YCB object 011_banana, google_16k scan",
+ "url": "http://ycb-benchmarks.s3-website-us-east-1.amazonaws.com/data/google/011_banana_google_16k.tgz",
+ "licence": "CC-BY 4.0 (YCB Object and Model Set)",
+ "size_m": [
+  0.1089,
+  0.1784,
+  0.0367
+ ],
+ "mass_kg": 0.07,
+ "hulls": 4,
+ "asset_lines": [
+  "    <texture name=\"banana_tex\" type=\"2d\" file=\"assets/choice/banana/banana_tex.png\" />",
+  "    <material name=\"banana_mat\" texture=\"banana_tex\" specular=\"0.2\" shininess=\"0.2\" />",
+  "    <mesh name=\"banana_visual\" file=\"assets/choice/banana/banana_visual.obj\" />",
+  "    <mesh name=\"banana_hull00\" file=\"assets/choice/banana/banana_hull00.obj\" />",
+  "    <mesh name=\"banana_hull01\" file=\"assets/choice/banana/banana_hull01.obj\" />",
+  "    <mesh name=\"banana_hull02\" file=\"assets/choice/banana/banana_hull02.obj\" />",
+  "    <mesh name=\"banana_hull03\" file=\"assets/choice/banana/banana_hull03.obj\" />"
+ ],
+ "default": "    <default class=\"banana_col\">\n      <geom type=\"mesh\" group=\"3\" condim=\"4\" friction=\"0.8 0.005 0.0001\" />\n    </default>\n    <default class=\"banana_vis\">\n      <geom type=\"mesh\" group=\"2\" contype=\"0\" conaffinity=\"0\" mass=\"0\" />\n    </default>\n",
+ "body": "    <body name=\"banana\" pos=\"0 0 0.0020\" quat=\"1 0 0 0\">\n      <freejoint />\n      <geom class=\"banana_vis\" mesh=\"banana_visual\" material=\"banana_mat\" />\n      <geom class=\"banana_col\" mesh=\"banana_hull00\" mass=\"0.00120\" rgba=\"0.85 0.35 0.30 1\" />\n      <geom class=\"banana_col\" mesh=\"banana_hull01\" mass=\"0.01409\" rgba=\"0.30 0.65 0.85 1\" />\n      <geom class=\"banana_col\" mesh=\"banana_hull02\" mass=\"0.02859\" rgba=\"0.40 0.75 0.40 1\" />\n      <geom class=\"banana_col\" mesh=\"banana_hull03\" mass=\"0.02612\" rgba=\"0.90 0.70 0.25 1\" />\n    </body>\n"
+}

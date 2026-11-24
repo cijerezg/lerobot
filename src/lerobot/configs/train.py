@@ -341,6 +341,7 @@ class ProbeConfig:
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
     enable_hand_terms: bool = False  # EE mixture loss terms per frame, hand-vs-joint gap exemplars, histograms by robot (probes/hand_terms.py)
+    enable_tip_target: bool = False  # tip adapter alone on val + train: vector error against floor / ceiling, timelines, heatmaps (probes/tip_target.py)
     enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
     enable_domain_representations: bool = False  # ReBot vs diverse hidden states per layer and token group (probes/domain_representations.py)
     enable_conditions_matrix: bool = False  # object x phase similarity matrix per robot, compared across robots (probes/conditions_matrix.py)
@@ -515,6 +516,11 @@ class ProbeConfig:
     # rendered per gap percentile band (p5 smallest, p50, p95 largest).
     hand_terms_n_diverse_frames: int = 200
     hand_terms_exemplars_per_band: int = 4
+
+    # Tip target: one adapter forward per frame (vision tower only, no prompt forward).
+    tip_target_n_frames_per_episode: int = 200  # val; dense enough for the timeline
+    tip_target_n_train_frames_per_episode: int = 30
+    tip_target_n_heatmaps_per_episode: int = 8
 
     # Subtask sweep: n_frames x (max_labels + n_seeds) forwards — ~20 per frame, the most
     # expensive per frame of any probe, so this is the first place a common-knob rise bites.

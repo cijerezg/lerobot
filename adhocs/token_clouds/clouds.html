@@ -1,0 +1,1126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Token clouds</title>
+<script type="importmap">
+{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+             "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  :root {
+    --bg: #090b10; --panel: #0f1218; --raised: #151922; --line: #1f2531; --line2: #2a3140;
+    --text: #e7eaf0; --dim: #8a93a6; --faint: #5a6375; --accent: #7aa2ff; --accent2: #5eead4;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+         overflow: hidden; -webkit-font-smoothing: antialiased; user-select: none; }
+  #app { display: grid; grid-template-columns: 304px minmax(0, 1.22fr) minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); height: 100vh; }
+
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line);
+           background: linear-gradient(180deg, #10141c, #0c0f15); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: .01em; font-size: 14px; }
+  .brand svg { display: block; }
+  .model { color: var(--dim); font-size: 12px; padding-left: 14px; border-left: 1px solid var(--line2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .grow { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 11px; border: 1px solid var(--line2); border-radius: 13px;
+          color: var(--dim); font: 11.5px var(--mono); background: #0c0f15; }
+  .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); transition: background .2s, box-shadow .2s; }
+  .pill.live i { background: var(--accent2); box-shadow: 0 0 0 3px rgba(94, 234, 212, .16), 0 0 10px rgba(94, 234, 212, .7); }
+  .pill.live { color: var(--text); }
+  .pill.bad i { background: #ff5d73; }
+
+  aside { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 4px 14px 18px; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+  section { padding: 14px 0 12px; border-bottom: 1px solid var(--line); }
+  section:last-child { border-bottom: 0; }
+  h2 { margin: 0 0 9px; font-size: 10.5px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); display: flex; justify-content: space-between; align-items: baseline; }
+  h2 span { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--dim); font-size: 11.5px; }
+
+  #frames { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .thumb { position: relative; aspect-ratio: 4 / 3; border-radius: 6px; overflow: hidden; cursor: pointer; background: #000; outline: 1px solid var(--line2); outline-offset: -1px;
+           transition: transform .12s, outline-color .12s; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; opacity: .5; transition: opacity .15s; display: block; }
+  .thumb:hover img { opacity: .85; } .thumb.on img { opacity: 1; }
+  .thumb.on { outline: 2px solid var(--c); outline-offset: -2px; }
+  .thumb.on:not([data-tag])::after { display: none; }
+  .thumb b { position: absolute; left: 4px; bottom: 3px; font: 600 9.5px var(--mono); color: #fff; text-shadow: 0 1px 3px #000, 0 0 2px #000; }
+  .thumb.on::after { content: attr(data-tag); position: absolute; right: 3px; top: 3px; width: 15px; height: 15px; border-radius: 50%; background: var(--c); color: #0b0d12;
+                     font: 700 9.5px/15px var(--mono); text-align: center; }
+
+  .shot { margin-bottom: 9px; }
+  .shot:last-child { margin-bottom: 0; }
+  .shot .cap { display: flex; gap: 7px; align-items: baseline; font-size: 11.5px; color: var(--dim); margin-bottom: 5px; }
+  .shot .cap i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); transform: translateY(-1px); }
+  .shot .cap em { font-style: normal; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cams { display: grid; grid-template-columns: repeat(var(--cameras, 3), 1fr); gap: 5px; }
+  .cam { position: relative; aspect-ratio: 1; border-radius: 5px; overflow: hidden; background: #000; cursor: crosshair; outline: 1px solid var(--line2); outline-offset: -1px; }
+  .cam img, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .cam img { object-fit: fill; }
+  .cam span { position: absolute; left: 4px; top: 3px; font: 9.5px var(--mono); color: #fff; text-shadow: 0 1px 3px #000, 0 0 2px #000; pointer-events: none; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 8px; border: 1px solid var(--line2); border-radius: 12px; cursor: pointer;
+          color: var(--dim); font-size: 11.5px; transition: background .12s, color .12s, border-color .12s; }
+  .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+  .chip small { font: 10px var(--mono); color: var(--faint); }
+  .chip:hover { color: var(--text); border-color: #3a4356; }
+  .chip.on { background: #1a2030; color: var(--text); border-color: #46516a; }
+  .row { display: flex; gap: 6px; margin-top: 9px; }
+  button, .seg { font: inherit; color: var(--dim); }
+  button { height: 26px; padding: 0 11px; border: 1px solid var(--line2); border-radius: 7px; background: var(--raised); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
+  button:hover { color: var(--text); border-color: #3a4356; background: #1a1f2a; }
+  button.on { color: #0b0d12; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .row button { flex: 1; }
+  .seg { display: flex; padding: 2px; border: 1px solid var(--line2); border-radius: 8px; background: #0c0f15; }
+  .seg button { flex: 1; height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; white-space: nowrap; }
+  .seg button:hover { background: #171c26; }
+  .seg button.on { background: #232a3a; color: var(--text); font-weight: 550; box-shadow: 0 1px 0 rgba(255, 255, 255, .05) inset; }
+  kbd { font: 10px var(--mono); color: var(--faint); margin-left: 5px; }
+  .seg button.on kbd { color: var(--dim); }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 2px 0 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--accent) var(--p, 0%), var(--line2) var(--p, 0%)); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line2); }
+  input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 0 0 4px rgba(122, 162, 255, .22); cursor: grab; }
+  input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 0 0 4px rgba(122, 162, 255, .22); cursor: grab; }
+  .ticks { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--faint); margin-top: 3px; }
+  .switches { display: flex; gap: 14px; margin-top: 10px; color: var(--dim); font-size: 12px; }
+  .switch { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; }
+  .switch i { width: 26px; height: 15px; border-radius: 8px; background: var(--line2); position: relative; transition: background .15s; }
+  .switch i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: #aab2c2; transition: transform .15s, background .15s; }
+  .switch.on i { background: rgba(122, 162, 255, .55); } .switch.on i::after { transform: translateX(11px); background: #fff; }
+  .switch.on { color: var(--text); }
+  .help { color: var(--faint); font-size: 11.5px; line-height: 1.6; }
+  .help b { color: var(--dim); font-weight: 550; }
+
+  .stage { position: relative; min-width: 0; min-height: 0; overflow: hidden;
+           background: radial-gradient(120% 90% at 50% 42%, #151a26 0%, #0c0f16 55%, #07090d 100%); }
+  .stage canvas.gl, .cell canvas.gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+  .title { position: absolute; left: 20px; top: 16px; pointer-events: none; }
+  .title h1 { margin: 0; font-size: 19px; font-weight: 620; letter-spacing: -.01em; }
+  .title p { margin: 3px 0 0; color: var(--dim); font-size: 12px; }
+  .title p b { color: var(--text); font-weight: 550; }
+  .tools { position: absolute; right: 16px; top: 14px; display: flex; gap: 8px; align-items: center; }
+  .tools .seg, .tools > button { background: rgba(12, 15, 21, .78); backdrop-filter: blur(8px); }
+  .tools > button { height: 30px; } .tools .seg button { height: 24px; }
+  #hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%, 150px); color: var(--dim); font-size: 12px; pointer-events: none; text-align: center; padding: 7px 13px;
+          border: 1px solid var(--line2); border-radius: 16px; background: rgba(12, 15, 21, .78); backdrop-filter: blur(8px); transition: opacity .2s; }
+  #lasso { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #lasso polygon { fill: rgba(122, 162, 255, .1); stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 4 3; }
+  #profile { position: absolute; left: 20px; right: 20px; bottom: 14px; height: 86px; padding: 9px 12px 6px; border: 1px solid var(--line); border-radius: 10px;
+             background: rgba(12, 15, 21, .72); backdrop-filter: blur(8px); }
+  #profile .cap { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); }
+  #profile .cap b { font: 11px var(--mono); color: var(--text); font-weight: 500; }
+  #profile canvas { width: 100%; height: 54px; display: block; margin-top: 4px; cursor: ew-resize; touch-action: none; }
+  #hint.go { pointer-events: auto; cursor: pointer; color: var(--text); }
+  #time { position: absolute; left: 20px; right: 20px; bottom: 108px; height: 40px; padding: 0 10px 0 8px; display: none; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 10px;
+          background: rgba(12, 15, 21, .72); backdrop-filter: blur(8px); }
+  #time.on { display: flex; }
+  #time .track { flex: 1; position: relative; min-width: 0; }
+  #time input[type=range] { margin: 0; display: block; position: relative; z-index: 1; }
+  #marks { position: absolute; left: 7px; right: 7px; top: 14px; height: 6px; pointer-events: none; }
+  #marks i { position: absolute; top: 0; width: 1px; height: 6px; background: var(--faint); }
+  #marks i[data-n]::after { content: attr(data-n); position: absolute; top: 8px; left: 0; transform: translateX(-50%); font: 9.5px var(--mono); color: var(--faint); }
+  #when { font: 11.5px var(--mono); color: var(--text); white-space: nowrap; min-width: 92px; text-align: right; }
+  #when small { color: var(--faint); font-size: 10.5px; }
+  #play { width: 28px; height: 28px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  #play svg { fill: currentColor; } #play .halt { display: none; }
+  #play.on .go { display: none; } #play.on .halt { display: inline; }
+  #speed { flex: none; } #speed button { height: 22px; padding: 0 7px; font: 11px var(--mono); }
+  .switches { flex-wrap: wrap; row-gap: 8px; }
+  .pair { display: flex; gap: 8px; align-items: baseline; margin-top: 7px; }
+  .pair em { font-style: normal; flex: none; width: 36px; color: var(--faint); font-size: 11px; }
+  #colour button[data-v=checkpoint] { display: none; }
+  #colour.training button[data-v=checkpoint] { display: block; }
+  #colour.training button[data-v=frame] { display: none; }
+  #againstBox { display: none; }
+  #againstBox.on { display: block; }
+
+  #grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 1px; background: var(--line); border-left: 1px solid var(--line); min-height: 0; }
+  .cell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: radial-gradient(130% 100% at 50% 40%, #131722 0%, #0b0e14 60%, #07090d 100%); }
+  .cell.off { display: none; }
+  .cell .lab { position: absolute; left: 11px; top: 8px; right: 8px; display: flex; align-items: center; gap: 7px; pointer-events: none; }
+  .cell .lab b { font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .cell .lab small { color: var(--faint); font: 10.5px var(--mono); }
+  .cell .lab .tag { font: 600 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; color: #0b0d12; background: var(--c, #7aa2ff); }
+  .cell .step { margin-left: auto; display: flex; gap: 2px; pointer-events: auto; opacity: 0; transition: opacity .15s; }
+  .cell:hover .step { opacity: 1; }
+  .cell .step button { width: 20px; height: 20px; padding: 0; border-radius: 5px; font: 12px/1 var(--mono); background: rgba(21, 25, 34, .9); }
+  .cell .foot { position: absolute; left: 11px; bottom: 7px; color: var(--dim); font: 10.5px var(--mono); pointer-events: none; }
+  .cell .foot b { color: var(--text); font-weight: 500; }
+
+  #tip { position: fixed; z-index: 20; pointer-events: none; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line2); background: rgba(14, 17, 24, .95);
+         box-shadow: 0 8px 28px rgba(0, 0, 0, .55); font-size: 11.5px; max-width: 260px; display: none; }
+  #tip b { font: 12px var(--mono); color: #fff; display: block; margin-bottom: 2px; word-break: break-all; }
+  #tip span { color: var(--dim); display: block; }
+  #veil { position: fixed; inset: 48px 0 0 304px; z-index: 10; display: flex; align-items: center; justify-content: center; gap: 12px; background: rgba(9, 11, 16, .78); backdrop-filter: blur(5px);
+          color: var(--dim); font-size: 13px; transition: opacity .25s; }
+  #veil.gone { opacity: 0; pointer-events: none; }
+  #veil i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line2); border-top-color: var(--accent); animation: turn .8s linear infinite; }
+  @keyframes turn { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 22 22"><circle cx="6" cy="7" r="2.6" fill="#7aa2ff"/><circle cx="15.5" cy="5" r="1.8" fill="#5eead4"/><circle cx="16" cy="14.5" r="3" fill="#ffb454"/><circle cx="7" cy="16.5" r="1.6" fill="#f472b6"/></svg>
+      Token clouds
+    </div>
+    <div class="model" id="model"></div>
+    <div class="grow"></div>
+    <div class="pill" id="pill"><i></i><span id="pillText">starting</span></div>
+  </header>
+
+  <aside>
+    <section>
+      <div class="seg" id="mode"><button data-v="frames" class="on">Side by side</button><button data-v="episode">Episode</button><button data-v="training">Training</button></div>
+      <h2 style="margin-top: 12px"><em id="framesTitle" style="font-style: normal"></em><span id="framesHint"></span></h2>
+      <div id="frames"></div>
+    </section>
+    <section id="againstBox">
+      <h2>Checkpoints <span>two at a time</span></h2>
+      <div class="pair"><em>shown</em><div class="chips" id="first"></div></div>
+      <div class="pair"><em>with</em><div class="chips" id="against"></div></div>
+    </section>
+    <section>
+      <h2>Camera images <span>drag to pick patches</span></h2>
+      <div id="shots"></div>
+    </section>
+    <section>
+      <h2>In the cloud <span id="shown"></span></h2>
+      <div class="chips" id="kinds"></div>
+    </section>
+    <section>
+      <h2>Pick tokens <span id="picked"></span></h2>
+      <div class="chips" id="chips"></div>
+      <div class="row"><button id="all">All</button><button id="none">None</button><button id="invert">Invert</button></div>
+    </section>
+    <section>
+      <h2>Move the input of <span id="levelText"></span></h2>
+      <input type="range" id="level" min="0" max="35" value="0">
+      <div class="ticks"><span>block 1</span><span>12</span><span>24</span><span>36</span></div>
+    </section>
+    <section>
+      <h2>Colour</h2>
+      <div class="seg" id="colour">
+        <button data-v="image" class="on">Image</button><button data-v="kind">Kind</button><button data-v="patch">Patch</button><button data-v="frame">Frame</button><button data-v="checkpoint">Checkpoint</button><button data-v="moved">Moved</button>
+      </div>
+      <div class="switches">
+        <label class="switch on" id="trails"><i></i>Trails</label>
+        <label class="switch" id="far"><i></i>Long tokens</label>
+        <label class="switch" id="weigh" title="Point size follows the rank of the action expert's cross-attention to the token as recorded (mean over blocks, heads and action positions), from 0.6 to 2 times the plain size"><i></i>Size = expert attention</label>
+      </div>
+    </section>
+    <section>
+      <div class="help">
+        <b>Drag a point</b> in the large view to move that one token. <b>Shift-drag</b> to lasso points, <b>Shift-Alt-drag</b> to drop them. Drag the handle to move, turn or scale what is picked; every later layer, the action expert and the tip path are computed again as you drag.
+        In an episode the same move is applied at every time step: the faint points and lines are the episode as recorded.
+        Through training the steps are the checkpoints: without a move the second set of points is the same frame under the checkpoint chosen at "with" (faint, or in its own colour with Colour = Checkpoint); with a move the faint points are the checkpoint on the screen as recorded.
+        <b>Drag</b> elsewhere, or <b>right-drag</b> anywhere, to orbit, <b>wheel</b> to zoom. <b>Space</b> plays, <b>&larr; &rarr;</b> step through time, <b>&uarr; &darr;</b> through the layers, <b>L</b> goes back to the moved layer, <b>S</b> spins. <b>Esc</b> drops the pick, <b>Backspace</b> undoes every move.
+      </div>
+    </section>
+  </aside>
+
+  <div class="stage" id="stage">
+    <svg id="lasso"><polygon points=""/></svg>
+    <div class="title"><h1 id="mainTitle"></h1><p id="mainSub"></p></div>
+    <div class="tools">
+      <div class="seg" id="tool">
+        <button data-v="translate" class="on">Move<kbd>W</kbd></button><button data-v="rotate">Turn<kbd>E</kbd></button><button data-v="scale">Scale<kbd>R</kbd></button>
+      </div>
+      <button id="spin">Spin<kbd>S</kbd></button>
+      <button id="reset">Undo all</button>
+    </div>
+    <div id="hint"></div>
+    <div id="time">
+      <button id="play" title="Play (Space)"><svg width="12" height="12" viewBox="0 0 12 12"><path class="go" d="M2.5 1.2v9.6L10.5 6z"/><path class="halt" d="M2.2 1.5h2.8v9H2.2zM7 1.5h2.8v9H7z"/></svg></button>
+      <div class="track"><input type="range" id="clock" min="0" max="0" value="0"><div id="marks"></div></div>
+      <span id="when"></span>
+      <div class="seg" id="speed"><button data-v="0.5">0.5x</button><button data-v="1" class="on">1x</button><button data-v="2">2x</button></div>
+    </div>
+    <div id="profile">
+      <div class="cap"><span id="profileText"></span><b id="profileMax"></b></div>
+      <canvas id="profileCanvas"></canvas>
+    </div>
+  </div>
+
+  <div id="grid"></div>
+</div>
+<div id="tip"></div>
+<div id="veil"><i></i><span id="veilText">Loading the model's frames</span></div>
+
+<script>
+  // the page's script is a module: when it or the 3D library does not load, say so instead of waiting for ever
+  const stuck = text => { if (!window.started) document.querySelector("#veilText").textContent = text; };
+  addEventListener("error", e => stuck("The page did not start: " + (e.message || "a script did not load (the 3D library comes from cdn.jsdelivr.net; is it blocked?)")), true);
+  addEventListener("unhandledrejection", e => stuck("The page did not start: " + (e.reason && e.reason.message || e.reason)));
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
+
+const Q = s => document.querySelector(s);
+const FRAME_COLOURS = ["#ffb454", "#5ccfe6", "#c792ea"];
+const CHECKPOINT_COLOURS = ["#ffb454", "#5ccfe6"];  // the checkpoint on the screen and the one shown with it
+const KIND_COLOURS = ["#5b8def", "#ff5d73", "#2dd4bf", "#fbbf24", "#f97316", "#a78bfa", "#94a3b8", "#f472b6", "#64748b"];
+const CORNERS = ["#22d3ee", "#facc15", "#6366f1", "#f43f5e"].map(c => new THREE.Color(c));  // top left, top right, bottom left, bottom right
+const RAMP = ["#2b3344", "#3b6fe0", "#f59e0b", "#fff7e0"].map(c => new THREE.Color(c));
+const rgb = c => { const k = new THREE.Color(c); return [k.r, k.g, k.b]; };
+const FRAME_RGB = FRAME_COLOURS.map(rgb), KIND_RGB = KIND_COLOURS.map(rgb), CHECKPOINT_RGB = CHECKPOINT_COLOURS.map(rgb);
+const escape = s => s.replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const SHOWN = 0, FAR_AWAY = 1, ABSENT = 2;  // what a point is at one step and hidden index
+const AHEAD = 8;  // steps after the shown one that are asked for before they are needed
+
+// A scene has T time steps (1 for frames side by side), n points, A action positions and L hidden indices.
+// t: the step on the screen; goal: the step asked for (the screen follows when its answer is there).
+// level: the hidden index that is moved; look: the hidden index in the large view.
+// A move is a list of ops {mask [n], m: 4 x 4}, applied in order to the recorded points of `level` at every step,
+// and the op of the handle on top (`relative` on the picked points).
+const S = {info: null, mode: "frames", chosen: [], episode: null, frame: null, against: 0, last: null, loading: false, level: 0, look: 0, t: 0, goal: 0, T: 1, scene: null, n: 0, A: 0, F: 1, L: 37,
+           colour: "image", trails: true, far: false, weigh: false, tool: "translate", spin: false, playing: false, speed: 1, clock: 0,
+           selected: new Uint8Array(0), count: 0, place: new Float32Array(0), live: new Float32Array(0), ops: [], edited: false, version: 0, answers: new Map(),
+           show: [], expert: [17, 35], hover: null, generation: 0, flying: false, kinds: [], profile: new Float32Array(37), weight: new Float32Array(0)};
+
+// ───────────────────────────── a 3D view of points ─────────────────────────────
+const VERTEX = `
+  attribute vec3 color; attribute float size; uniform float scale; varying vec3 tint;
+  void main() { tint = color; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = size * scale / -mv.z; gl_Position = projectionMatrix * mv; }`;
+const FRAGMENT = `
+  varying vec3 tint; uniform float fade;
+  void main() {
+    vec2 p = gl_PointCoord * 2.0 - 1.0; float r = dot(p, p); if (r > 1.0) discard;
+    vec3 normal = vec3(p.x, -p.y, sqrt(1.0 - r));
+    float light = 0.58 + 0.5 * max(dot(normal, normalize(vec3(-0.45, 0.6, 0.66))), 0.0);
+    float rim = pow(1.0 - normal.z, 3.0) * 0.25;
+    gl_FragColor = vec4(tint * light + rim * tint, (1.0 - smoothstep(0.82, 1.0, r)) * fade);
+  }`;
+const RING = `
+  void main() { vec2 p = gl_PointCoord * 2.0 - 1.0; float r = length(p); float a = smoothstep(0.62, 0.7, r) * (1.0 - smoothstep(0.9, 1.0, r)); if (a < 0.02) discard; gl_FragColor = vec4(1.0, 1.0, 1.0, a); }`;
+
+const views = [];
+let leader = null;  // the view whose camera the other cloud views follow
+
+class View {
+  constructor(host, {space, size = 0.03, ease = 0.22, follow = true, up = null}) {
+    Object.assign(this, {host, space, size, ease, follow, n: 0, hidden: false});
+    this.renderer = new THREE.WebGLRenderer({antialias: true, alpha: true});
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.canvas = this.renderer.domElement;
+    this.canvas.className = "gl";
+    host.prepend(this.canvas);
+    this.world = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(30, 1, 0.05, 200);
+    if (up) this.camera.up.set(...up);
+    this.camera.position.set(...(up ? [3.1, -3.4, 2.3] : [2.5, 1.5, 4.0]));
+    this.controls = new OrbitControls(this.camera, this.canvas);
+    Object.assign(this.controls, {enableDamping: true, dampingFactor: 0.09, enablePan: false, rotateSpeed: 0.85, minDistance: 0.6, maxDistance: 40});
+    this.controls.addEventListener("change", () => { if (this.follow) leader = this; });
+    this.group = new THREE.Group();
+    this.world.add(this.group);
+    this.uniforms = {scale: {value: 1}};
+    this.marker = new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0], 3)).setAttribute("size", new THREE.Float32BufferAttribute([size * 3.4], 1))
+      .setAttribute("color", new THREE.Float32BufferAttribute([1, 1, 1], 3)), new THREE.ShaderMaterial({uniforms: this.uniforms, vertexShader: VERTEX, fragmentShader: RING, transparent: true, depthTest: false}));
+    this.marker.visible = false; this.marker.renderOrder = 5; this.marker.frustumCulled = false;
+    this.world.add(this.marker);
+    new ResizeObserver(() => this.resize()).observe(host);
+    this.canvas.addEventListener("pointermove", e => { if (!e.buttons) hover(this, e); });
+    this.canvas.addEventListener("pointerleave", () => hover(null));
+    views.push(this);
+  }
+  resize() {
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    if (!w || !h) return;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    this.uniforms.scale.value = h * this.renderer.getPixelRatio() / (2 * Math.tan(this.camera.fov * Math.PI / 360));
+  }
+  // points: Float32Array [n, 3]; style(i, out) writes r, g, b, size factor; paths: [[start, count]] drawn as lines.
+  // A view holds the points as recorded (base, faint) and as they are now (cur); both glide to where show() puts them.
+  setData(points, style, {paths = [], rings = true, trails = true} = {}) {
+    this.group.clear();
+    this.n = points.length / 3; this.style = style; this.still = false;
+    this.base = points.slice(); this.baseTo = points.slice(); this.cur = points.slice(); this.target = points.slice();
+    const g = this.geometry = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(this.cur, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(this.n * 3), 3));
+    g.setAttribute("size", new THREE.BufferAttribute(new Float32Array(this.n), 1));
+    const material = (fade, more) => new THREE.ShaderMaterial({uniforms: {scale: this.uniforms.scale, fade: {value: fade}}, vertexShader: VERTEX, fragmentShader: FRAGMENT, ...more});
+    this.points = new THREE.Points(g, material(1, {alphaToCoverage: true}));
+    const recorded = new THREE.BufferGeometry();
+    recorded.setAttribute("position", new THREE.BufferAttribute(this.base, 3)).setAttribute("color", new THREE.BufferAttribute(new Float32Array(this.n * 3), 3)).setAttribute("size", g.attributes.size);
+    this.faint = material(0.2, {transparent: true, depthWrite: false}); this.solid = material(1, {alphaToCoverage: true});
+    this.ghost = new THREE.Points(recorded, this.faint);
+    this.points.frustumCulled = this.ghost.frustumCulled = false;
+    if (rings) for (const turn of [[0, 0, 0], [Math.PI / 2, 0, 0], [0, Math.PI / 2, 0]]) {
+      const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({length: 96}, (_, i) => new THREE.Vector3(Math.cos(i / 48 * Math.PI) * 1.25, Math.sin(i / 48 * Math.PI) * 1.25, 0))),
+        new THREE.LineBasicMaterial({color: 0x9fb4e8, transparent: true, opacity: 0.07}));
+      ring.rotation.set(...turn); this.group.add(ring);
+    }
+    this.trail = null;
+    if (trails) {
+      const t = new THREE.BufferGeometry();
+      t.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.n * 6), 3));
+      t.setAttribute("color", new THREE.BufferAttribute(new Float32Array(this.n * 6), 3));
+      this.trail = new THREE.LineSegments(t, new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false}));
+      this.trail.frustumCulled = false; this.group.add(this.trail);
+    }
+    this.paths = paths.map(([start, count], k) => {
+      const colour = new THREE.Color(FRAME_COLOURS[k % FRAME_COLOURS.length]);
+      const line = opacity => new THREE.Line(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3)), new THREE.LineBasicMaterial({color: colour, transparent: true, opacity}));
+      const path = {start, count, colour, line: line(1), ghost: line(0.3)};
+      path.line.frustumCulled = path.ghost.frustumCulled = false;
+      this.group.add(path.ghost, path.line);
+      return path;
+    });
+    this.group.add(this.points, this.ghost);
+    this.paint();
+  }
+  paint() {
+    if (!this.n) return;
+    const colour = this.geometry.attributes.color, behind = this.ghost.geometry.attributes.color, size = this.geometry.attributes.size, out = [0, 0, 0, 1];
+    const two = both(), other = CHECKPOINT_RGB[1];
+    for (let i = 0; i < this.n; i++) {
+      this.style(i, out, this);
+      const light = Math.max(out[0], out[1], out[2]);
+      for (let k = 0; k < 3; k++) { colour.array[3 * i + k] = out[k]; behind.array[3 * i + k] = two ? other[k] * light : out[k]; }
+      size.array[i] = out[3] * this.size;
+    }
+    colour.needsUpdate = behind.needsUpdate = size.needsUpdate = true;
+    this.follows();
+  }
+  // lines that hang on the points: trails from where a point was recorded to where it is, and the paths
+  follows() {
+    if (this.trail) {
+      const p = this.trail.geometry.attributes.position.array, c = this.trail.geometry.attributes.color.array, colour = this.geometry.attributes.color.array, size = this.geometry.attributes.size.array;
+      this.trail.visible = S.trails && ghosts();
+      if (this.trail.visible) {
+        for (let i = 0; i < this.n; i++) {
+          const shown = size[i] > 0 ? 0.9 : 0;
+          for (let k = 0; k < 3; k++) {
+            p[6 * i + k] = this.base[3 * i + k]; p[6 * i + 3 + k] = this.cur[3 * i + k];
+            c[6 * i + k] = 0; c[6 * i + 3 + k] = colour[3 * i + k] * shown;
+          }
+        }
+        this.trail.geometry.attributes.position.needsUpdate = this.trail.geometry.attributes.color.needsUpdate = true;
+      }
+    }
+    for (const {start, count, colour, line, ghost} of this.paths) {
+      if (both()) { ghost.material.color.set(CHECKPOINT_COLOURS[1]); ghost.material.opacity = 0.9; } else { ghost.material.color.copy(colour); ghost.material.opacity = 0.3; }
+      line.geometry.attributes.position.array.set(this.cur.subarray(start * 3, (start + count) * 3));
+      ghost.geometry.attributes.position.array.set(this.base.subarray(start * 3, (start + count) * 3));
+      line.geometry.attributes.position.needsUpdate = ghost.geometry.attributes.position.needsUpdate = true;
+      ghost.visible = ghosts();
+    }
+  }
+  moved(i) { return Math.hypot(this.cur[3 * i] - this.base[3 * i], this.cur[3 * i + 1] - this.base[3 * i + 1], this.cur[3 * i + 2] - this.base[3 * i + 2]); }
+  // where the points go: as recorded and as they are now. A point that is not drawn at the moment is put there at once.
+  show(base, target, snap = false) {
+    this.baseTo.set(base); this.target.set(target);
+    const size = this.geometry.attributes.size.array;
+    for (let i = 0; i < this.n; i++) if (snap || !size[i]) for (let k = 3 * i; k < 3 * i + 3; k++) { this.base[k] = base[k]; this.cur[k] = target[k]; }
+    this.still = false;
+  }
+  setTarget(target, snap = false) { this.target.set(target); if (snap) this.cur.set(target); this.still = false; }
+  tick() {
+    if (this.hidden || !this.n) return;
+    this.controls.update();
+    if (!this.still) {
+      let far = 0;
+      for (let i = 0; i < this.cur.length; i++) {
+        const d = this.target[i] - this.cur[i], b = this.baseTo[i] - this.base[i];
+        this.cur[i] += d * this.ease; this.base[i] += b * this.ease; far = Math.max(far, Math.abs(d), Math.abs(b));
+      }
+      if (far < 2e-4) { this.cur.set(this.target); this.base.set(this.baseTo); this.still = true; }
+      this.geometry.attributes.position.needsUpdate = this.ghost.geometry.attributes.position.needsUpdate = true;
+      if (S.colour === "moved" && this.space === "token") this.paint(); else this.follows();
+    }
+    this.ghost.visible = ghosts(); this.ghost.material = both() ? this.solid : this.faint;
+    const at = S.hover && S.hover.space === this.space ? S.hover.index : -1;
+    this.marker.visible = at >= 0 && at < this.n && this.geometry.attributes.size.array[at] > 0;
+    if (this.marker.visible) this.marker.position.fromArray(this.cur, at * 3);
+    this.renderer.render(this.world, this.camera);
+  }
+  // the shown point nearest to a place on the screen, or -1
+  pick(x, y, reach = 12) {
+    const box = this.canvas.getBoundingClientRect(), v = new THREE.Vector3(), size = this.geometry.attributes.size.array;
+    let best = -1, nearest = reach * reach;
+    for (let i = 0; i < this.n; i++) {
+      if (!size[i]) continue;
+      v.fromArray(this.cur, 3 * i).project(this.camera);
+      if (v.z > 1) continue;
+      const dx = (v.x + 1) / 2 * box.width + box.left - x, dy = (1 - v.y) / 2 * box.height + box.top - y, d = dx * dx + dy * dy;
+      if (d < nearest) { nearest = d; best = i; }
+    }
+    return best;
+  }
+}
+
+// ───────────────────────────── the numbers of the scene ─────────────────────────────
+const recorded = (t, at) => S.cloud.subarray((t * S.L + at) * S.n * 3, (t * S.L + at + 1) * S.n * 3);  // the points of a step and hidden index
+const what = (t, at, i) => S.what[(t * S.L + at) * S.n + i];
+const drawn = (t, at, i) => { const w = what(t, at, i); return w === SHOWN || (w === FAR_AWAY && S.far); };
+const acts = (t, block) => S.action.subarray((t * S.info.expert_blocks + block) * S.A * 3, (t * S.info.expert_blocks + block + 1) * S.A * 3);
+const tips = t => S.tips.subarray(t * S.A * 3, (t + 1) * S.A * 3);
+const now = () => S.scene.frames[S.t];  // the frames of the step on the screen
+now.at = t => S.scene.frames[t][0];
+const seconds = t => S.scene.frames[t][0].frame / S.info.fps;
+const named = name => /^\d+$/.test(name) ? `step ${name}` : name;  // a checkpoint
+const stamp = t => S.mode === "training" ? named(now.at(t).checkpoint) : `${seconds(t).toFixed(1)} s`;
+// Through training and with no move, the faint points are the frame under the checkpoint `against`
+const comparing = () => S.mode === "training" && !S.edited && S.against >= 0;
+const ghosts = () => S.edited || comparing();
+const both = () => S.colour === "checkpoint" && comparing();  // two checkpoints, each in its colour
+
+// ───────────────────────────── colours and sizes ─────────────────────────────
+function ramp(t) {
+  t = Math.min(Math.max(t, 0), 1) * (RAMP.length - 1);
+  const i = Math.min(Math.floor(t), RAMP.length - 2), a = RAMP[i], b = RAMP[i + 1], f = t - i;
+  return [a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f];
+}
+function tokenColour(i) {
+  const p = S.scene.points[i];
+  if (S.colour === "kind") return KIND_RGB[p.kind];
+  if (S.colour === "frame") return FRAME_RGB[p.frame];
+  if (S.colour === "checkpoint") return CHECKPOINT_RGB[0];
+  if (S.colour === "patch") {
+    if (p.image < 0) return [0.3, 0.33, 0.4];
+    const g = S.info.grid, cell = p.image % (g * g), u = (cell % g) / (g - 1), v = Math.floor(cell / g) / (g - 1);
+    return [0, 1, 2].map(k => { const c = "rgb"[k]; return (CORNERS[0][c] * (1 - u) + CORNERS[1][c] * u) * (1 - v) + (CORNERS[2][c] * (1 - u) + CORNERS[3][c] * u) * v; });
+  }
+  const o = (S.t * S.n + i) * 3;
+  if (S.rgb[o] >= 0) return [0, 1, 2].map(k => Math.min(1, Math.pow(S.rgb[o + k], 0.8) * 1.12 + 0.03));
+  return KIND_RGB[p.kind];
+}
+// a token point of the language model at hidden index view.at
+function tokenStyle(i, out, view) {
+  const any = S.count > 0;
+  let c = S.colour === "moved" ? ramp(Math.sqrt(view.moved(i) / 0.8)) : S.tint[i];
+  let k = 1, size = S.weight[i];
+  if (S.colour !== "moved" && any && !S.selected[i]) { k = 0.45; size *= 0.8; }
+  if (any && S.selected[i]) size *= 1.2;
+  out[0] = c[0] * k + 0.02; out[1] = c[1] * k + 0.025; out[2] = c[2] * k + 0.035; out[3] = drawn(S.t, view.at, i) ? size : 0;
+}
+function actionStyle(i, out) {
+  const c = FRAME_RGB[Math.floor(i / S.ahead)], k = 0.4 + 0.6 * (i % S.ahead) / (S.ahead - 1);
+  out[0] = c[0] * k; out[1] = c[1] * k; out[2] = c[2] * k; out[3] = 1;
+}
+// the size of a point from the rank of the expert's attention to it at this step: 0.6 for the least, 2 for the most
+function weigh() {
+  S.weight = new Float32Array(S.n).fill(1); S.rank = null;
+  if (!S.weigh) return;
+  const attention = S.attention.subarray(S.t * S.n, (S.t + 1) * S.n), order = [];
+  for (let i = 0; i < S.n; i++) if (what(S.t, 0, i) !== ABSENT) order.push(i);
+  order.sort((a, b) => attention[a] - attention[b]);
+  S.rank = new Int32Array(S.n); S.ranked = order.length;
+  order.forEach((i, r) => { const q = order.length > 1 ? r / (order.length - 1) : 1; S.weight[i] = 0.6 + 1.4 * q * q * q; S.rank[i] = order.length - r; });
+}
+const repaint = () => { weigh(); S.tint = S.scene.points.map((_, i) => tokenColour(i)); views.forEach(v => v.paint()); };
+
+// ───────────────────────────── the views of the page ─────────────────────────────
+const main = new View(Q("#stage"), {space: "token", size: 0.036});
+const cells = [];
+function cell(kind, k) {
+  const el = document.createElement("div");
+  el.className = "cell";
+  el.innerHTML = `<div class="lab"><span class="tag"></span><b></b><small></small>${kind === "tip" ? "" : '<span class="step"><button data-d="-1">&lsaquo;</button><button data-d="1">&rsaquo;</button></span>'}</div><div class="foot"></div>`;
+  Q("#grid").append(el);
+  const view = new View(el, kind === "tip" ? {space: "action", size: 0.05, follow: false, up: [0, 0, 1]} : {space: kind === "language" ? "token" : "action", size: kind === "language" ? 0.042 : 0.06});
+  const c = {el, kind, k, view};
+  el.querySelectorAll(".step button").forEach(b => b.onclick = () => step(c, +b.dataset.d));
+  el.querySelector(".tag").textContent = {language: "LM", expert: "Expert", tip: "Output"}[kind];
+  el.querySelector(".tag").style.setProperty("--c", {language: "#7aa2ff", expert: "#5eead4", tip: "#ffb454"}[kind]);
+  cells.push(c);
+}
+for (let k = 0; k < 5; k++) cell("language", k);
+cell("expert", 0); cell("expert", 1); cell("tip", 0);
+const tipCell = cells[cells.length - 1];
+
+const pivot = new THREE.Object3D(), inverse = new THREE.Matrix4(), relative = new THREE.Matrix4(), IDENTITY = new THREE.Matrix4();
+main.world.add(pivot);
+const gizmo = new TransformControls(main.camera, main.canvas);
+gizmo.setSize(0.85);
+main.world.add(gizmo);
+gizmo.addEventListener("dragging-changed", e => { main.controls.enabled = !e.value; });
+gizmo.addEventListener("objectChange", applyPivot);
+
+// ───────────────────────────── picking and moving ─────────────────────────────
+// the points of `from` under a 4 x 4 (column-major elements) where the mask is set, written to `to`
+function apply(e, mask, from, to = from) {
+  for (let i = 0; i < mask.length; i++) {
+    const x = from[3 * i], y = from[3 * i + 1], z = from[3 * i + 2];
+    if (mask[i]) { to[3 * i] = e[0] * x + e[4] * y + e[8] * z + e[12]; to[3 * i + 1] = e[1] * x + e[5] * y + e[9] * z + e[13]; to[3 * i + 2] = e[2] * x + e[6] * y + e[10] * z + e[14]; }
+    else { to[3 * i] = x; to[3 * i + 1] = y; to[3 * i + 2] = z; }
+  }
+  return to;
+}
+// the places of a step's points at the moved hidden index under the ops, without the handle's own
+function fold(t) {
+  const out = recorded(t, S.level).slice();
+  for (const op of S.ops) apply(op.m.elements, op.mask, out);
+  return out;
+}
+const places = t => t === S.t ? S.live.slice() : apply(relative.elements, S.selected, fold(t));
+// what the handle did so far becomes an op
+function bake() {
+  if (relative.equals(IDENTITY) || !S.count) return;
+  const last = S.ops[S.ops.length - 1];
+  if (last && last.mask.every((x, i) => x === S.selected[i])) last.m.premultiply(relative);
+  else S.ops.push({mask: S.selected.slice(), m: relative.clone()});
+  relative.identity();
+}
+function centre() {
+  const c = new THREE.Vector3(); let count = 0;
+  for (let i = 0; i < S.n; i++) if (S.selected[i] && drawn(S.t, S.level, i)) { c.x += S.live[3 * i]; c.y += S.live[3 * i + 1]; c.z += S.live[3 * i + 2]; count++; }
+  return count ? c.divideScalar(count) : null;
+}
+// the handle back to the middle of what is picked at this step
+function settle() {
+  bake();
+  S.place = fold(S.t); S.live = S.place.slice();
+  const c = centre();
+  pivot.position.copy(c || new THREE.Vector3()); pivot.quaternion.identity(); pivot.scale.set(1, 1, 1); pivot.updateMatrix();
+  inverse.makeTranslation(-pivot.position.x, -pivot.position.y, -pivot.position.z);
+  if (c && S.look === S.level) gizmo.attach(pivot); else gizmo.detach();
+  const hint = Q("#hint"), away = c && S.look !== S.level;
+  hint.textContent = away ? `The handle is at the input of block ${S.level + 1}. Click here or press L to go there.` : "Nothing picked. Shift-drag here, or pick a kind or image patches on the left.";
+  hint.classList.toggle("go", !!away); hint.style.opacity = c && !away ? 0 : 1;
+}
+function applyPivot() {
+  pivot.updateMatrix();
+  relative.multiplyMatrices(pivot.matrix, inverse);
+  apply(relative.elements, S.selected, S.place, S.live);
+  const before = S.edited;
+  S.edited = S.ops.length > 0 || !relative.equals(IDENTITY);
+  S.version++;
+  if (before !== S.edited) { present(true); views.forEach(v => v.n && v.paint()); }  // the faint points change with the first move
+  if (S.look === S.level) main.setTarget(S.live, true);
+}
+const pickable = i => drawn(S.t, S.level, i);
+function pick(fn) {
+  bake();
+  let count = 0;
+  for (let i = 0; i < S.n; i++) { S.selected[i] = fn(i, S.scene.points[i]) && pickable(i) ? 1 : 0; count += S.selected[i]; }
+  S.count = count;
+  settle();
+  repaint(); drawShots(); drawChips(); counts();
+}
+function undo() {
+  S.ops = []; relative.identity(); S.edited = false; S.version++; S.answers.clear();
+  settle(); present(true);
+}
+
+// ───────────────────────────── talking to the model ─────────────────────────────
+const pill = (cls, text) => { Q("#pill").className = "pill " + cls; Q("#pillText").textContent = text; };
+let idle = null, times = [], sent = 0;
+const moving = () => (S.spin && S.count > 0) || gizmo.dragging || !!grab;
+const exact = answer => !!answer && answer.version === S.version;
+const recent = answer => exact(answer) || (!!answer && moving() && performance.now() - answer.stamp < 500);
+// One request at a time. First the step that is asked for; while the points move, three of four of its answers stop
+// before the action expert. Then the steps after it, so that playing does not wait.
+async function send() {
+  if (S.flying || !S.scene || S.loading || !S.edited) return;
+  let at = -1, full = true;
+  const here = S.answers.get(S.goal);
+  if (S.goal !== S.t) { if (!recent(here)) at = S.goal; }
+  else if (!exact(here)) { at = S.t; full = !moving() || ++sent % 4 === 0; }
+  else if (!here.full) at = S.t;
+  else for (let k = 1; k <= Math.min(AHEAD, S.T - 1) && at < 0; k++) { const next = S.answers.get((S.t + k) % S.T); if (!(exact(next) && next.full)) at = (S.t + k) % S.T; }
+  if (at < 0) return;
+  S.flying = true;
+  const generation = S.generation, version = S.version;
+  try {
+    const answer = await fetch(`/move?id=${S.scene.id}&step=${at}&level=${S.level}&full=${+full}`, {method: "POST", body: places(at)});
+    if (generation !== S.generation) { S.flying = false; return; }
+    if (!answer.ok) throw new Error((await answer.json()).error);
+    const data = new Float32Array(await answer.arrayBuffer()), cloud = S.L * S.n * 3, expert = S.info.expert_blocks * S.A * 3, before = S.answers.get(at);
+    if (generation === S.generation && !(before && before.version === version && before.full && !full)) {
+      const got = {version, full, stamp: performance.now(), cloud: data.subarray(0, cloud), profile: data.subarray(cloud, cloud + S.L)};
+      if (full) { got.action = data.subarray(cloud + S.L, cloud + S.L + expert); got.tips = data.subarray(cloud + S.L + expert); }
+      else if (before) { got.action = before.action; got.tips = before.tips; }  // the expert's last answer stays until the next one
+      S.answers.set(at, got);
+      if (at === S.t) present();
+      const time = performance.now();
+      times = times.filter(t => time - t < 2000).concat(time);
+      pill("live", `live  ${answer.headers.get("X-Ms")} ms  ${(times.length / 2).toFixed(1)}/s`);
+      clearTimeout(idle); idle = setTimeout(() => pill("", "idle"), 1500);
+    }
+  } catch (error) {
+    if (generation === S.generation) pill("bad", String(error.message || error).slice(0, 70));
+  }
+  S.flying = false;
+}
+
+// ───────────────────────────── the scene ─────────────────────────────
+function spread(level) {  // the hidden indices of the small views: evenly from the one after the move to the last
+  const last = S.info.blocks, out = [];
+  for (let k = 1; k <= 5; k++) { const at = Math.round(level + (last - level) * k / 5); if (at > level && !out.includes(at)) out.push(at); }
+  return out;
+}
+const blockName = at => at === 0 ? "Input of block 1" : `After block ${at}`;
+function counts() {
+  let present = 0;
+  for (let i = 0; i < S.n; i++) if (what(S.t, 0, i) !== ABSENT) present++;
+  Q("#picked").textContent = S.count ? `${S.count.toLocaleString()} of ${present.toLocaleString()}` : "";
+  Q("#mainTitle").textContent = S.look < S.info.blocks ? `Input of block ${S.look + 1}` : `After block ${S.look}`;
+  const where = S.mode === "episode" ? `episode ${now()[0].episode} at <b>${stamp(S.t)}</b>` : S.mode === "training" ? `episode ${now()[0].episode}, frame ${now()[0].frame} at <b>${stamp(S.t)}</b>`
+    : `${S.F} frame${S.F > 1 ? "s" : ""}`;
+  Q("#mainSub").innerHTML = `<b>${present.toLocaleString()}</b> tokens of ${where}, along the 3 directions that hold <b>${(100 * S.scene.share[S.look]).toFixed(0)}%</b> of their spread`;
+  Q("#levelText").textContent = `block ${S.level + 1} of ${S.info.blocks}`;
+  Q("#level").style.setProperty("--p", `${S.level / (S.info.blocks - 1) * 100}%`);
+}
+function label(c) {
+  const el = c.el, lab = el.querySelector(".lab b"), small = el.querySelector(".lab small");
+  if (c.kind === "language") { lab.textContent = blockName(c.view.at); small.textContent = `${(100 * S.scene.share[c.view.at]).toFixed(0)}%`; }
+  if (c.kind === "expert") { lab.textContent = `Block ${S.expert[c.k] + 1}, action positions`; small.textContent = `${(100 * S.scene.action_share[S.expert[c.k]]).toFixed(0)}%`; }
+  if (c.kind === "tip") { lab.textContent = "Tip path"; small.textContent = S.mode === "episode" ? "on the recorded path" : S.mode === "training" ? "of this checkpoint" : "each about its own middle"; }
+}
+// every view to the step on the screen: as recorded and, where there is a move, as the model answered
+function present(snap = false) {
+  const t = S.t, answer = S.edited ? S.answers.get(t) : null, n3 = S.n * 3, a3 = S.A * 3, behind = comparing() ? S.against : t;
+  for (const view of [main, ...cells.filter(c => c.kind === "language" && !c.view.hidden).map(c => c.view)]) {
+    const base = recorded(behind, view.at);
+    let target = answer && view.at >= S.level ? answer.cloud.subarray(view.at * n3, (view.at + 1) * n3) : recorded(t, view.at);
+    if (view === main && S.look === S.level) target = S.live;
+    view.show(base, target, snap);
+  }
+  for (const c of cells.filter(c => c.kind === "expert")) {
+    const base = acts(behind, S.expert[c.k]);
+    c.view.show(base, answer && answer.action ? answer.action.subarray(S.expert[c.k] * a3, (S.expert[c.k] + 1) * a3) : acts(t, S.expert[c.k]), snap);
+  }
+  const own = tips(behind), moved = answer && answer.tips ? answer.tips : behind === t ? own : tips(t);
+  tipCell.view.show(scaled(own), scaled(moved), snap);
+  let foot = `grid ${tip.grid} cm`;
+  if (moved !== own) foot += (S.edited ? " &nbsp; tip moved " : ` &nbsp; from ${named(now.at(behind).checkpoint)} `) + Array.from({length: S.F}, (_, f) => {
+    let sum = 0;
+    for (let i = f * S.ahead; i < (f + 1) * S.ahead; i++) sum += Math.hypot(moved[3 * i] - own[3 * i], moved[3 * i + 1] - own[3 * i + 1], moved[3 * i + 2] - own[3 * i + 2]);
+    return `<b style="color:${FRAME_COLOURS[f]}">${(sum / S.ahead).toFixed(2)}</b>`;
+  }).join(" / ") + " cm";
+  tipCell.el.querySelector(".foot").innerHTML = foot;
+  S.profile = answer ? answer.profile : comparing() ? Float32Array.from(S.scene.drift[t][S.against]) : new Float32Array(S.L);
+  Q("#profileText").textContent = (comparing() ? `How far the tokens of each layer are from those of ${named(now.at(S.against).checkpoint)}` : "How far the tokens of each layer moved")
+    + ", in units of that layer's spread. Drag across to look at another layer.";
+  drawProfile();
+}
+// the small views: which hidden indices and expert blocks they hold
+function arrange() {
+  const language = cells.filter(c => c.kind === "language");
+  language.forEach((c, k) => {
+    c.el.classList.toggle("off", k >= S.show.length); c.view.hidden = k >= S.show.length;
+    if (k < S.show.length) { c.view.at = S.show[k]; c.view.setData(recorded(S.t, S.show[k]), tokenStyle); label(c); }
+  });
+  const paths = Array.from({length: S.F}, (_, f) => [f * S.ahead, S.ahead]);
+  cells.filter(c => c.kind === "expert").forEach(c => { c.view.setData(acts(S.t, S.expert[c.k]), actionStyle, {paths, trails: false}); label(c); });
+  present(true);
+  requestAnimationFrame(() => views.forEach(v => v.resize()));
+}
+// the hidden index that is moved; the moves so far are in the directions of the old one and go
+function setLevel(level) {
+  S.ops = []; relative.identity(); S.edited = false; S.version++; S.answers.clear();
+  S.level = S.look = main.at = level;
+  S.show = spread(level);
+  for (let i = 0; i < S.n; i++) if (!pickable(i)) S.selected[i] = 0;
+  S.count = S.selected.reduce((a, b) => a + b, 0);
+  settle(); arrange(); repaint(); drawShots(); drawChips(); counts();
+}
+// the hidden index in the large view
+function setLook(look) {
+  look = Math.min(Math.max(look, 0), S.info.blocks);
+  if (look === S.look) return;
+  S.look = main.at = look;
+  settle(); present(); main.paint(); counts(); drawProfile();
+}
+// the step on the screen
+function setStep(t) {
+  bake();
+  S.t = S.goal = t;
+  settle(); repaint(); present(); refreshShots(); drawShots(); drawChips(); drawAgainst(); counts();
+  Q("#clock").value = t; Q("#clock").style.setProperty("--p", `${t / Math.max(1, S.T - 1) * 100}%`);
+  Q("#when").innerHTML = S.mode === "training" ? stamp(t) : `${stamp(t)} <small>of ${seconds(S.T - 1).toFixed(1)}</small>`;
+}
+function step(c, d) {
+  if (c.kind === "language") {
+    const at = c.view.at + d;
+    if (at <= S.level || at > S.info.blocks || S.show.includes(at)) return;
+    S.show[c.k] = at;
+  } else {
+    const at = S.expert[c.k] + d;
+    if (at < 0 || at >= S.info.expert_blocks || S.expert.includes(at)) return;
+    S.expert[c.k] = at;
+  }
+  arrange(); repaint();
+}
+// The tip paths in cm, drawn about a middle: frames side by side each about its own, an episode or a frame through
+// training about the middle of all its chunks; an episode with the first point of every chunk as a faint line.
+let tip = null;
+const scaled = points => points.map((x, i) => (x - tip.middle[Math.floor(i / 3 / S.ahead) * 3 + i % 3]) / tip.radius);
+function buildTip() {
+  const episode = S.mode === "episode", middle = new Float32Array(S.F * 3), count = S.T * S.ahead;
+  for (let t = 0; t < S.T; t++) tips(t).forEach((x, i) => { middle[Math.floor(i / 3 / S.ahead) * 3 + i % 3] += x / count; });
+  tip = {middle, radius: 1};
+  let radius = 2, low = Infinity;
+  const all = Array.from({length: S.T}, (_, t) => scaled(tips(t)));
+  for (const path of all) for (let i = 0; i < path.length; i += 3) { radius = Math.max(radius, Math.hypot(path[i], path[i + 1], path[i + 2])); low = Math.min(low, path[i + 2]); }
+  tip.radius = radius;
+  tipCell.view.size = episode ? 0.032 : 0.05;
+  tipCell.view.setData(scaled(tips(S.t)), actionStyle, {paths: Array.from({length: S.F}, (_, f) => [f * S.ahead, S.ahead]), rings: false, trails: false});
+  const size = [0.5, 1, 2, 5, 10, 20].find(s => 2.6 * radius / s <= 9) || 50, across = Math.ceil(2.6 * radius / size / 2) * 2;
+  const grid = new THREE.GridHelper(across * size / radius, across, 0x3a4560, 0x1c2230);
+  grid.rotation.x = Math.PI / 2; grid.position.z = low / radius - 0.08;
+  tipCell.view.group.add(grid);
+  if (episode) {
+    const whole = new THREE.Line(new THREE.BufferGeometry().setFromPoints(all.map(path => new THREE.Vector3(path[0] / radius, path[1] / radius, path[2] / radius))), new THREE.LineBasicMaterial({color: 0x8fa3cc, transparent: true, opacity: 0.45}));
+    whole.frustumCulled = false; tipCell.view.group.add(whole);
+  }
+  tip.grid = size; label(tipCell);
+}
+// what = {frames: [dataset indices]}, {episode} or {training: dataset index}; t: the step to show first
+async function load(what) {
+  if (S.loading) return;
+  S.loading = true; setPlaying(false);
+  const episode = what.episode !== undefined, training = what.training !== undefined;
+  const doing = episode ? `Running episode ${what.episode} through the model` : training ? `Running the frame through ${S.info.checkpoints.length} checkpoints` : "Running the frames through the model";
+  Q("#veil").classList.remove("gone");
+  Q("#veilText").textContent = doing;
+  const watch = setInterval(async () => {
+    const p = await (await fetch("/progress")).json();
+    if (S.loading && p.total > 1) Q("#veilText").textContent = `${doing}: step ${p.done} of ${p.total}`;
+  }, 400);
+  try {
+    const scene = await (await fetch(`/scene?${episode ? `episode=${what.episode}` : training ? `training=${what.training}` : `frames=${what.frames.join(",")}`}&kinds=${S.kinds.join(",")}`)).json();
+    if (scene.error) throw new Error(scene.error);
+    const blob = await fetch(`/blob?id=${scene.id}`);
+    if (!blob.ok) throw new Error((await blob.json()).error);
+    const data = new Float32Array(await blob.arrayBuffer());
+    S.generation++;
+    if (training && S.mode !== "training") setColour("checkpoint");
+    if (!training && S.colour === "checkpoint") setColour("image");
+    Q("#colour").classList.toggle("training", training);
+    hover(null);  // the point under the pointer is one of the old scene
+    S.scene = scene; S.last = what; S.mode = episode ? "episode" : training ? "training" : "frames";
+    if (episode) S.episode = what.episode; else if (training) S.frame = what.training; else S.chosen = what.frames;
+    S.T = scene.steps; S.n = scene.points.length; S.F = scene.frames[0].length; S.ahead = scene.ahead; S.A = S.ahead * S.F; S.L = S.info.blocks + 1;
+    let at = 0;
+    const take = count => { const part = data.subarray(at, at + count); at += count; return part; };
+    S.cloud = take(S.T * S.L * S.n * 3); S.what = take(S.T * S.L * S.n); S.action = take(S.T * S.info.expert_blocks * S.A * 3);
+    S.tips = take(S.T * S.A * 3); S.rgb = take(S.T * S.n * 3); S.attention = take(S.T * S.n);
+    S.where = Array.from({length: S.F}, () => new Map());  // image token number -> point, per frame
+    scene.points.forEach((p, i) => { if (p.image >= 0) S.where[p.frame].set(p.image, i); });
+    S.t = S.goal = 0; S.ops = []; relative.identity(); S.edited = false; S.version++; S.answers.clear(); S.clock = 0;
+    const first = S.info.cameras[0].slot, per = S.info.grid * S.info.grid;
+    S.selected = Uint8Array.from(scene.points, p => p.frame === 0 && p.image >= first * per && p.image < (first + 1) * per ? 1 : 0);
+    weigh(); S.tint = scene.points.map((_, i) => tokenColour(i));
+    Q("#mode").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === S.mode));
+    Q("#time").classList.toggle("on", S.T > 1); Q("#clock").max = S.T - 1;
+    Q("#marks").innerHTML = scene.frames.map((f, t) => training ? `<i data-n="${f[0].checkpoint}" style="left:${t / (S.T - 1) * 100}%"></i>`
+      : t && f[0].step !== scene.frames[t - 1][0].step ? `<i style="left:${t / (S.T - 1) * 100}%"></i>` : "").join("");
+    drawAgainst();
+    buildFrames(); buildShots(); buildTip();
+    main.setData(recorded(0, S.level), tokenStyle);
+    setLevel(S.level); setStep(Math.min(what.t ?? 0, S.T - 1));
+    Q("#veil").classList.add("gone");
+    pill("", "idle");
+  } catch (error) {
+    Q("#veilText").textContent = String(error.message || error);
+  }
+  clearInterval(watch);
+  S.loading = false;
+}
+
+// ───────────────────────────── the side panel ─────────────────────────────
+function buildFrames() {
+  const episode = S.mode === "episode", training = S.mode === "training", key = S.info.cameras[0].key;
+  Q("#framesTitle").textContent = episode ? "Episodes" : "Frames"; Q("#framesHint").textContent = episode || training ? "pick one" : "up to 3";
+  Q("#frames").innerHTML = "";
+  for (const f of episode ? S.info.episodes : S.info.frames) {
+    const order = episode ? (f.episode === S.episode ? 0 : -1) : training ? (f.index === S.frame ? 0 : -1) : S.chosen.indexOf(f.index), el = document.createElement("div");
+    el.className = "thumb" + (order >= 0 ? " on" : "");
+    el.title = episode ? `episode ${f.episode}, ${f.seconds} s` : `episode ${f.episode}, frame ${f.frame}\n${f.step}`;
+    if (order >= 0) { el.style.setProperty("--c", episode || training ? "#7aa2ff" : FRAME_COLOURS[order]); if (!episode && !training) el.dataset.tag = "ABC"[order]; }
+    el.innerHTML = `<img src="/image/${f.index}/${key}" draggable="false"><b>${episode ? `ep ${f.episode} · ${Math.round(f.seconds)} s` : `${f.episode}·${f.frame}`}</b>`;
+    el.onclick = () => {
+      if (episode) { if (f.episode !== S.episode) load({episode: f.episode}); return; }
+      if (training) { if (f.index !== S.frame) load({training: f.index, t: S.t}); return; }
+      const next = order >= 0 ? S.chosen.filter(x => x !== f.index) : S.chosen.concat(f.index).slice(-3);
+      if (next.length) load({frames: next});
+    };
+    Q("#frames").append(el);
+  }
+}
+const shots = [];
+function buildShots() {
+  Q("#shots").innerHTML = ""; shots.length = 0;
+  now().forEach((f, order) => {
+    const el = document.createElement("div");
+    el.className = "shot"; el.style.setProperty("--c", S.mode === "frames" ? FRAME_COLOURS[order] : "#7aa2ff");
+    el.innerHTML = `<div class="cap"><i></i><b>${S.mode === "frames" ? "ABC"[order] : ""}</b><em></em></div><div class="cams"></div>`;
+    S.info.cameras.forEach(camera => {
+      const cam = document.createElement("div");
+      cam.className = "cam";
+      cam.innerHTML = `<img draggable="false"><canvas></canvas><span>${camera.key.split(".").pop()}</span>`;
+      el.querySelector(".cams").append(cam);
+      const shot = {order, slot: camera.slot, key: camera.key, canvas: cam.querySelector("canvas"), image: cam.querySelector("img"), text: el.querySelector("em"), drag: null};
+      shots.push(shot);
+      const where = e => { const b = cam.getBoundingClientRect(), g = S.info.grid; return [Math.min(g - 1, Math.max(0, Math.floor((e.clientX - b.left) / b.width * g))), Math.min(g - 1, Math.max(0, Math.floor((e.clientY - b.top) / b.height * g)))]; };
+      const point = (column, row) => S.where[order].get(camera.slot * S.info.grid * S.info.grid + row * S.info.grid + column);
+      cam.onpointerdown = e => { cam.setPointerCapture(e.pointerId); shot.drag = {from: where(e), to: where(e)}; drawShots(); };
+      cam.onpointermove = e => {
+        const [column, row] = where(e);
+        if (shot.drag) { shot.drag.to = [column, row]; drawShots(); return; }
+        const i = point(column, row);
+        S.hover = i === undefined ? null : {space: "token", index: i}; drawShots();
+      };
+      cam.onpointerleave = () => { if (!shot.drag) { S.hover = null; drawShots(); } };
+      cam.onpointerup = e => {
+        const {from, to} = shot.drag; shot.drag = null;
+        const inside = new Set();
+        for (let row = Math.min(from[1], to[1]); row <= Math.max(from[1], to[1]); row++) for (let column = Math.min(from[0], to[0]); column <= Math.max(from[0], to[0]); column++) inside.add(point(column, row));
+        const before = S.selected.slice();
+        pick(i => inside.has(i) ? !e.altKey : (e.shiftKey || e.altKey) && before[i]);
+      };
+    });
+    Q("#shots").append(el);
+  });
+  refreshShots();
+}
+// the camera images and the step text of the step on the screen
+function refreshShots() {
+  for (const shot of shots) {
+    const f = now()[shot.order], src = `/image/${f.index}/${shot.key}`;
+    if (shot.image.getAttribute("src") !== src) shot.image.src = src;
+    shot.text.textContent = shot.text.title = f.step;
+  }
+}
+function drawShots() {
+  const g = S.info.grid;
+  for (const shot of shots) {
+    const canvas = shot.canvas, w = canvas.width = canvas.clientWidth * devicePixelRatio, h = canvas.height = canvas.clientHeight * devicePixelRatio, ctx = canvas.getContext("2d");
+    ctx.fillStyle = S.mode === "frames" ? FRAME_COLOURS[shot.order] : "#7aa2ff"; ctx.globalAlpha = 0.5;
+    for (let cell = 0; cell < g * g; cell++) {
+      const i = S.where[shot.order].get(shot.slot * g * g + cell);
+      if (i !== undefined && S.selected[i]) ctx.fillRect((cell % g) * w / g, Math.floor(cell / g) * h / g, w / g + 0.5, h / g + 0.5);
+    }
+    ctx.globalAlpha = 1; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5 * devicePixelRatio;
+    if (shot.drag) {
+      const {from, to} = shot.drag, x = Math.min(from[0], to[0]), y = Math.min(from[1], to[1]);
+      ctx.strokeRect(x * w / g, y * h / g, (Math.abs(from[0] - to[0]) + 1) * w / g, (Math.abs(from[1] - to[1]) + 1) * h / g);
+    } else if (S.hover && S.hover.space === "token") {
+      const p = S.scene.points[S.hover.index];
+      if (p && p.frame === shot.order && p.image >= shot.slot * g * g && p.image < (shot.slot + 1) * g * g) { const cell = p.image % (g * g); ctx.strokeRect((cell % g) * w / g, Math.floor(cell / g) * h / g, w / g, h / g); }
+    }
+  }
+}
+// through training: the checkpoint on the screen and the one whose points are shown with it while nothing is moved
+function drawAgainst() {
+  Q("#againstBox").classList.toggle("on", S.mode === "training");
+  Q("#first").innerHTML = Q("#against").innerHTML = "";
+  if (S.mode !== "training") return;
+  const chip = (row, t, on, colour, click) => {
+    const el = document.createElement("span");
+    el.className = "chip" + (on ? " on" : ""); el.style.setProperty("--c", on && t >= 0 ? colour : "#42517a");
+    el.innerHTML = `<i></i>${t < 0 ? "none" : now.at(t).checkpoint}`; el.onclick = click;
+    Q(row).append(el);
+  };
+  for (const t of S.scene.frames.keys()) chip("#first", t, t === S.t, CHECKPOINT_COLOURS[0], () => { if (t !== S.t) setStep(t); });
+  for (const t of [-1, ...S.scene.frames.keys()]) chip("#against", t, t === S.against, CHECKPOINT_COLOURS[1], () => { S.against = t; drawAgainst(); present(true); views.forEach(v => v.n && v.paint()); });
+}
+function drawKinds() {
+  Q("#kinds").innerHTML = "";
+  S.info.kinds.forEach((name, kind) => {
+    const el = document.createElement("span"), on = S.kinds.includes(kind);
+    el.className = "chip" + (on ? " on" : ""); el.style.setProperty("--c", KIND_COLOURS[kind]);
+    el.innerHTML = `<i></i>${name}`;
+    el.title = "The directions of every layer are fitted on the kinds that are in the cloud";
+    el.onclick = () => {
+      const next = on ? S.kinds.filter(k => k !== kind) : S.kinds.concat(kind).sort((a, b) => a - b);
+      if (next.length && !S.loading) { S.kinds = next; drawKinds(); load(S.last); }
+    };
+    Q("#kinds").append(el);
+  });
+}
+function drawChips() {
+  const total = S.info.kinds.map(() => 0), on = S.info.kinds.map(() => 0);
+  S.scene.points.forEach((p, i) => { if (pickable(i)) { total[p.kind]++; on[p.kind] += S.selected[i]; } });
+  const key = total.join() + "|" + on.join();
+  if (key === drawChips.key) return;
+  drawChips.key = key;
+  Q("#chips").innerHTML = "";
+  S.info.kinds.forEach((name, kind) => {
+    if (!total[kind]) return;
+    const el = document.createElement("span");
+    el.className = "chip" + (on[kind] === total[kind] ? " on" : ""); el.style.setProperty("--c", KIND_COLOURS[kind]);
+    el.innerHTML = `<i></i>${name}<small>${total[kind]}</small>`;
+    el.title = "Click to pick these tokens, Shift-click to add them, Alt-click to drop them";
+    el.onclick = e => { const before = S.selected.slice(); pick((i, p) => p.kind === kind ? !e.altKey : (e.shiftKey || e.altKey) && before[i]); };
+    Q("#chips").append(el);
+  });
+}
+// the bar per hidden index; the strip is also the slider of the large view's hidden index
+function drawProfile() {
+  const canvas = Q("#profileCanvas"), w = canvas.width = canvas.clientWidth * devicePixelRatio, h = canvas.height = canvas.clientHeight * devicePixelRatio, ctx = canvas.getContext("2d"), r = devicePixelRatio;
+  const top = Math.max(1e-6, ...S.profile), n = S.profile.length, gap = 3 * r, bar = (w - gap * (n - 1)) / n, floor = h - 13 * r;
+  ctx.font = `${10 * r}px ui-monospace, monospace`; ctx.textAlign = "center";
+  for (let i = 0; i < n; i++) {
+    const x = i * (bar + gap), height = S.profile[i] / top * (floor - 2 * r), shown = S.show.includes(i);
+    if (i === S.look) { ctx.fillStyle = "rgba(122, 162, 255, .16)"; ctx.beginPath(); ctx.roundRect(x - gap / 2, 0, bar + gap, floor + r, 3 * r); ctx.fill(); }
+    ctx.fillStyle = "#1a202c"; ctx.fillRect(x, floor - 2 * r, bar, 2 * r);
+    ctx.fillStyle = i === S.level ? "#ffffff" : i === S.look ? "#a9c1ff" : shown ? "#7aa2ff" : "#42517a";
+    if (height > 0 || i === S.look) { ctx.beginPath(); ctx.roundRect(x, floor - Math.max(height, 2 * r), bar, Math.max(height, 2 * r), 2 * r); ctx.fill(); }
+    if (i === S.level || i === S.look || shown || i === 0) {
+      ctx.fillStyle = i === S.level || i === S.look ? "#e7eaf0" : "#5a6375";
+      const text = i === S.level ? "moved" : String(i), half = ctx.measureText(text).width / 2;
+      if (i === S.level || i === S.look || Math.abs(i - S.level) > 1 && Math.abs(i - S.look) > 1) ctx.fillText(text, Math.min(Math.max(x + bar / 2, half), w - half), h - 2 * r);
+    }
+  }
+  Q("#profileMax").textContent = ghosts() ? `largest ${top.toFixed(2)}` : "";
+}
+const strip = Q("#profileCanvas");
+const stripAt = e => { const box = strip.getBoundingClientRect(); return Math.floor((e.clientX - box.left) / box.width * S.L); };
+strip.onpointerdown = e => { strip.setPointerCapture(e.pointerId); setLook(stripAt(e)); };
+strip.onpointermove = e => { if (e.buttons) setLook(stripAt(e)); };
+
+// ───────────────────────────── pointer ─────────────────────────────
+function hover(view, e) {
+  const el = Q("#tip"), before = S.hover;
+  if (!S.scene) return;
+  const i = view ? view.pick(e.clientX, e.clientY) : -1;
+  S.hover = i >= 0 ? {space: view.space, index: i} : null;
+  if ((before && before.index) !== (S.hover && S.hover.index)) drawShots();
+  if (!S.hover) { el.style.display = "none"; return; }
+  const letter = f => S.F > 1 ? `frame ${"ABC"[f]}` : "";
+  if (view.space === "token") {
+    const p = S.scene.points[i], g = S.info.grid, cell = p.image % (g * g), camera = S.info.cameras.find(c => c.slot === Math.floor(p.image / (g * g)));
+    el.innerHTML = `<b>${escape(S.scene.tokens[S.t][i])}</b><span>${[S.info.kinds[p.kind], letter(p.frame)].filter(Boolean).join(" · ")}</span>` +
+      (p.image >= 0 && camera ? `<span>${camera.key.split(".").pop()}, row ${Math.floor(cell / g) + 1}, column ${cell % g + 1}</span>` : "") +
+      (S.rank ? `<span>expert attention: rank ${S.rank[i]} of ${S.ranked}</span>` : "") + (ghosts() ? `<span>${S.edited ? "moved" : "apart"} ${view.moved(i).toFixed(2)} here</span>` : "");
+  } else el.innerHTML = `<b>action step ${i % S.ahead + 1} of ${S.ahead}</b><span>${letter(Math.floor(i / S.ahead))}</span>`;
+  el.style.display = "block";
+  el.style.left = Math.min(e.clientX + 14, innerWidth - el.offsetWidth - 8) + "px"; el.style.top = Math.min(e.clientY + 14, innerHeight - el.offsetHeight - 8) + "px";
+}
+// One point dragged by hand in the large view: a press on a point picks it alone, and the drag moves it in the plane
+// through it that faces the screen (capture phase: before the orbit sees the press; the handle keeps its own presses).
+let grab = null;
+const under = (e, depth) => { const box = main.canvas.getBoundingClientRect(); return new THREE.Vector3((e.clientX - box.left) / box.width * 2 - 1, 1 - (e.clientY - box.top) / box.height * 2, depth).unproject(main.camera); };
+main.canvas.addEventListener("pointerdown", e => {
+  if (e.shiftKey || e.button !== 0 || gizmo.axis || S.look !== S.level || S.loading) return;
+  const i = main.pick(e.clientX, e.clientY);
+  if (i < 0) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  main.canvas.setPointerCapture(e.pointerId);
+  if (!(S.count === 1 && S.selected[i])) pick(k => k === i);
+  const depth = pivot.position.clone().project(main.camera).z;
+  grab = {depth, offset: pivot.position.clone().sub(under(e, depth))};
+}, true);
+main.canvas.addEventListener("pointermove", e => {
+  if (!grab) return;
+  e.stopImmediatePropagation();
+  pivot.position.copy(under(e, grab.depth)).add(grab.offset);
+  applyPivot();
+}, true);
+main.canvas.addEventListener("pointerup", e => { if (grab) { e.stopImmediatePropagation(); grab = null; } }, true);
+main.controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;  // orbit from anywhere, also from on top of a point
+
+// lasso in the large view (capture phase: before the orbit and the handle see the press)
+let rope = null;
+main.canvas.addEventListener("pointerdown", e => {
+  if (!e.shiftKey || e.button !== 0) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  main.canvas.setPointerCapture(e.pointerId);
+  rope = [[e.offsetX, e.offsetY]];
+}, true);
+main.canvas.addEventListener("pointermove", e => {
+  if (!rope) return;
+  e.stopImmediatePropagation();
+  rope.push([e.offsetX, e.offsetY]);
+  Q("#lasso polygon").setAttribute("points", rope.map(p => p.join(",")).join(" "));
+}, true);
+main.canvas.addEventListener("pointerup", e => {
+  if (!rope) return;
+  e.stopImmediatePropagation();
+  const path = rope, box = main.canvas.getBoundingClientRect(), v = new THREE.Vector3(), before = S.selected.slice(), size = main.geometry.attributes.size.array;
+  rope = null; Q("#lasso polygon").setAttribute("points", "");
+  if (path.length < 3) return;
+  const inside = (x, y) => { let odd = false; for (let i = 0, j = path.length - 1; i < path.length; j = i++) { const [xi, yi] = path[i], [xj, yj] = path[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) odd = !odd; } return odd; };
+  const hits = Uint8Array.from(size, (s, i) => { if (!s) return 0; v.fromArray(main.cur, 3 * i).project(main.camera); return v.z < 1 && inside((v.x + 1) / 2 * box.width, (1 - v.y) / 2 * box.height) ? 1 : 0; });
+  pick(i => e.altKey ? before[i] && !hits[i] : before[i] || hits[i]);
+}, true);
+
+function segment(id, key, fn) {
+  Q(id).querySelectorAll("button").forEach(b => b.onclick = () => { S[key] = b.dataset.v; Q(id).querySelectorAll("button").forEach(o => o.classList.toggle("on", o === b)); fn(); });
+}
+segment("#colour", "colour", repaint);
+const setColour = v => { S.colour = v; Q("#colour").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === v)); };
+segment("#tool", "tool", () => gizmo.setMode(S.tool));
+segment("#speed", "speed", () => { S.speed = +S.speed; });
+Q("#mode").querySelectorAll("button").forEach(b => b.onclick = () => {
+  if (b.dataset.v === S.mode || S.loading) return;
+  load(b.dataset.v === "episode" ? {episode: S.episode ?? now()[0].episode} : b.dataset.v === "training" ? {training: S.frame ?? now()[0].index} : {frames: S.chosen});
+});
+const setSpin = on => { S.spin = on; Q("#spin").classList.toggle("on", on); };
+function setPlaying(on) { S.playing = on && S.T > 1; S.clock = 0; Q("#play").classList.toggle("on", S.playing); }
+const toggle = (id, key, fn) => { Q(id).onclick = () => { S[key] = !S[key]; Q(id).classList.toggle("on", S[key]); fn(); }; };
+toggle("#trails", "trails", () => views.forEach(v => v.n && v.follows()));
+toggle("#far", "far", () => { const before = S.selected.slice(); pick(i => before[i]); });
+toggle("#weigh", "weigh", repaint);
+Q("#spin").onclick = () => setSpin(!S.spin);
+Q("#play").onclick = () => setPlaying(!S.playing);
+Q("#reset").onclick = undo;
+Q("#hint").onclick = () => setLook(S.level);
+Q("#all").onclick = () => pick(() => true);
+Q("#none").onclick = () => pick(() => false);
+Q("#invert").onclick = () => { const before = S.selected.slice(); pick(i => !before[i]); };
+Q("#level").oninput = e => { setSpin(false); setLevel(+e.target.value); };
+Q("#clock").oninput = e => { setPlaying(false); S.goal = +e.target.value; };
+addEventListener("keydown", e => {
+  if (!S.scene || S.loading || e.ctrlKey || e.metaKey) return;
+  const key = e.key.toLowerCase(), tool = {w: "translate", e: "rotate", r: "scale"}[key];
+  if (tool) Q(`#tool button[data-v=${tool}]`).click();
+  else if (e.key === "Escape") pick(() => false);
+  else if (e.key === "Backspace") undo();
+  else if (key === "s") setSpin(!S.spin);
+  else if (key === "l") setLook(S.level);
+  else if (e.key === " ") { if (S.T > 1) setPlaying(!S.playing); else setSpin(!S.spin); }
+  else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { setPlaying(false); S.goal = Math.min(Math.max(S.goal + (e.key === "ArrowLeft" ? -1 : 1), 0), S.T - 1); }
+  else if (e.key === "ArrowUp" || e.key === "ArrowDown") setLook(S.look + (e.key === "ArrowUp" ? 1 : -1));
+  else return;
+  e.preventDefault(); document.activeElement.blur();
+});
+addEventListener("resize", () => { drawProfile(); drawShots(); });
+
+// ───────────────────────────── every frame of the screen ─────────────────────────────
+const UP = new THREE.Vector3(0, 1, 0);
+let last = performance.now();
+function frame(time) {
+  const dt = Math.min(0.05, (time - last) / 1000); last = time;
+  if (S.scene && !S.loading) {
+    if (S.spin && S.count && !gizmo.dragging) { pivot.rotateOnWorldAxis(UP, dt * 0.7); applyPivot(); }
+    if (S.playing && S.goal === S.t) {  // the next step when the footage between the two has run
+      const next = (S.t + 1) % S.T;
+      S.clock += dt * S.speed;
+      if (S.clock >= (S.mode === "training" ? 0.9 : next ? seconds(next) - seconds(S.t) : 0.6)) { S.clock = 0; S.goal = next; }
+    }
+    if (S.goal !== S.t && (!S.edited || recent(S.answers.get(S.goal)))) setStep(S.goal);
+    send();
+    views.forEach(v => v.tick());
+    if (leader) { for (const v of views) if (v !== leader && v.follow) { v.camera.position.copy(leader.camera.position); v.camera.quaternion.copy(leader.camera.quaternion); } leader = null; }
+  }
+  requestAnimationFrame(frame);
+}
+
+S.info = await (await fetch("/frames")).json();
+Q("#model").textContent = S.info.model;
+Q("#level").max = S.info.blocks - 1;
+Q("#shots").style.setProperty("--cameras", S.info.cameras.length);
+S.kinds = S.info.kinds.map((_, kind) => kind).filter(kind => !["image, long", "depth"].includes(S.info.kinds[kind]));
+drawKinds();
+const half = Math.floor(S.info.frames.length / 2);
+await load({frames: half > 0 ? [S.info.frames[0].index, S.info.frames[half].index] : [S.info.frames[0].index]});
+window.started = true;
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
