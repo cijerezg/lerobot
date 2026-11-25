@@ -177,7 +177,7 @@ def test_trainer_keeps_the_hand_parameters_trainable_and_in_the_fresh_group():
     from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
 
     policy = _Policy()
-    tp = SimpleNamespace(vision_from_layer=2, language_from_layer=2, depth_warmup=False)
+    tp = SimpleNamespace(vision_from_layer=2, language_from_layer=2, action_expert_from_layer=0, depth_warmup=False)
     MolmoAct2Trainer._apply_actor_freeze(policy, tp, freeze_embedding=True)
     trainable = {name for name, p in policy.named_parameters() if p.requires_grad}
     assert "hand_token_rows.rows" in trainable

@@ -172,10 +172,10 @@ Per-submodule freeze schedule. `null` = freeze entire module; integer `N` = trai
 |-------|------|---------|-------------|
 | `policy.trainable_params.vision_from_layer` | int\|null | `16` | Train ViT (depth 25, resblocks 0..24) from this layer. Setting any value also unfreezes `image_pooling_2d` and `image_projector`. |
 | `policy.trainable_params.language_from_layer` | int\|null | `0` | Train the language transformer (depth 36) from this layer. Setting any value also unfreezes the final layer norm (`ln_f`) and `lm_head`. |
+| `policy.trainable_params.action_expert_from_layer` | int\|null | `0` | Train the action expert (36 blocks, one per language block) from this block. `0` trains the whole expert. `N > 0` trains blocks ≥ `N` and the final layer; the time / action embeddings and the context projections are frozen. |
 | `policy.trainable_params.critic_vision_from_layer` | int\|null | `4` | Critic vision branch (ignored when `skip_critic: true`). |
 | `policy.trainable_params.critic_language_from_layer` | int\|null | `18` | Critic language branch (ignored when `skip_critic: true`). |
 
-The action expert is always trained regardless of these settings.
 
 ### Policy — Losses & Optimization
 

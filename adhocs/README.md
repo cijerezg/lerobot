@@ -24,3 +24,4 @@ training or probe path; the probe suite does not import it.
 | `sim_branch/` | from frame t of a recorded sim rollout, does a hand-written corrective plan beat the policy's own next actions? deterministic restore + side-by-side video and metrics | 2026-11-09 |
 | `pan2/` | can the PAN 2 video world model continue a real top-camera frame into a plausible 10 s manipulation clip? prompt builder + generation script, blind comparison key | 2026-11-11 |
 | `sta/` | subspace-translated adaptation, M0: does the gradient of the tube flow loss on the action expert's write layers fall inside directions found without fitting (task inputs against other data, the layer's own outputs)? base / internal / tube 700 | 2026-11-23 |
+| `weight_change/` | which layers' weights moved most between base MolmoAct2 and a checkpoint? relative change per block and per part (attention, MLP, cross attention, modulation) | 2026-11-24 |

@@ -205,7 +205,7 @@ def test_freeze_schedule_and_pretrained_merge_exclude_target_and_protect_predict
     _, aux = objective()
     policy = nn.Module()
     policy.future_visual = aux
-    tp = SimpleNamespace(vision_from_layer=2, language_from_layer=2, depth_warmup=False)
+    tp = SimpleNamespace(vision_from_layer=2, language_from_layer=2, action_expert_from_layer=0, depth_warmup=False)
     MolmoAct2Trainer._apply_actor_freeze(policy, tp, freeze_embedding=True)
     assert all(p.requires_grad for p in aux.predictor.parameters())
     assert all(not p.requires_grad for p in aux.target_vit.parameters())

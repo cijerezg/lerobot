@@ -209,6 +209,7 @@ def test_actor_freeze_trains_late_visual_path_but_not_rgb_stem() -> None:
     tp = SimpleNamespace(
         vision_from_layer=16,
         language_from_layer=28,
+        action_expert_from_layer=0,
         depth_warmup=False,
     )
     MolmoAct2Trainer._apply_actor_freeze(policy, tp, freeze_embedding=True)

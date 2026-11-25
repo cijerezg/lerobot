@@ -499,7 +499,7 @@ class MolmoAct2Config(PreTrainedConfig):
     freeze_embedding: bool = True
     train_action_expert_only: bool = False
     # Per-layer freeze schedule. None → fall back to train_action_expert_only / LoRA flags.
-    # See TrainableParamsConfig for schema. Action expert always trains regardless.
+    # See TrainableParamsConfig for schema.
     trainable_params: TrainableParamsConfig | None = None
     gradient_checkpointing: bool = False
 

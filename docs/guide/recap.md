@@ -222,7 +222,7 @@ The full MolmoAct2 + critic stack is too large to train end-to-end on a single w
 | Image pooling + projector | (linked to `vision_from_layer`) | trains when vision is on | — |
 | Text model (Qwen2.5) | `language_from_layer` | `0` (train all) | 36 |
 | Token embedding (`wte`) | `freeze_embedding` | `true` (frozen) | — |
-| Action expert | — | always trained | — |
+| Action expert | `action_expert_from_layer` | `0` (train all) | 36 |
 | Critic vision tower | `critic_vision_from_layer` | `4` (train layers 4–24) | 25 |
 | Critic text blocks | `critic_language_from_layer` | `18` (train block 18 and beyond, if present) | 12 |
 | Critic queries + logit head | — | always trained | — |
