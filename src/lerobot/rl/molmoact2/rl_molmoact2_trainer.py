@@ -584,12 +584,23 @@ class MolmoAct2Trainer(Trainer):
     @staticmethod
     def _apply_actor_freeze(policy: nn.Module, tp, *, freeze_embedding: bool) -> None:
         vision_on = tp.vision_from_layer is not None
-        language_on = tp.language_from_layer is not None
+        language_on = tp.language_from_layer is not None or tp.language_layers is not None
         vt_layers = set(range(tp.vision_from_layer, _MOLMOACT2_VIT_DEPTH)) if vision_on else set()
-        lm_layers = set(range(tp.language_from_layer, _MOLMOACT2_LANGUAGE_DEPTH)) if language_on else set()
+        if tp.language_layers is not None:
+            lm_layers = set(tp.language_layers)
+        elif language_on:
+            lm_layers = set(range(tp.language_from_layer, _MOLMOACT2_LANGUAGE_DEPTH))
+        else:
+            lm_layers = set()
         # One expert block per language block.
-        expert_on = tp.action_expert_from_layer is not None
-        expert_layers = set(range(tp.action_expert_from_layer, _MOLMOACT2_LANGUAGE_DEPTH)) if expert_on else set()
+        expert_on = tp.action_expert_from_layer is not None or tp.action_expert_layers is not None
+        if tp.action_expert_layers is not None:
+            expert_layers = set(tp.action_expert_layers)
+        elif expert_on:
+            expert_layers = set(range(tp.action_expert_from_layer, _MOLMOACT2_LANGUAGE_DEPTH))
+        else:
+            expert_layers = set()
+        whole_expert = tp.action_expert_from_layer == 0 and tp.action_expert_layers is None
 
         for name, param in policy.named_parameters():
             if name.startswith("critic.") or name.startswith("critic_target."):
@@ -623,7 +634,7 @@ class MolmoAct2Trainer(Trainer):
             elif ".action_expert." in name:
                 # Time / action embeddings and the context projections feed every block,
                 # so they train only when the whole expert does.
-                param.requires_grad = tp.action_expert_from_layer == 0
+                param.requires_grad = whole_expert
             elif ".transformer.wte" in name:
                 param.requires_grad = not freeze_embedding
             elif ".lm_head" in name or name.endswith("lm_head.weight"):

@@ -24,6 +24,10 @@ class TrainableParamsConfig:
       - `action_expert_from_layer` 0 (default) trains the whole action expert.
         N > 0 trains its blocks >= N and its final layer; the layers in front
         of the blocks (time / action embeddings, context projections) are frozen.
+      - `language_layers` / `action_expert_layers` (lists of block indices) replace
+        the `from_layer` range of their submodule when set; the other rules stay
+        (final norm, lm_head and the expert's final layer train, the layers in
+        front of the expert blocks are frozen).
       - Token embeddings follow the policy's `freeze_embedding` flag, not this
         struct.
       - Critic mirrors apply the same rules to the critic-side submodules.
@@ -34,6 +38,8 @@ class TrainableParamsConfig:
     vision_from_layer: int | None = None
     language_from_layer: int | None = None
     action_expert_from_layer: int | None = 0
+    language_layers: list[int] | None = None
+    action_expert_layers: list[int] | None = None
     critic_vision_from_layer: int | None = None
     critic_language_from_layer: int | None = None
 

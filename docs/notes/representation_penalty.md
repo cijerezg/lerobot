@@ -28,7 +28,7 @@ $$L = L_{\text{flow}} + L_{\text{discrete}} + \beta \cdot \tfrac{1}{2}\Big(\oper
 | Distance | `_relative_distance` and the joint loop `_compute_flow_matching_loss_joint_per_layer` in `policies/molmoact2/modeling_molmoact2.py`; the base layer runs next to each trained layer under `no_grad` |
 | Gradients | `_representation_gradients` in `rl/molmoact2/rl_molmoact2_trainer.py`: one more forward + backward on the first microbatch of a logged step |
 | Base prompt | `policy.prompt_setup` renders the base setup clause (`policy.prompt_expected_control_mode` exists, not used: user decision 2026-11-23, no control mode clause); `subtask` in `policy.prompt_clauses_off` |
-| Configs | `config_rl_rep.yaml`, `config_rl_rep_validate.yaml` (workspace root) |
+| Configs | removed 2026-11-24; each run's settings are in its checkpoints (`train_config.json`) |
 
 The base copy reads the trained model's input embeddings. That is the base input only while
 the vision tower, the projector and the embeddings are frozen (`vision_from_layer: null`,
