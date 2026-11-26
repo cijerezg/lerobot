@@ -8,7 +8,7 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --robot.type=rebot_b601_follower \
     --robot.port=/dev/ttyACM0 \
     --robot.id=rebot_follower_v1 \
-    --robot.cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true, log_path: outputs/logs/realsense_wrist.log, log_severity: info}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30}}" \
+    --robot.cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true, log_path: outputs/logs/realsense_wrist.log, log_severity: info}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30, warmup_s: 3}}" \
     --teleop.type=rebot_102_leader \
     --teleop.variant=102HD \
     --teleop.port=/dev/ttyUSB0 \
@@ -18,7 +18,7 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
 Cameras only (no robot, no leader; same cameras dict, streams to Rerun, Ctrl-C to stop):
 
 uv run --no-project --python .venv/bin/python lerobot/adhocs/camera_preview/preview.py \
-    --cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true, log_path: outputs/logs/realsense_wrist.log, log_severity: info}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30}}"
+    --cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true, log_path: outputs/logs/realsense_wrist.log, log_severity: info}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30, warmup_s: 3}}"
 
 ## Record
 
@@ -28,16 +28,16 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --robot.type=rebot_b601_follower \
     --robot.port=/dev/ttyACM0 \
     --robot.id=rebot_follower_v1 \
-    --robot.cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30}}" \
+    --robot.cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30, warmup_s: 3}}" \
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/insert-tube-into-peg-v1 \
-    --dataset.single_task="put the tube in the peg" \
+    --dataset.repo_id=cijerezg/small-objects-v1 \
+    --dataset.single_task="tidy up the table" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \
-    --dataset.episode_time_s=600 \
+    --dataset.episode_time_s=3600 \
     --dataset.reset_time_s=120 \
     --dataset.push_to_hub=false \
     --teleop.variant=102HD \

@@ -29,7 +29,9 @@ kit", also alone on the desk at L1 with the L3 time budget), the lid task = clos
 Tube set (2026-11-15, scenes tube_peg_{left,right,two,three}_p1, scripts/sim_builders/tube_peg/README.md): one, two or three tubes, each
 with its own peg holder, on the twin desk for the v2 tube policy, tier ``tube``, scorer tube_task.py. Not in LAYOUTS (run with LAYOUTS="$(... tube_layouts)"). Task and
 subtask strings are the tube recordings' ("put the tube in the peg", "... on the left / right", "return home"); the layouts also
-set two robot fields (``Task.robot``): the finger force cap and the joint zero correction.
+set two robot fields (``Task.robot``): the finger force cap and the joint zero correction. Start levels (2026-11-25, scenes
+tube_peg_{left,right}_{half,near}_p1, tiers ``tube_half`` / ``tube_near``): the same scenes with the arm starting halfway to the tube or
+just above it; part of ``tube_layouts`` (8 scenes), the three levels alone are LAYOUTS="$(... tube_start_layouts)".
 
 Choice set (2026-11-17, scenes choice_<pair>_ask_<object>_p<1-6>, scripts/sim_builders/object_choice): the basket and two objects, the
 task names one ("Put the banana in the basket"), tier ``choice``, scorer choice_tasks.py (the named object's ladder + which object
@@ -50,7 +52,7 @@ from .scorer import TaskScorer
 from .tube_task import tube_peg_scorer
 from .twin_tasks import FoldKitScorer, pick_place_scorer, sequence_scorer
 
-TIERS = ("easy", "hard", "twin_l1", "twin_l2", "twin_l3", "twin_l4", "tube", "choice")
+TIERS = ("easy", "hard", "twin_l1", "twin_l2", "twin_l3", "twin_l4", "tube", "choice", "tube_half", "tube_near")
 TWIN_TIERS = TIERS[2:6]
 TIER_TIME_S = {"twin_l1": 30.0, "twin_l2": 45.0, "twin_l3": 90.0, "twin_l4": 120.0, "tube": 45.0, "choice": 30.0}  # episode budget per twin tier (user 2026-10-30);
 # res600 run at 60 s: L1 successes finished by 25 s, L2 by 50 s (one), L4 sequences cannot finish in 60 s. Old tiers keep the config's value.
@@ -213,17 +215,23 @@ _TUBE_STEPS = {
 }
 
 
-def _tube_task(*sides: str) -> Task:
+def _tube_task(*sides: str, tier: str = "tube") -> Task:
     """Tube i of the scene (``tube``, ``tube_2``, ...) is the one ``sides[i]`` names; 45 s per tube (the recordings take ~20 s each)."""
     n = len(sides)
     steps = tuple(step for side in sides for step in _TUBE_STEPS[side]) + ("return home",)
-    return Task(tier="tube", task="put the tube in the peg", sheet_id=None, eval_subtasks=steps, eval_subtask_precisions=(3, 3, 3, 3) * n + (1,),
+    return Task(tier=tier, task="put the tube in the peg", sheet_id=None, eval_subtasks=steps, eval_subtask_precisions=(3, 3, 3, 3) * n + (1,),
                 eval_subtask_contacts=("na", "top-pinch", "na", "insert") * n + ("na",), scorer=tube_peg_scorer(n), time_s=45.0 * n, robot=_TUBE_ROBOT)
 
 
 TASKS.update({"tube_peg_left": _tube_task("left"), "tube_peg_right": _tube_task("right"),
               "tube_peg_two": _tube_task("left", "right"), "tube_peg_three": _tube_task("left", "right", "dark")})
-TUBE_LAYOUTS = ("tube_peg_left", "tube_peg_right", "tube_peg_two", "tube_peg_three")
+# Start levels (2026-11-25, scripts/sim_builders/tube_peg/build_tube_starts.py): the single-tube layouts with the arm starting
+# halfway to the tube (tier ``tube_half``) or at the end of the approach, just above it (``tube_near``), instead of at the park
+# pose. Same scene, task and scorer; the scene file carries the start pose (``start_deg``). TUBE_START_LAYOUTS = the three levels.
+TASKS.update({f"tube_peg_{side}_{level}": _tube_task(side, tier=f"tube_{level}") for side in ("left", "right") for level in ("half", "near")})
+TUBE_START_LAYOUTS = tuple(f"tube_peg_{side}{level}" for side in ("left", "right") for level in ("", "_half", "_near"))
+# The tube eval set of every checkpoint: the four layouts from the park pose + the single-tube layouts at the two closer starts.
+TUBE_LAYOUTS = ("tube_peg_left", "tube_peg_right", "tube_peg_two", "tube_peg_three") + tuple(name for name in TUBE_START_LAYOUTS if name.endswith(("_half", "_near")))
 
 
 
@@ -271,6 +279,8 @@ def main() -> None:
         print(" ".join(eval_layouts()))
     elif sys.argv[1] == "tube_layouts":
         print(" ".join(eval_layouts(TUBE_LAYOUTS)))
+    elif sys.argv[1] == "tube_start_layouts":
+        print(" ".join(eval_layouts(TUBE_START_LAYOUTS)))
     elif sys.argv[1] == "choice_layouts":
         print(" ".join(eval_layouts(CHOICE_LAYOUTS)))
     elif sys.argv[1] == "overrides":

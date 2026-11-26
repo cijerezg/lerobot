@@ -28,6 +28,10 @@ class TrainableParamsConfig:
         the `from_layer` range of their submodule when set; the other rules stay
         (final norm, lm_head and the expert's final layer train, the layers in
         front of the expert blocks are frozen).
+      - `singular_fraction` (docs/notes/singular_subset.md): in the selected language
+        and expert blocks only that fraction of the singular values of each attention /
+        MLP matrix trains; the blocks' norms, biases and modulation, the final norm,
+        lm_head and the expert's final layer are frozen.
       - Token embeddings follow the policy's `freeze_embedding` flag, not this
         struct.
       - Critic mirrors apply the same rules to the critic-side submodules.
@@ -42,6 +46,10 @@ class TrainableParamsConfig:
     action_expert_layers: list[int] | None = None
     critic_vision_from_layer: int | None = None
     critic_language_from_layer: int | None = None
+    singular_fraction: float | None = None
+    # No trained singular value above this multiple of the largest chosen original one.
+    singular_clamp: float = 4.0
+    singular_seed: int = 0
 
     # Optional depth-only diagnostic: freeze the whole actor except the independent
     # point-map CNN, copied depth visual path, and marker. Overrides the layer knobs
@@ -85,6 +93,9 @@ class Trainer(ABC):
         No-op by default; policies with subtask generation override. Called after
         additional offline datasets load (the vocab remap extends the metadata).
         """
+
+    def save_training_state(self, training_state_dir) -> None:  # noqa: B027 — optional hook, deliberately non-abstract
+        """Write trainer-owned state that is not in the policy next to a checkpoint. No-op by default."""
 
     def subtask_vocabulary(self, preprocessor) -> list[str]:
         """Subtask strings the prompt seam can render, in vocabulary-index order.

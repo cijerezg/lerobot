@@ -1,4 +1,4 @@
-"""Precision prior by text rules, straight from annotation/rubrics/precision_rubric.md
+"""Precision prior by text rules, straight from annotation/rubrics/archive/precision_rubric.md
 ("Reference values (priors; the frames override, with a note)" table, plus the level-5
 anchor "plug into socket"). NO LABEL IS WRITTEN: the prior is a hypothesis shown to the
 reviewer next to the images; the images decide.

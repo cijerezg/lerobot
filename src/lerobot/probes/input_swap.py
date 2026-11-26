@@ -17,6 +17,7 @@ in bit order) from:
                       (``policy.velocity``)
     X  tip_target     the tip target of the prompt's target clause (``policy.tip_target``):
                       the offset to the next gripper event, or "no target in the wrist view"
+    G  gripper_torque the level of the prompt's gripper torque clause (``policy.gripper_torque``)
 
 The default is ``state,image,subtask``, the S/I/T cube of every run so far; with memory
 on, ``state,image,state_history,image_history`` asks whether the past is read at all,
@@ -24,8 +25,8 @@ separately from the present; ``state,image,depth`` weighs the depth frame agains
 two streams it accompanies; ``state,image,velocity,tip_target`` weighs the two prompt
 clauses of the v2 runs against the frame. A history that has no switch of its own travels
 with the stream it remembers (image history with I, state history with S, depth history with D).
-Everything else — wrist depth, velocity and tip target when they are not a switch, the
-gripper torque level, the metadata clause, the task string — stays the anchor's own in every cell. $k$ switches give $2^k$ inputs, the cells of the cube. A cell is named by the
+Everything else — wrist depth, velocity, tip target and gripper torque level when they are
+not a switch, the metadata clause, the task string — stays the anchor's own in every cell. $k$ switches give $2^k$ inputs, the cells of the cube. A cell is named by the
 switches flipped to the donor: ``...`` is the anchor's own prompt (the reference),
 ``.I.`` has only the donor's images, ``..T`` is the anchor's frame under the donor's
 subtask text, ``SIT`` the donor's frame and text under the anchor's depth.
@@ -161,18 +162,18 @@ from lerobot.utils.utils import init_logging
 # the bit order of the cube.
 FACTOR_LETTERS = {
     "state": "S", "image": "I", "subtask": "T", "state_history": "P", "image_history": "H", "depth": "D",
-    "velocity": "V", "tip_target": "X",
+    "velocity": "V", "tip_target": "X", "gripper_torque": "G",
 }
 FACTOR_WORDS = {
     "state": "state", "image": "images", "subtask": "subtask text",
     "state_history": "past states", "image_history": "past images", "depth": "depth",
-    "velocity": "velocity", "tip_target": "tip target",
+    "velocity": "velocity", "tip_target": "tip target", "gripper_torque": "gripper torque",
 }
 INTERACTION_NAMES = {2: "two_way", 3: "three_way", 4: "four_way", 5: "five_way"}
 # Switches that select observation keys; the subtask switch selects the prompt text.
-OBS_FACTORS = ("state", "image", "state_history", "image_history", "depth", "velocity", "tip_target")
-# The prompt columns of probe_frame_inputs: the switch each one belongs to, None = always the anchor's.
-PROMPT_COLUMN_FACTORS = {VELOCITY_KEY: "velocity", TIP_TARGET_KEY: "tip_target", GRIPPER_TORQUE_LEVEL_KEY: None}
+OBS_FACTORS = ("state", "image", "state_history", "image_history", "depth", "velocity", "tip_target", "gripper_torque")
+# The prompt columns of probe_frame_inputs and the switch each one belongs to.
+PROMPT_COLUMN_FACTORS = {VELOCITY_KEY: "velocity", TIP_TARGET_KEY: "tip_target", GRIPPER_TORQUE_LEVEL_KEY: "gripper_torque"}
 DEFAULT_FACTORS = "state,image,subtask"
 DONOR_KINDS = ("same_episode", "matched", "random")
 # A same-episode donor sits at least this far from the anchor in time: closer frames
@@ -185,7 +186,7 @@ MATCH_GRIPPER_TOL = 25.0
 # before its state-follow ratio is read; below it the ratio is a division by noise.
 STATE_FOLLOW_MIN_STD = 0.05
 
-FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "subtask": "#ff7f0e", "state_history": "#9467bd", "image_history": "#17becf", "depth": "#8c564b", "velocity": "#e377c2", "tip_target": "#bcbd22"}
+FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "subtask": "#ff7f0e", "state_history": "#9467bd", "image_history": "#17becf", "depth": "#8c564b", "velocity": "#e377c2", "tip_target": "#bcbd22", "gripper_torque": "#7f7f7f"}
 INTERACTION_COLORS = ["#bbbbbb", "#777777", "#444444", "#222222"]  # two-way, three-way, ... in the shares figure
 REF_COLOR = "#000000"
 ALL_DONOR_COLOR = "#d62728"
@@ -303,8 +304,8 @@ def cube_from_spec(spec: str | None) -> Cube:
 
 
 def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]]:
-    """Every observation key claimed by exactly one switch, or held fixed (depth, velocity and
-    tip target without their switch; the gripper torque level always).
+    """Every observation key claimed by exactly one switch, or held fixed (depth, velocity,
+    tip target and gripper torque level without their switch).
 
     An unclaimed key would ride along as the anchor's in every cell without anyone
     knowing, and an empty switch would make half the cells silent duplicates, so both
@@ -352,8 +353,8 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
     if empty:
         raise KeyError(
             f"no observation keys for switch(es) {empty}; the cube would have duplicate cells "
-            "(a history switch needs memory on: policy.memory.history_keys; velocity / tip_target need "
-            "policy.velocity / policy.tip_target and the column / targets.parquet of the validation root)"
+            "(a history switch needs memory on: policy.memory.history_keys; velocity / tip_target / gripper_torque "
+            "need policy.velocity / policy.tip_target / policy.gripper_torque and the column / targets.parquet of the validation root)"
         )
     return groups, fixed
 
@@ -1530,6 +1531,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                     "subtask": anchor["subtask"],
                     "donor_subtask": donor["subtask"],
                     "subtask_differs": (anchor["subtask"] or "") != (donor["subtask"] or ""),
+                    "prompt_columns": {
+                        key: {"anchor": anchor["obs"][f"probe_complementary.{key}"].flatten().tolist(),
+                              "donor": donor["obs"][f"probe_complementary.{key}"].flatten().tolist()}
+                        for key in PROMPT_COLUMN_FACTORS if f"probe_complementary.{key}" in anchor["obs"]
+                    },
                     "rms": [float(_rms(cells_norm[m] - cells_norm[0])) for m in range(cube.n_cells)],
                     "rms_vs_all_donor": [float(_rms(cells_norm[m] - cells_norm[cube.all_donor])) for m in range(cube.n_cells)],
                     "rms_abs_deg": [float(_rms(cells_deg[m] - cells_deg[0])) for m in range(cube.n_cells)],

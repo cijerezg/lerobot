@@ -28,7 +28,7 @@ from lerobot.utils.import_utils import _motorbridge_available, require_package
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_rebot_b601_follower import RebotB601FollowerRobotConfig
+from .config_rebot_b601_follower import RebotB601FollowerRobotConfig, park_ramp
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller as MotorBridgeController, Mode as MotorBridgeMode
@@ -362,6 +362,9 @@ class RebotB601Follower(Robot):
     def park(self, on_step=None, *, fps: float = _PARK_FPS) -> None:
         """Freeze, descend to config.park_pose at config.park_deg_per_s, verify arrival.
 
+        The targets come from config_rebot_b601_follower.park_ramp: the elbow lands first, the
+        wrist bends into an L with it and straightens over the rest of the descent.
+
         `on_step`, when given, receives each ramp target ({joint}.pos -> deg) right after it
         is sent, so a mirrored device (the actuated leader) rides the same descent.
         Raises RuntimeError, with torque still on, if any joint ends farther than
@@ -373,22 +376,11 @@ class RebotB601Follower(Robot):
         present = self._present_pos()
         self.send_action({f"{name}.pos": pos for name, pos in present.items()})
         target = self.config.park_pose
-        # The gripper has its own rate: its 270 deg travel would otherwise pace the arm's descent.
-        rate = {
-            name: self.config.park_gripper_deg_per_s if name == "gripper" else self.config.park_deg_per_s
-            for name in target
-        }
-        seconds = {name: abs(target[name] - present[name]) / rate[name] for name in target}
-        pacing = max(seconds, key=seconds.get)
-        steps = max(math.ceil(fps), math.ceil(fps * seconds[pacing]))
-        logger.info(
-            f"{self} parking: {steps / fps:.1f} s, paced by {pacing} "
-            f"({abs(target[pacing] - present[pacing]):.1f} deg at {rate[pacing]:.0f} deg/s)"
-        )
-        for step in range(1, steps + 1):
+        ramp = park_ramp(present, self.config, fps)
+        logger.info(f"{self} parking: {len(ramp) / fps:.1f} s")
+        for tick in ramp:
             tick_start = time.perf_counter()
-            t = step / steps
-            step_target = {f"{name}.pos": present[name] + (target[name] - present[name]) * t for name in target}
+            step_target = {f"{name}.pos": tick[name] for name in target}
             sent_target = self.send_action(step_target)
             if on_step is not None:
                 on_step(sent_target)

@@ -2,8 +2,8 @@
 
 Rulings of the diverse annotation audit (909 episodes; atoms, exclusions, contact, precision, quality v2)
 and the systematic defects it found but did not sweep. Rubrics of record:
-[annotation_principles.md](annotation_principles.md), [subtask_atoms_rubric.md](subtask_atoms_rubric.md),
-[quality_mistake_rubric_v2.md](quality_mistake_rubric_v2.md). C = audit case ruling, K = known defect.
+[annotation_principles.md](archive/annotation_principles.md), [subtask_atoms_rubric.md](subtask_atoms_rubric.md),
+[quality_mistake_rubric_v2.md](archive/quality_mistake_rubric_v2.md). C = audit case ruling, K = known defect.
 
 ## Status
 

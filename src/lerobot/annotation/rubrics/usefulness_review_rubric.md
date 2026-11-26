@@ -9,7 +9,7 @@ still for 3 s or more) is cut separately by the idle scan and is not judged here
 ## Unit and question
 
 Unit = one subtask that holds at least one span graded quality 1 or 2
-([quality_mistake_rubric_v2.md](quality_mistake_rubric_v2.md)). Question: should a policy be trained to
+([quality_mistake_rubric_v2.md](archive/quality_mistake_rubric_v2.md)). Question: should a policy be trained to
 imitate the actions in this unit?
 
 Principle: do not remove mistakes; remove behaviour that teaches nothing or that we never want copied. A

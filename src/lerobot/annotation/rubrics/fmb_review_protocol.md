@@ -3,7 +3,7 @@
 Review protocol for the 60 trajectories of
 `lerobot/examples/dataset/diverse_robot_dataset/fmb_multi_production.json`, applied with
 `annotate_fmb_critic.py` in the same folder. It predates quality v2: the grades below are the per-primitive
-v1 scale; span grading follows [quality_mistake_rubric_v2.md](quality_mistake_rubric_v2.md). Review origin
+v1 scale; span grading follows [quality_mistake_rubric_v2.md](archive/quality_mistake_rubric_v2.md). Review origin
 is `model_reviewed`, quality origin `model_reviewed_rebot_rubric`. A model decision is never recorded as a
 human decision.
 

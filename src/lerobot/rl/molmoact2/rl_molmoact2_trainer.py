@@ -24,6 +24,7 @@ import torch.nn.functional as F
 
 from lerobot.rl.advantage import advantage_weights
 from lerobot.rl.awr import group_key, normalize_log_weights, td_advantage, weight_telemetry
+from lerobot.rl.molmoact2.singular_subset import SingularSubset, is_singular_target
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.stochastic_rounding_adamw import StochasticRoundingAdamW
 from lerobot.utils.constants import (
@@ -326,6 +327,9 @@ def _forwarded_complementary_keys(complementary: dict, cfg) -> list[str]:
 class MolmoAct2Trainer(Trainer):
     """Trainer for MolmoAct2RLPolicy. Supports actor-only and critic-trained modes."""
 
+    # Set by freeze_model under trainable_params.singular_fraction (singular_subset.py).
+    singular: SingularSubset | None = None
+
     # Value histograms live inside the distributional critic's support; clip to
     # the configured default so a single outlier doesn't flatten the bin range.
     _HISTOGRAM_CLIP_RANGES = {
@@ -564,6 +568,10 @@ class MolmoAct2Trainer(Trainer):
 
         if tp is not None:
             self._apply_actor_freeze(policy, tp, freeze_embedding=freeze_embedding)
+            if tp.singular_fraction is not None:
+                self.singular = SingularSubset(
+                    policy, tp.singular_fraction, tp.singular_clamp, tp.singular_seed
+                )
 
         if hasattr(policy, "critic"):
             critic_net: nn.Module = getattr(policy, "critic")
@@ -601,6 +609,8 @@ class MolmoAct2Trainer(Trainer):
         else:
             expert_layers = set()
         whole_expert = tp.action_expert_from_layer == 0 and tp.action_expert_layers is None
+        # Singular value subset training: only the blocks' attention / MLP matrices train.
+        singular = tp.singular_fraction is not None
 
         for name, param in policy.named_parameters():
             if name.startswith("critic.") or name.startswith("critic_target."):
@@ -628,9 +638,11 @@ class MolmoAct2Trainer(Trainer):
                 # whitelist they fall through to the unknown-parameter branch and are frozen.
                 param.requires_grad = True
             elif ".action_expert.blocks." in name:
-                param.requires_grad = _layer_idx_after(name, ".action_expert.blocks.") in expert_layers
+                param.requires_grad = _layer_idx_after(name, ".action_expert.blocks.") in expert_layers and (
+                    not singular or is_singular_target(name)
+                )
             elif ".action_expert.final_layer." in name:
-                param.requires_grad = expert_on
+                param.requires_grad = expert_on and not singular
             elif ".action_expert." in name:
                 # Time / action embeddings and the context projections feed every block,
                 # so they train only when the whole expert does.
@@ -638,11 +650,13 @@ class MolmoAct2Trainer(Trainer):
             elif ".transformer.wte" in name:
                 param.requires_grad = not freeze_embedding
             elif ".lm_head" in name or name.endswith("lm_head.weight"):
-                param.requires_grad = language_on
+                param.requires_grad = language_on and not singular
             elif ".transformer.blocks." in name:
-                param.requires_grad = _layer_idx_after(name, ".transformer.blocks.") in lm_layers
+                param.requires_grad = _layer_idx_after(name, ".transformer.blocks.") in lm_layers and (
+                    not singular or is_singular_target(name)
+                )
             elif ".transformer.ln_f" in name:
-                param.requires_grad = language_on
+                param.requires_grad = language_on and not singular
             elif ".image_vit.transformer.resblocks." in name:
                 param.requires_grad = _layer_idx_after(name, ".resblocks.") in vt_layers
             elif ".image_vit.patch_embedding" in name or ".image_vit.positional_embedding" in name:
@@ -665,6 +679,10 @@ class MolmoAct2Trainer(Trainer):
         for param in critic_net.fusion.parameters():
             param.requires_grad = True
 
+    def save_training_state(self, training_state_dir) -> None:
+        if self.singular is not None:
+            torch.save(self.singular.state(), Path(training_state_dir) / "singular_subset.pt")
+
     def get_optimizer_groups(self, policy: nn.Module, cfg) -> list[dict]:
         """
         Actor group: all policy params with requires_grad (excludes critic and depth).
@@ -675,6 +693,8 @@ class MolmoAct2Trainer(Trainer):
 
         if skip_critic or not hasattr(policy, "critic"):
             trainable = [p for p in policy.parameters() if p.requires_grad]
+            if self.singular is not None:
+                trainable = self.singular.optimizer_params(trainable)
             return self._split_depth_group(
                 policy,
                 cfg,
@@ -1569,9 +1589,13 @@ class MolmoAct2Trainer(Trainer):
                 inner.collect_stats = capture_modality_telemetry
                 rounding_optimizers.append(inner)
 
+        if self.singular is not None:
+            self.singular.project_gradients()
         policy_opt.step()
         if depth_opt is not None:
             depth_opt.step()
+        if self.singular is not None:
+            accum.update(self.singular.after_step())
         # Hand framing rows back on their sphere (hand_head.HandTokenRows): the forward is
         # invariant to it; it keeps the gradient scale of the norm-pinned rows stationary.
         renormalize_hand_tokens = getattr(raw_policy, "renormalize_hand_tokens", None)
@@ -1946,7 +1970,7 @@ class MolmoAct2Trainer(Trainer):
         return {
             key: value
             for key, value in training_infos.items()
-            if key in cls._AIM_METRIC_KEYS or key.startswith(("optim/", "awr/", "tip/", "val_tip_", "rep/", "val_rep/"))
+            if key in cls._AIM_METRIC_KEYS or key.startswith(("optim/", "awr/", "tip/", "val_tip_", "rep/", "val_rep/", "singular/"))
         }
 
     def log_metrics(

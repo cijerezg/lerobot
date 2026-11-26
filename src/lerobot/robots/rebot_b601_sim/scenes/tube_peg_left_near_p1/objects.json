@@ -1,0 +1,63 @@
+{
+ "layout": "tube_peg_left_near_p1",
+ "tier": "tube_near",
+ "note": "far left, peg further left; arm starts near (tube_peg_left_p1)",
+ "generator": "scripts/sim_builders/tube_peg/build_tube_starts.py",
+ "objects": {
+  "tube": {
+   "xy": [
+    0.45,
+    0.12
+   ],
+   "yaw_deg": 0
+  },
+  "tube_holder": {
+   "xy": [
+    0.44,
+    0.21
+   ],
+   "yaw_deg": 0
+  }
+ },
+ "start": {
+  "level": "near",
+  "base": "tube_peg_left_p1",
+  "start_deg": [
+   13.1,
+   -117.74,
+   -89.6,
+   41.45,
+   -4.65,
+   3.7,
+   -37.8
+  ],
+  "tip_to_tube_mm": 34,
+  "tip_height_mm": 35,
+  "finger_tilt_deg": 18,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.0,
+  "tube_moved_mm": 0.5,
+  "first_subtask": "approach tube on the left",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    10.800000190734863,
+    -122.4000015258789,
+    -93.5999984741211,
+    35.900001525878906,
+    -3.5999999046325684,
+    3.700000047683716,
+    -27.799999237060547
+   ],
+   "recorded_tip_to_tube_xy_mm": 44.6,
+   "joint_change_deg": [
+    2.3,
+    4.7,
+    4.0,
+    5.5,
+    1.0,
+    0.0
+   ]
+  }
+ }
+}

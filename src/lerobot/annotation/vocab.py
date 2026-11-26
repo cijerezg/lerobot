@@ -1,12 +1,12 @@
 """Closed vocabularies of the annotation channels: contact strategy and mistake types.
 
 Contact: the per-subtask ``contact`` metadata channel. Definitions of record:
-``annotation/rubrics/contact_strategy_rubric.md``. ``code`` is the integer stored per frame
+``annotation/rubrics/archive/contact_strategy_rubric.md``. ``code`` is the integer stored per frame
 (buffer column ``metadata_contact``); ``phrase`` fills the prompt clause
 ``The contact is <phrase>.``. ``-1`` means no label covers the frame: the clause is omitted.
 
 Mistakes: the ``mistake_type`` values of ``meta/mistakes.parquet``. Definitions of record:
-``annotation/rubrics/quality_mistake_rubric_v2.md`` section 4.1.
+``annotation/rubrics/archive/quality_mistake_rubric_v2.md`` section 4.1.
 """
 
 from __future__ import annotations

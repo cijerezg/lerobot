@@ -1,0 +1,44 @@
+{
+ "layout": "tube_peg_right_half_p1",
+ "tier": "tube_half",
+ "note": "middle right, peg near right, long carry toward the robot; arm starts half (tube_peg_right_p1)",
+ "generator": "scripts/sim_builders/tube_peg/build_tube_starts.py",
+ "objects": {
+  "tube": {
+   "xy": [
+    0.4,
+    -0.08
+   ],
+   "yaw_deg": 0
+  },
+  "tube_holder": {
+   "xy": [
+    0.27,
+    -0.26
+   ],
+   "yaw_deg": 90
+  }
+ },
+ "start": {
+  "level": "half",
+  "base": "tube_peg_right_p1",
+  "start_deg": [
+   -5.04,
+   -76.16,
+   -46.33,
+   16.66,
+   7.83,
+   -8.64,
+   -28.54
+  ],
+  "tip_to_tube_mm": 118,
+  "tip_height_mm": 111,
+  "finger_tilt_deg": 41,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.0,
+  "tube_moved_mm": 0.5,
+  "first_subtask": "approach tube on the right",
+  "reward_at_start": 0.0,
+  "fraction_of_joint_line": 0.755
+ }
+}

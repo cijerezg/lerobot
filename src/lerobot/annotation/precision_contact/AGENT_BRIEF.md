@@ -1,7 +1,7 @@
 # Reviewer brief: precision + contact strategy, one batch (issued 2026-09-25; every row is one segment)
 
 You read contact sheets for one batch of step classes and return, per row, two labels with the evidence written first.
-Rubrics of record: `../rubrics/precision_rubric.md`, `../rubrics/contact_strategy_rubric.md`. The definitions
+Rubrics of record: `../rubrics/archive/precision_rubric.md`, `../rubrics/archive/contact_strategy_rubric.md`. The definitions
 below are copied from them; if this brief and a rubric differ, the rubric wins and you say so in `flags`.
 
 ## Your inputs (read only)

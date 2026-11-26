@@ -19,10 +19,10 @@ Run commands from the workspace root (the folder holding `lerobot/` and `outputs
 
 ### Read first
 
-1. `rubrics/annotation_principles.md`, in full. It overrides the other rubrics where they disagree.
-2. `rubrics/quality_mistake_rubric_v2.md` sections 3, 4 (mistakes) and 5.7 (cause names, for your descriptions).
-3. `rubrics/precision_rubric.md` (levels, where the commit is, reference values, "Not precision").
-4. `rubrics/contact_strategy_rubric.md` (vocabulary table, rules, "What the label does not record").
+1. `rubrics/archive/annotation_principles.md`, in full. It overrides the other rubrics where they disagree.
+2. `rubrics/archive/quality_mistake_rubric_v2.md` sections 3, 4 (mistakes) and 5.7 (cause names, for your descriptions).
+3. `rubrics/archive/precision_rubric.md` (levels, where the commit is, reference values, "Not precision").
+4. `rubrics/archive/contact_strategy_rubric.md` (vocabulary table, rules, "What the label does not record").
 
 ### Material
 
@@ -216,8 +216,8 @@ class folder `<classes>/<slug>/` and is graded against a class file named in `<w
 
 ### Read first
 
-1. `rubrics/annotation_principles.md` section 4, then `rubrics/quality_mistake_rubric_v2.md` in full. It is the rule.
-2. `rubrics/precision_rubric.md`: the level table and "Not precision".
+1. `rubrics/archive/annotation_principles.md` section 4, then `rubrics/archive/quality_mistake_rubric_v2.md` in full. It is the rule.
+2. `rubrics/archive/precision_rubric.md`: the level table and "Not precision".
 3. The class file of each of your classes: the 5 / 4 / 3 rows, the reading cues, the notes. Look at two or three of its
    reference strips (`<classes>/<owner class>/aligned/<uid>.jpg` for the uids on its `References:` line) before grading.
 

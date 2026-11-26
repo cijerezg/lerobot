@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
@@ -45,6 +46,12 @@ class RebotB601FollowerConfig:
     # disconnect() parks before it releases torque: freeze (present position re-sent
     # as the target, cancelling any in-flight sweep), descend to park_pose linearly at
     # park_deg_per_s, then release only if every joint is within park_tolerance_deg.
+    # The elbow runs at park_elbow_deg_per_s and lands before the other joints, and wrist_flex
+    # goes to park + park_wrist_bend_deg (an L) on the elbow's clock, then straightens over the
+    # rest of the descent (the manual park in tidy-up-v1 2026-11-25, which is easy on the cable).
+    # Without the bend the leading elbow puts the tip on the table from low poses, and so does
+    # holding the other joints while the elbow starts (sim check 2026-11-25,
+    # outputs/analysis/park_stages_2026-11-25).
     # Otherwise torque stays ON and the arm holds; run park_rebot.py to retry.
     # The default park pose is the calibration zero (the sit-down position, gripper closed).
     park_pose: dict[str, float] = field(
@@ -58,7 +65,9 @@ class RebotB601FollowerConfig:
             "gripper": 0.0,
         }
     )
-    park_deg_per_s: float = 20.0
+    park_deg_per_s: float = 15.0
+    park_elbow_deg_per_s: float = 30.0
+    park_wrist_bend_deg: float = -27.0
     park_gripper_deg_per_s: float = 120.0  # gripper closes on its own rate (motor cap 180 deg/s)
     park_tolerance_deg: float = 10.0
 
@@ -116,6 +125,37 @@ class RebotB601FollowerConfig:
             "gripper": (-270.0, 0.0),
         }
     )
+
+
+def park_ramp(present: dict[str, float], config, fps: float) -> list[dict[str, float]]:
+    """Joint targets (deg) of the park descent, one per control tick; the last is config.park_pose.
+
+    Every joint goes straight to park. The elbow has its own, faster clock; wrist_flex rides it
+    to the bend, then straightens over the remaining ticks. The bend is no larger than the
+    elbow's travel, so a park from the park pose does not move the wrist.
+    """
+    target = config.park_pose
+    # The gripper has its own rate: its 270 deg travel would otherwise pace the arm's descent.
+    rate = dict.fromkeys(target, config.park_deg_per_s)
+    rate["gripper"] = config.park_gripper_deg_per_s
+    elbow_gap = abs(target["elbow_flex"] - present["elbow_flex"])
+    bend = target["wrist_flex"] + math.copysign(min(abs(config.park_wrist_bend_deg), elbow_gap), config.park_wrist_bend_deg)
+    elbow_steps = max(1, math.ceil(fps * max(elbow_gap, abs(bend - present["wrist_flex"])) / config.park_elbow_deg_per_s))
+    straighten_steps = math.ceil(fps * abs(target["wrist_flex"] - bend) / config.park_deg_per_s)
+    others = [name for name in target if name not in ("elbow_flex", "wrist_flex")]
+    seconds = max(abs(target[name] - present[name]) / rate[name] for name in others)
+    steps = max(math.ceil(fps), math.ceil(fps * seconds), elbow_steps + straighten_steps)
+    ramp = []
+    for step in range(1, steps + 1):
+        tick = {name: present[name] + (target[name] - present[name]) * step / steps for name in others}
+        t = min(1.0, step / elbow_steps)
+        tick["elbow_flex"] = present["elbow_flex"] + (target["elbow_flex"] - present["elbow_flex"]) * t
+        if step <= elbow_steps:
+            tick["wrist_flex"] = present["wrist_flex"] + (bend - present["wrist_flex"]) * t
+        else:
+            tick["wrist_flex"] = bend + (target["wrist_flex"] - bend) * (step - elbow_steps) / (steps - elbow_steps)
+        ramp.append(tick)
+    return ramp
 
 
 @RobotConfig.register_subclass("rebot_b601_follower")

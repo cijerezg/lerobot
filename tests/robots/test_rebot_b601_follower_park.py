@@ -77,7 +77,9 @@ def _robot(monkeypatch, moves: bool, torque: bool = True):
 
 
 def _rate(robot, name):
-    return robot.config.park_gripper_deg_per_s if name == "gripper" else robot.config.park_deg_per_s
+    elbow = robot.config.park_elbow_deg_per_s  # the wrist rides the elbow's clock into the bend
+    special = {"gripper": robot.config.park_gripper_deg_per_s, "elbow_flex": elbow, "wrist_flex": elbow}
+    return special.get(name, robot.config.park_deg_per_s)
 
 
 def test_park_freezes_then_descends_within_rate_and_arrives(monkeypatch):
@@ -90,6 +92,24 @@ def test_park_freezes_then_descends_within_rate_and_arrives(monkeypatch):
         steps = [b - a for a, b in zip(motor.sent, motor.sent[1:])]
         assert max(abs(s) for s in steps) <= rate / fps + 1e-6
         assert motor.sent[-1] == pytest.approx(robot.config.park_pose[name])
+
+
+def test_park_elbow_lands_first_with_the_wrist_bent(monkeypatch):
+    robot = _robot(monkeypatch, moves=True)
+    seen: list[dict[str, float]] = []
+    robot.park(on_step=seen.append)
+    landed = next(i for i, a in enumerate(seen) if a["elbow_flex.pos"] == pytest.approx(0.0))
+    assert landed + 1 == math.ceil(module._PARK_FPS * 120 / robot.config.park_elbow_deg_per_s)
+    assert seen[landed]["wrist_flex.pos"] == pytest.approx(robot.config.park_wrist_bend_deg)
+    assert abs(seen[landed]["shoulder_lift.pos"]) > 20
+
+
+def test_park_from_the_park_pose_does_not_bend_the_wrist(monkeypatch):
+    robot = _robot(monkeypatch, moves=True)
+    for motor in robot.motors.values():
+        motor.pos_deg = 0.0
+    robot.park()
+    assert robot.motors["wrist_flex"].sent == pytest.approx([0.0] * len(robot.motors["wrist_flex"].sent))
 
 
 def test_disconnect_releases_only_after_arrival(monkeypatch):
@@ -242,7 +262,7 @@ def test_park_callback_rate_and_sent_actions(monkeypatch, fps):
     robot = _robot(monkeypatch, moves=True)
     seen = []
     robot.park(on_step=seen.append, fps=fps)
-    ramp_ticks = math.ceil(fps * max(abs(v) / _rate(robot, name) for name, v in START.items()))
+    ramp_ticks = math.ceil(fps * 90 / robot.config.park_deg_per_s)  # the shoulder's 90 deg
     assert len(seen) == ramp_ticks + math.ceil(fps * module._PARK_SETTLE_CHECK_SEC)
     for name, motor in robot.motors.items():
         assert [action[f"{name}.pos"] for action in seen] == pytest.approx(motor.sent[1:])

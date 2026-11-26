@@ -16,8 +16,8 @@ from lerobot.annotation.vocab import (
 )
 
 RUBRICS = Path(__file__).resolve().parents[2] / "src/lerobot/annotation/rubrics"
-RUBRIC = RUBRICS / "contact_strategy_rubric.md"
-MISTAKE_RUBRIC = RUBRICS / "quality_mistake_rubric_v2.md"
+RUBRIC = RUBRICS / "archive" / "contact_strategy_rubric.md"
+MISTAKE_RUBRIC = RUBRICS / "archive" / "quality_mistake_rubric_v2.md"
 
 
 def _rubric_rows() -> list[tuple[int, str, str, str]]:

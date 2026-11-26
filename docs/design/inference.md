@@ -190,15 +190,17 @@ dark-shirt reach), `8998:9` (ep2 shirt reach vs ep0 socks at the rest pose), `81
 - **Park on disconnect.** `RebotB601Follower.disconnect()` = freeze (present pose
   re-sent as the target, cancelling any in-flight sweep) -> linear descent to
   `park_pose` (default: calibration zero = sit-down, gripper closed) at
-  `park_deg_per_s` (20) -> settle: arrival re-checked every 0.5 s for up to 5 s (the
+  `park_deg_per_s` (15), the elbow at `park_elbow_deg_per_s` (30) so it lands first, with
+  `wrist_flex` going to `park_wrist_bend_deg` (-27, an L) on the elbow's clock and
+  straightening over the rest (`park_ramp`; the manual park in tidy-up-v1 2026-11-25, easy
+  on the cable; without the bend the leading elbow puts the tip on the table in the sim) -> settle: arrival re-checked every 0.5 s for up to 5 s (the
   elbow lags the ramp by ~13 deg after a long descent and closes it on its own; a fixed 1 s
   settle called that a failure on 2026-09-04) -> release torque only if every joint is
   within `park_tolerance_deg` (10). Otherwise torque stays ON and the arm holds. Every exit
   path (normal, exception, Ctrl-C via the supervisor's `finally`) reaches it through
   `_close_robot_hardware` -> `RobotEnv.close()`. Hard kill / host power loss: nothing
   runs, the Damiao motors hold their last target (no CAN timeout is set, on purpose);
-  run `park_rebot.py` afterwards. The descent is a straight line in joint space and
-  does not know about objects in the workspace.
+  run `park_rebot.py` afterwards. The descent does not know about objects in the workspace.
 - **Return to rest at episode end** (`_return_to_rest`, 2026-09-04). Key 0/1 (or any
   done/truncated) parks the follower through the same `park()` (torque stays on: it holds
   the rest pose until the next "2"), and the actuated leader rides the identical ramp

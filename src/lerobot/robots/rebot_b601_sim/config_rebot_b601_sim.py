@@ -74,4 +74,7 @@ class RebotB601SimRobotConfig(RobotConfig):
     inference_delay_steps: int | None = 6
     park_pose: dict[str, float] = field(default_factory=lambda: dict(_FOLLOWER.park_pose))
     park_deg_per_s: float = _FOLLOWER.park_deg_per_s
+    park_elbow_deg_per_s: float = _FOLLOWER.park_elbow_deg_per_s
+    park_wrist_bend_deg: float = _FOLLOWER.park_wrist_bend_deg
+    park_gripper_deg_per_s: float = _FOLLOWER.park_gripper_deg_per_s
     joint_limits: dict[str, tuple[float, float]] = field(default_factory=lambda: dict(_FOLLOWER.joint_limits))

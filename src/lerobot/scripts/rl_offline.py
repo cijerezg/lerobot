@@ -1306,6 +1306,10 @@ def run_offline_training(
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
                 )
+                trainer.save_training_state(
+                    get_step_checkpoint_dir(Path(cfg.output_dir), offline_steps, optimization_step)
+                    / TRAINING_STATE_DIR
+                )
                 gc.collect()
                 torch.cuda.empty_cache()
             runtime.wait_for_everyone()

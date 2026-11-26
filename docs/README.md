@@ -67,6 +67,7 @@ Each note opens with `> **Status:** ...`. Vocabulary: **idea** Â· **building** Â
 
 | Note                                                                             | Status                        | About                                                                               |
 | -------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
+| [`singular_subset.md`](notes/singular_subset.md)                                 | built, on 2026-11-25          | Train a random 20% of the singular values of each matrix in the selected blocks     |
 | [`representation_penalty.md`](notes/representation_penalty.md)                     | built, off 2026-11-23         | Flow loss + per-layer distance to base MolmoAct2 while fine-tuning                  |
 | [`action_trajectory_losses.md`](notes/action_trajectory_losses.md)               | reference, 2026-09-02         | What the flow/FAST trajectory terms are, what is broken, option catalogue           |
 | [`principled_action_losses.md`](notes/principled_action_losses.md)               | decided                       | Which objective change is defensible and what it assumes                            |

@@ -24,6 +24,7 @@ import numpy as np
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
+from ..rebot_b601_follower.config_rebot_b601_follower import park_ramp
 from ..robot import Robot
 from .config_rebot_b601_sim import RebotB601SimRobotConfig
 from .scorer import TaskScorer
@@ -101,6 +102,7 @@ class RebotB601Sim(Robot):
         self._frames: dict[str, np.ndarray] = {}
         self.episodes_done = 0
         self.subtask_scorer: TaskScorer | None = None
+        self._start_deg: np.ndarray | None = None
         self._backgrounds: dict[str, np.ndarray] = {}
 
     @property
@@ -143,6 +145,10 @@ class RebotB601Sim(Robot):
             self.model.actuator_forcerange[self._fingers] = (-self.config.gripper_force_cap, self.config.gripper_force_cap)
         self.data = mujoco.MjData(self.model)
         self._q0 = int(self.model.jnt_qposadr[self.model.joint("joint1").id])
+        # A start layout's scene carries the arm's start pose (<custom><numeric name="start_deg">, follower degrees per motor;
+        # scripts/sim_builders/tube_peg/build_tube_starts.py). None = every episode starts at the park pose.
+        start = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_NUMERIC, "start_deg")
+        self._start_deg = None if start < 0 else self.model.numeric_data[self.model.numeric_adr[start] :][: len(self.motor_names)].copy()
         for cam, config in self.config.cameras.items():
             if config.background is not None:
                 background = scene.parent / config.background  # absolute paths pass through the join unchanged
@@ -167,9 +173,11 @@ class RebotB601Sim(Robot):
         pass
 
     def _reset_scene(self) -> None:
-        """Objects back to their MJCF poses, arm at qpos0 (the park pose), targets holding it."""
+        """Objects back to their MJCF poses, arm at qpos0 (the park pose) or at the scene's start pose, targets holding it."""
         mujoco.mj_resetData(self.model, self.data)
         self._ctrl_deg = from_qpos(self._qpos_robot())  # qpos0 read as follower degrees: the park pose
+        if self._start_deg is not None:
+            self._ctrl_deg = self._start_deg.copy()
         self._qpos_robot()[:] = to_qpos(self._ctrl_deg + self._zero_deg)
         self.data.ctrl[:] = self._qpos_robot()
         self._vel_deg = np.zeros(len(self.motor_names))
@@ -266,17 +274,15 @@ class RebotB601Sim(Robot):
 
     @check_if_not_connected
     def park(self, on_step=None) -> None:
-        """Descend to config.park_pose at config.park_deg_per_s, then put the scene back to its
+        """Descend to config.park_pose along the follower's park_ramp (elbow first with the wrist bent,
+        the rest at config.park_deg_per_s), then put the scene back to its
         start pose. This is the sim's episode boundary: the runtime parks the follower at every
         episode end, and the next episode starts from the reset scene. `on_step` gets each ramp
         target like the follower's park. After config.episodes parks the process gets SIGINT.
         """
         present = self._present_deg()
-        target = np.array([self.config.park_pose[name] for name in self.motor_names])
-        gap = float(np.abs(target - present).max())
-        steps = max(math.ceil(self.config.fps), math.ceil(self.config.fps * gap / self.config.park_deg_per_s))
-        for t in np.linspace(0.0, 1.0, steps + 1)[1:]:
-            sent = self.send_action(dict(zip(self.action_features, present + (target - present) * t, strict=True)))
+        for tick in park_ramp(dict(zip(self.motor_names, present, strict=True)), self.config, self.config.fps):
+            sent = self.send_action({f"{name}.pos": tick[name] for name in self.motor_names})
             if on_step is not None:
                 on_step(sent)
         self._reset_scene()

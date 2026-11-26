@@ -146,3 +146,9 @@ def test_prompt_columns_follow_their_switch_or_stay_the_anchors():
 
     groups, fixed = isw._factor_keys(obs, isw.cube_from_spec("state,image,depth"))
     assert {"probe_complementary.motor_velocity", "probe_complementary.tip_target"} <= set(fixed)
+
+    cube = isw.cube_from_spec("state,image,gripper_torque")
+    groups, fixed = isw._factor_keys(obs, cube)
+    assert cube.letters == "SIG" and groups["gripper_torque"] == ["probe_complementary.gripper_torque_level"]
+    cell = isw._cell(obs, donor, cube.bit("gripper_torque"), groups, fixed, cube)
+    assert cell["probe_complementary.gripper_torque_level"].sum() > 0

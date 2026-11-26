@@ -2,7 +2,7 @@
 
 Rulings of the external re-annotation pass (241 episodes, `rebot_external__*` classes; result root
 `external_rebot_train-annotated-v9`). They override the `rebot_external__*` FINAL notes where the two
-conflict. General rulings are also in [quality_mistake_rubric_v2.md](quality_mistake_rubric_v2.md)
+conflict. General rulings are also in [quality_mistake_rubric_v2.md](archive/quality_mistake_rubric_v2.md)
 (sections 5.3, 5.7, 5.9, 5.11, 5.13, 6); this file keeps all of them with their class detail.
 "Rubric" = that file.
 

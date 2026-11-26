@@ -342,7 +342,7 @@ the example the policy is asked to copy at inference.
 | `other` | anything else, including human help (grade 1); describe it in the note |
 
 Cause names (external 2026-10-08, D39; class rulings of that pass in
-[external_grading_decisions.md](external_grading_decisions.md)):
+[external_grading_decisions.md](../external_grading_decisions.md)):
 
 - A back-off before a grasp is `search` 3. `aborted_approach` needs the gripper to close on nothing.
 - A wrist that passes park and comes back on a return is `search` 3 (2 where it drags on), not `stall`. A wrist that

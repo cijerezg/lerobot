@@ -245,7 +245,7 @@ def _tables(work, root, meta, name, pool, em, spans, mistakes, windows):
         common,
         channel="precision",
         table="meta/precision.parquet",
-        rubric=f"{RUBRICS}/precision_rubric.md",
+        rubric=f"{RUBRICS}/archive/precision_rubric.md",
         counts=dict(rows=len(pv), per_value_all=counts(pv.precision)),
         windows="meta/precision_windows.parquet (rubric v2 section 6)",
     )
@@ -254,7 +254,7 @@ def _tables(work, root, meta, name, pool, em, spans, mistakes, windows):
         common,
         channel="contact",
         table="meta/contact.parquet",
-        rubric=f"{RUBRICS}/contact_strategy_rubric.md",
+        rubric=f"{RUBRICS}/archive/contact_strategy_rubric.md",
         vocab_version=CONTACT_VOCAB_VERSION,
         vocab=[e._asdict() for e in CONTACT_VOCAB],
         counts=dict(rows=len(cv), per_value_all=counts(cv.contact)),
@@ -263,7 +263,7 @@ def _tables(work, root, meta, name, pool, em, spans, mistakes, windows):
     metadata_info = dict(
         model="assistant-vision-review",
         created_date=time.strftime("%Y-%m-%d"),
-        rubric=f"{RUBRICS}/quality_mistake_rubric_v2.md (draft 5)",
+        rubric=f"{RUBRICS}/archive/quality_mistake_rubric_v2.md (draft 5)",
         quality_scope="episode_metadata.quality = lowest critique stretch overlapping the segment, else 5 if an exemplary "
         "stretch overlaps, else 4; frame grades come from meta/quality_spans.parquet (rubric 5.1)",
         method="per source episode: segments, mistakes, speed, precision, contact; per class, side by side: strategy files, "

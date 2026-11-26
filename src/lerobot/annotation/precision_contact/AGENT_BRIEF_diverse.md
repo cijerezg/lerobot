@@ -36,5 +36,5 @@ inherits the nearest atom of the same subtask at write.
 | UR5 | "grapes" is one fruit |
 | MolmoAct ep003862, ep003931 | identical tiles, possible duplicate episode |
 
-Class values settled in adjudication are rows of the reference table in `../rubrics/precision_rubric.md` and the
-rulings table in `../rubrics/contact_strategy_rubric.md`.
+Class values settled in adjudication are rows of the reference table in `../rubrics/archive/precision_rubric.md` and the
+rulings table in `../rubrics/archive/contact_strategy_rubric.md`.

@@ -318,3 +318,11 @@ def test_tube_layouts_registered():
     assert "--env.robot.gripper_force_cap=10.0" in flags
     assert "--env.robot.joint_zero_offset_deg=[0.0, -3.43, 0.0, 0.0, 0.0, 0.0, 0.0]" in flags
     assert "--policy.task=put the tube in the peg" in flags
+
+
+def test_tube_start_levels_registered():
+    near = task_for("tube_peg_left_near_p1")
+    assert near.tier == "tube_near" and task_for("tube_peg_right_half_p1").tier == "tube_half"
+    assert near.overrides() == task_for("tube_peg_left_p1").overrides()
+    assert tasks.eval_layouts(tasks.TUBE_START_LAYOUTS) == [f"tube_peg_{side}{level}_p1" for side in ("left", "right") for level in ("", "_half", "_near")]
+    assert tasks.eval_layouts(tasks.TUBE_LAYOUTS) == [f"tube_peg_{n}_p1" for n in ("left", "right", "two", "three", "left_half", "left_near", "right_half", "right_near")]

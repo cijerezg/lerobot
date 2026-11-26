@@ -29,11 +29,11 @@ annotation code and instructions. Update the relevant rubric here when a decisio
 rubrics, handoff briefs or scripts in results folders. Results folders contain evidence, decisions and progress, not
 new policy. This README is the entry point for a new session.
 
-Read `rubrics/annotation_principles.md` first. It overrides older conflicting rules. Then read the channel rubrics:
-`quality_mistake_rubric_v2.md` governs frame-local quality, mistake events and precision windows;
-`precision_rubric.md` supplies precision levels; `contact_strategy_rubric.md` supplies contact definitions;
-`subtask_atoms_rubric.md` supplies diverse segmentation and grammar. Historical examples and legacy tool constraints
-never override the current contract. Existing annotations are hypotheses to check, not ground truth.
+Read `rubrics/annotation_rubric.md` first: since 2026-11-26 it is the rubric of every new ReBot pass (generic subtask
+text, speed, mistakes, one high-quality label, tip target). The four rubrics it replaces are in `rubrics/archive/`
+(`annotation_principles.md`, `quality_mistake_rubric_v2.md`, `precision_rubric.md`, `contact_strategy_rubric.md`); they
+still describe the labels of roots printed before that date and of the diverse corpus, together with
+`subtask_atoms_rubric.md`. Sections below that cite them describe those older passes.
 
 For a **diverse-only sampled audit**, use [Diverse dataset: sampled audit](#diverse-dataset-sampled-audit) below;
 since 2026-10-08 its current mode is the [Coverage screen](#coverage-screen-current-mode-2026-10-08).
@@ -43,10 +43,8 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 
 | Path | What it is |
 |---|---|
-| `rubrics/annotation_principles.md` | The one test every label must pass. Read first. |
-| `rubrics/quality_mistake_rubric_v2.md` | Quality spans, mistakes, precision windows. |
-| `rubrics/precision_rubric.md` | Precision per step (1 coarse to 5 fine). |
-| `rubrics/contact_strategy_rubric.md` | Contact strategy per step; the table `vocab.py` is tested against. |
+| `rubrics/annotation_rubric.md` | The rubric of new ReBot passes (2026-11-26). Read first. |
+| `rubrics/archive/` | Replaced 2026-11-26: annotation principles, quality / mistake rubric v2, precision rubric, contact strategy rubric (the table `vocab.py` is tested against). |
 | `rubrics/subtask_atoms_rubric.md` | Atom grammar, naming and quality rules for the diverse corpus. |
 | `rubrics/depth_gripper_event_labels.md` | Gripper-event targets of the depth auxiliary loss. |
 | `rubrics/external_grading_decisions.md` | Rulings of the external ReBot grading pass (D1-D40) and its audit sweeps. |
@@ -126,7 +124,7 @@ The agent that receives the request coordinates; the frame reading is done by ag
 
 | step | what |
 |---|---|
-| read | `rubrics/annotation_principles.md`, `rebot/AGENT_BRIEF.md`, `rubrics/quality_mistake_rubric_v2.md` section 8 (the user's verdicts are the calibration), and the source root's own `README.md` if it has one (its descriptions are a first guess; the frames decide) |
+| read | `rubrics/archive/annotation_principles.md`, `rebot/AGENT_BRIEF.md`, `rubrics/archive/quality_mistake_rubric_v2.md` section 8 (the user's verdicts are the calibration), and the source root's own `README.md` if it has one (its descriptions are a first guess; the frames decide) |
 | set up | a new `<work>` folder, `inventory.json`, and `pass.json` with a pool and dataset name that do not exist yet under `paths.QUALITY_V2/classes`; `class_rules` and `reuse` name the existing class files each step is graded against |
 | annotate | one agent per episode, all at once, each given "Annotating one episode" of `AGENT_BRIEF.md` plus its `idx`, root, episode, `seams` and operator runs (`review/events_<IDX>.txt`). Before going on, read every subtask text against principles section 2 and fix or send back the ones that fail |
 | val candidates | when the request asks for validation material, each annotator also lists `val_candidates` ("Validation candidates" of `AGENT_BRIEF.md`). The coordinator compiles them into `<work>/val_candidates.md` (one row per candidate: episode, frames, seconds, steps, clean or messy, why) and hands it over with the pass. The user's picks become `split: val` entries in the label files, their frames carved out of the train entry (an entry before and one after it), before the final build; `build_root --split val` builds the validation root |
