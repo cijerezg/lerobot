@@ -162,8 +162,11 @@ else
   (( DRY )) || sshx true \
     || die "cannot ssh to '$HOST' — add a 'Host $HOST' block to ~/.ssh/config, or pass --host"
 
+  # --sim: the runtime reads no dataset root and no buffer cache, only the model's own files.
+  asset_keys='root|val_dataset_path|buffer_cache_dir|base_path|discrete_action_tokenizer|action_encoding_stats_path|embodiment_stats_path'
+  (( SIM )) && asset_keys='base_path|discrete_action_tokenizer|action_encoding_stats_path|embodiment_stats_path|video_vae_id|text_encoder_id'
   mapfile -t ASSETS < <(
-    grep -hoE '(^|[[:space:]])(root|val_dataset_path|buffer_cache_dir|base_path|discrete_action_tokenizer|action_encoding_stats_path|embodiment_stats_path):[[:space:]]*[^[:space:]#]+' "$CONFIG" \
+    grep -hoE "(^|[[:space:]])($asset_keys):[[:space:]]*[^[:space:]#]+" "$CONFIG" \
       | sed -E 's/.*:[[:space:]]*//; s/^"//; s/"$//' | grep -v '^null$' | sort -u
   )
   # diverse.enabled: false: the corpus root is not read (2026-11-15: it is on neither machine).
