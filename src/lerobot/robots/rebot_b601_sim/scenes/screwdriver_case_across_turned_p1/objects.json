@@ -1,0 +1,78 @@
+{
+ "layout": "screwdriver_case_across_turned_p1",
+ "tier": "small_turned",
+ "note": "screwdriver right, case left, carried across the desk; arm starts turned (screwdriver_case_across_p1)",
+ "generator": "scripts/sim_builders/small_objects/build_small_starts.py",
+ "objects": {
+  "screwdriver": {
+   "xy": [
+    0.37,
+    -0.22
+   ],
+   "yaw_deg": -45
+  },
+  "screwdriver_case": {
+   "xy": [
+    0.33,
+    0.2
+   ],
+   "yaw_deg": -90
+  }
+ },
+ "start": {
+  "level": "turned",
+  "base": "screwdriver_case_across_p1",
+  "start_deg": [
+   -33.74,
+   -102.42,
+   -61.08,
+   20.08,
+   -17.73,
+   27.26,
+   -60.81
+  ],
+  "object": "screwdriver",
+  "distance": "close",
+  "side": "left",
+  "start_vel": [
+   -2.47,
+   -4.84,
+   -1.66,
+   -2.79,
+   1.97,
+   -0.0,
+   0.0
+  ],
+  "tip_speed_mm_s": 35,
+  "tip_to_object_mm": 49,
+  "tip_left_of_object_mm": 40,
+  "tip_height_mm": 32,
+  "finger_tilt_deg": 30,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.35,
+  "observed_vel": [
+   -2.4,
+   -4.8,
+   -1.6,
+   -2.5,
+   1.8,
+   -0.0,
+   0.0
+  ],
+  "object_moved_mm": 0.53,
+  "first_subtask": "approach screwdriver",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    -46.900001525878906,
+    -91.4000015258789,
+    -57.29999923706055,
+    27.399999618530273,
+    -13.399999618530273,
+    -17.700000762939453,
+    -107.0
+   ],
+   "recorded_tip_to_object_xy_mm": 87.0
+  }
+ }
+}

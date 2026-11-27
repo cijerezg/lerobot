@@ -58,6 +58,7 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 | `rebot/task_sheet.py` | Writes `lerobot/docs/annotation_notes/rebot_tasks.md`: every task of the training mix with its subtask script, precision and contact per step, ready to paste into an inference config. |
 | `rebot/subtask_labeler.py` | Browser page to label a root's subtasks by hand (video + depth + position / velocity / torque, one key per subtask, free text). Writes `outputs/annotation/passes/subtasks_<root>/labels/episode_<E>.json`; command in CHEAT_SHEET "Subtask labeler". |
 | `rebot/subtask_labels_root.py` | Builds a new root that carries the labels of `subtask_labeler` (subtask tables only, quality -1 = not graded). |
+| `rebot/window_prepare.py`, `window_assemble.py`, `window_render.py`, `WINDOW_BRIEF.md`, `tip_motion.py` | A pass under `annotation_rubric.md` (2026-11-26): see "A pass under annotation_rubric.md" below. |
 | `quality_v2/` | The rubric v2 class pass, shared by every pool: class rules, side-by-side material, dense strips, grading batches, second read, label compiler, checks. |
 | `precision_contact/` | Frame grabbing, approach angle, row sheets and strips (used by `quality_v2`), and the text-rule priors for precision and contact. `AGENT_BRIEF.md` (+ `AGENT_BRIEF_diverse.md`) is the reviewer brief of the row pass. |
 | `atoms/` | Subtask-atom pipeline over the diverse corpus: propose, sheets, verdict, agent_check, assemble, manual editor, validator; its reviewer briefs. |
@@ -69,7 +70,27 @@ The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution
 
 Tests: `tests/annotation/`.
 
-## A ReBot pass
+## A pass under annotation_rubric.md
+
+For roots recorded since 2026-11-25 (small objects, tidy-up). Piloted on 5 windows on 2026-11-26
+(`outputs/annotation/passes/pilot_small_objects_2026-11-26/`); `rebot/window_labels_root.py` prints a root with these labels.
+
+`<work>/windows.json` names the stretches to label: `{name: {"root": "outputs/data/<root>", "episode": E, "start": A, "end": B}}`
+(end exclusive; a whole episode is one window, or several of about 1,000 to 1,800 frames).
+
+```bash
+M=lerobot.annotation.rebot
+uv run python -m $M.window_prepare <work>     # per window: sheets, signal plots, signals.csv, window.json (holds)
+# one Opus 5.5 agent per window, prompt = window name + "follow rebot/WINDOW_BRIEF.md" -> <work>/<window>/labels.json
+uv run python -m $M.window_assemble <work>    # table.json, mistakes.json, frames.csv (1 s look-ahead), review.md
+uv run python -m $M.window_render <work>      # videos/<window>.mp4, labels burned in: what the user reviews
+uv run python -m $M.tip_motion <root> <episode> --segments <labels file>   # tip path measures of any segments
+```
+
+The user reviews the clips, never the label files or the hand-labelling page. Feedback goes into the rubric and the
+brief, then the same windows are labelled again.
+
+## A ReBot pass (rubrics before 2026-11-26)
 
 To annotate a ReBot root, an agent needs only this page: it names what to read, the order of work and when to stop.
 

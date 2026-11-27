@@ -502,6 +502,7 @@ def main() -> None:
     3. Delegate to offline_train_cli (parser.wrap handles config parsing).
     """
     # Register before parsing so draccus can resolve policy.type.
+    import lerobot.rl.flux3.rl_flux3  # noqa: F401 — registers Flux3RLConfig
     import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
     import lerobot.rl.pi05.rl_pi05  # noqa: F401 — registers PI05RLConfig
     from lerobot.robots import rebot_b601_follower, so_follower  # noqa: F401 — registers robot configs
@@ -916,6 +917,7 @@ def run_offline_training(
             buffer.configure_future_images(
                 offset, [key for key in buffer.states if key.startswith("observation.images.")]
             )
+        trainer.prepare_buffer(buffer, cfg)
     if critic_reward_mode == "subtask":
         logging.info(
             "[RL_OFFLINE] Critic reward mode: subtask "

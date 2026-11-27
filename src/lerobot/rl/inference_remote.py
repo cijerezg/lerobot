@@ -35,6 +35,7 @@ from torch import nn
 import lerobot.rl.gym_manipulator  # noqa: F401 - registers robot/camera/teleop config choices
 import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 - registers MolmoAct2RLConfig
 import lerobot.rl.pi05.rl_pi05  # noqa: F401 - registers PI05RLConfig
+import lerobot.rl.flux3.rl_flux3  # noqa: F401 - registers Flux3RLConfig
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.rl.inference_async import _configure_inference_checkpoint
@@ -129,7 +130,7 @@ class RemotePolicyTrainer:
         self._trainer = trainer
         self._socket = socket
 
-    def make_policy(self, cfg) -> nn.Module:
+    def make_inference_policy(self, cfg) -> nn.Module:
         return RemotePolicy(cfg.policy, self._socket, cfg.seed)
 
     def __getattr__(self, name):

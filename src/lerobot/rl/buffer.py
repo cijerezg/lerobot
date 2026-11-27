@@ -584,21 +584,28 @@ class ReplayBuffer:
             pad[key] = offs.unsqueeze(0) > reach.unsqueeze(1)
         return history, pad
 
-    def configure_future_images(self, offset: int, keys: list[str]) -> None:
-        """Enable auxiliary-only future RGB sampling without changing the cache."""
-        if offset < 1 or offset % self.image_stride:
+    def configure_future_images(self, offset: int | Sequence[int], keys: list[str]) -> None:
+        """Enable future RGB sampling without changing the cache.
+
+        One offset gives ``future.{key}`` as ``(B, C, H, W)``; a list of offsets gives ``(B, T, C, H, W)``, in the
+        order of the list.
+        """
+        offsets = [offset] if isinstance(offset, int) else list(offset)
+        if not offsets or any(o < 1 or o % self.image_stride for o in offsets):
             raise ValueError("Future image offset must be positive and aligned to image_stride.")
         missing = [key for key in keys if key not in self.states]
         if missing or not keys:
             raise ValueError(f"Future image keys must name stored cameras; missing={missing}.")
         if self.use_drq and self._custom_image_augmentation:
             raise ValueError("Future visual loss supports default DrQ or use_drq=False, not custom augmentation.")
-        self.future_image_offset = int(offset)
+        self.future_image_offset = int(offset) if isinstance(offset, int) else offsets
         self.future_image_keys = tuple(keys)
 
     def _gather_future_images(self, idx: torch.Tensor) -> dict[str, torch.Tensor]:
         """Mask physical episode boundaries and the circular buffer's newest row."""
-        offset = self.future_image_offset
+        single = isinstance(self.future_image_offset, int)
+        offsets = torch.tensor([self.future_image_offset] if single else self.future_image_offset, device=idx.device)
+        offset = int(offsets.max())
         steps = torch.arange(offset, device=idx.device)
         path = (idx[:, None] + steps[None]) % self.capacity
         valid = ~(self.dones[path] | self.truncateds[path]).any(dim=1)
@@ -608,7 +615,9 @@ class ReplayBuffer:
         )
         valid &= offset <= remaining
         # Invalid targets carry the anchor, never a frame from another episode.
-        endpoint = torch.where(valid, (idx + offset) % self.capacity, idx)
+        endpoint = torch.where(valid[:, None], (idx[:, None] + offsets[None]) % self.capacity, idx[:, None])
+        if single:
+            endpoint = endpoint[:, 0]
         result = {"future_visual_valid": valid.to(self.device)}
         for key in self.future_image_keys:
             result[f"future.{key}"] = self.states[key][endpoint // self.image_stride].to(self.device)

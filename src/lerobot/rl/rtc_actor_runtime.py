@@ -280,6 +280,10 @@ class RTCSharedState:
         self.gripper_torques: deque = deque(maxlen=len(GRIPPER_TORQUE_WEIGHTS))
         # Motor velocities of the last control steps, oldest first (the prompt tokens' input).
         self.velocities: deque = deque(maxlen=len(VELOCITY_WEIGHTS))
+        # Torques of all motors of the last control steps, oldest first, and the last executed
+        # action (None = none yet in this episode): inputs of policies that read them (flux3).
+        self.torques: deque = deque(maxlen=len(VELOCITY_WEIGHTS))
+        self.last_action: torch.Tensor | None = None
         # Current subtask: decoded by the high-level query, or walked by the operator
         # console through subtask_script (the rollout's steps in order, cursor 0 on
         # episode reset; empty = decode path). A script entry is (text, index) or
@@ -478,6 +482,9 @@ class RTCSharedState:
         if history_offsets is not None:
             max_back = max(offsets[0] for offsets in history_offsets.values())
             self.history_entries = deque(maxlen=max_back)
+            # The readings reach as far back as the history, plus the smoothing's own lookback.
+            self.velocities = deque(maxlen=max_back + len(VELOCITY_WEIGHTS))
+            self.torques = deque(maxlen=max_back + len(VELOCITY_WEIGHTS))
 
     def update_subtask(self, name: str, index: int, metadata: dict | None = None) -> None:
         with self.lock:
@@ -548,6 +555,18 @@ class RTCSharedState:
     def clear_velocities(self) -> None:
         with self.lock:
             self.velocities.clear()
+
+    def push_torque(self, torque: list[float]) -> None:
+        with self.lock:
+            self.torques.append(torque)
+
+    def clear_torques(self) -> None:
+        with self.lock:
+            self.torques.clear()
+
+    def torque_snapshot(self) -> list[list[float]]:
+        with self.lock:
+            return list(self.torques)
 
     def velocity_snapshot(self) -> list[list[float]]:
         with self.lock:
@@ -884,6 +903,9 @@ def rtc_inference_worker(
                     metadata=cycle_metadata,
                     gripper_torque_level=_gripper_torque_level(shared_state, cfg),
                     velocity=_velocity(shared_state, cfg),
+                    velocities=shared_state.velocity_snapshot(),
+                    torques=shared_state.torque_snapshot(),
+                    last_action=shared_state.last_action,
                     policy=policy,
                 )
                 t_preproc_end = time.perf_counter()
@@ -1145,6 +1167,8 @@ def rtc_env_worker(
                 shared_state.clear_history()
                 shared_state.clear_gripper_torques()
                 shared_state.clear_velocities()
+                shared_state.clear_torques()
+                shared_state.last_action = None
                 shared_state.clear_subtask_state()
                 shared_state.request_reset()
                 if not standalone:
@@ -1278,6 +1302,7 @@ def rtc_env_worker(
             # action column) is the padded layout width. Zero-fill the pad columns.
             executed_action = torch.nn.functional.pad(executed_action, (0, action_dim - executed_action.shape[-1]))
             last_action = executed_action
+            shared_state.last_action = executed_action
             reward = new_transition[TransitionKey.REWARD]
             done = new_transition.get(TransitionKey.DONE, False)
             truncated = new_transition.get(TransitionKey.TRUNCATED, False)
@@ -1737,6 +1762,9 @@ def _push_gripper_torque(shared_state: RTCSharedState, online_env) -> None:
     velocity = [float(value) for key, value in raw.items() if isinstance(key, str) and key.endswith(VELOCITY_SUFFIX)]
     if velocity:
         shared_state.push_velocity(velocity)
+    torque = [float(value) for key, value in raw.items() if isinstance(key, str) and key.endswith(".torque")]
+    if torque:
+        shared_state.push_torque(torque)
 
 
 def _velocity(shared_state: RTCSharedState, cfg) -> list[float] | None:
@@ -1777,13 +1805,13 @@ def _merge_subtask_metadata(constants: dict | None, shared_state: RTCSharedState
 def _build_inference_policy(cfg, trainer, device, should_init_critic: bool) -> tuple:
     """Policy + processors from ``cfg.policy.pretrained_path``, on ``device``, compiled when asked."""
     logger.info("[RTC_INFERENCE] Building policy and processors from %s...", cfg.policy.pretrained_path)
-    policy = trainer.make_policy(cfg)
+    policy = trainer.make_inference_policy(cfg)
     if should_init_critic and not hasattr(policy, "critic"):
         init_critic = getattr(policy, "init_critic", None)
         if callable(init_critic):
             init_critic()
     policy = policy.to(device).eval()
-    preprocessor, postprocessor = trainer.make_processors(cfg)
+    preprocessor, postprocessor = trainer.make_inference_processors(cfg)
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
 
@@ -1822,6 +1850,9 @@ def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTC
         robot_type=cfg.env.robot.type if hasattr(cfg.env, "robot") else "",
         subtask=subtask,
         metadata=_merge_subtask_metadata(_constant_inference_metadata(cfg), shared_state),
+        velocities=[],
+        torques=[],
+        last_action=None,
         policy=policy,
     )
     dummy_prev = torch.zeros(execution_horizon, action_dim, device=device, dtype=torch.float32)

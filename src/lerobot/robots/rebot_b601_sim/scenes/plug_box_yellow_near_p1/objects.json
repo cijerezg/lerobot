@@ -1,0 +1,78 @@
+{
+ "layout": "plug_box_yellow_near_p1",
+ "tier": "small_near",
+ "note": "yellow plug far left, box near the middle with the plug row toward the robot; arm starts near (plug_box_yellow_p1)",
+ "generator": "scripts/sim_builders/small_objects/build_small_starts.py",
+ "objects": {
+  "plug_yellow": {
+   "xy": [
+    0.42,
+    0.14
+   ],
+   "yaw_deg": 40
+  },
+  "plug_box": {
+   "xy": [
+    0.3,
+    -0.03
+   ],
+   "yaw_deg": -90
+  }
+ },
+ "start": {
+  "level": "near",
+  "base": "plug_box_yellow_p1",
+  "start_deg": [
+   21.36,
+   -105.89,
+   -65.69,
+   17.88,
+   7.09,
+   -17.1,
+   -60.75
+  ],
+  "object": "plug_yellow",
+  "distance": "ontop",
+  "side": "none",
+  "start_vel": [
+   -0.11,
+   -4.7,
+   -0.38,
+   -1.64,
+   -0.27,
+   0.0,
+   0.0
+  ],
+  "tip_speed_mm_s": 29,
+  "tip_to_object_mm": 28,
+  "tip_left_of_object_mm": 0,
+  "tip_height_mm": 31,
+  "finger_tilt_deg": 29,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.34,
+  "observed_vel": [
+   -0.1,
+   -4.6,
+   -0.4,
+   -1.4,
+   -0.2,
+   0.0,
+   0.0
+  ],
+  "object_moved_mm": 0.53,
+  "first_subtask": "approach yellow plug",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    26.899999618530273,
+    -90.4000015258789,
+    -56.099998474121094,
+    32.20000076293945,
+    5.400000095367432,
+    -17.100000381469727,
+    -64.19999694824219
+   ],
+   "recorded_tip_to_object_xy_mm": 100.5
+  }
+ }
+}

@@ -1,0 +1,78 @@
+{
+ "layout": "screwdriver_case_left_near_p1",
+ "tier": "small_near",
+ "note": "screwdriver far left, case in the middle; arm starts near (screwdriver_case_left_p1)",
+ "generator": "scripts/sim_builders/small_objects/build_small_starts.py",
+ "objects": {
+  "screwdriver": {
+   "xy": [
+    0.4,
+    0.2
+   ],
+   "yaw_deg": 110
+  },
+  "screwdriver_case": {
+   "xy": [
+    0.33,
+    0.03
+   ],
+   "yaw_deg": -90
+  }
+ },
+ "start": {
+  "level": "near",
+  "base": "screwdriver_case_left_p1",
+  "start_deg": [
+   27.0,
+   -123.93,
+   -101.31,
+   57.85,
+   1.08,
+   -15.0,
+   -60.81
+  ],
+  "object": "screwdriver",
+  "distance": "ontop",
+  "side": "none",
+  "start_vel": [
+   -0.01,
+   -3.31,
+   0.23,
+   -1.67,
+   -0.02,
+   -0.0,
+   0.0
+  ],
+  "tip_speed_mm_s": 25,
+  "tip_to_object_mm": 29,
+  "tip_left_of_object_mm": 0,
+  "tip_height_mm": 32,
+  "finger_tilt_deg": 6,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.24,
+  "observed_vel": [
+   -0.0,
+   -3.3,
+   0.2,
+   -1.5,
+   -0.0,
+   -0.0,
+   0.0
+  ],
+  "object_moved_mm": 0.53,
+  "first_subtask": "approach screwdriver",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    28.799999237060547,
+    -126.4000015258789,
+    -104.5999984741211,
+    53.20000076293945,
+    0.4000000059604645,
+    -15.0,
+    -92.4000015258789
+   ],
+   "recorded_tip_to_object_xy_mm": 38.1
+  }
+ }
+}

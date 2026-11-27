@@ -1,0 +1,78 @@
+{
+ "layout": "plug_box_red_turned_p1",
+ "tier": "small_turned",
+ "note": "red plug near the middle, box near left, turned a quarter the other way; arm starts turned (plug_box_red_p1)",
+ "generator": "scripts/sim_builders/small_objects/build_small_starts.py",
+ "objects": {
+  "plug_red": {
+   "xy": [
+    0.37,
+    0.0
+   ],
+   "yaw_deg": 70
+  },
+  "plug_box": {
+   "xy": [
+    0.31,
+    0.22
+   ],
+   "yaw_deg": 90
+  }
+ },
+ "start": {
+  "level": "turned",
+  "base": "plug_box_red_p1",
+  "start_deg": [
+   -0.78,
+   -113.92,
+   -84.15,
+   57.23,
+   -14.21,
+   59.55,
+   -60.75
+  ],
+  "object": "plug_red",
+  "distance": "close",
+  "side": "left",
+  "start_vel": [
+   -3.65,
+   -2.78,
+   0.49,
+   -1.29,
+   2.08,
+   0.0,
+   0.0
+  ],
+  "tip_speed_mm_s": 36,
+  "tip_to_object_mm": 49,
+  "tip_left_of_object_mm": 40,
+  "tip_height_mm": 31,
+  "finger_tilt_deg": 14,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.28,
+  "observed_vel": [
+   -3.6,
+   -2.7,
+   0.5,
+   -1.1,
+   1.9,
+   -0.0,
+   -0.0
+  ],
+  "object_moved_mm": 0.53,
+  "first_subtask": "approach red plug",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    -5.199999809265137,
+    -114.5999984741211,
+    -83.80000305175781,
+    57.099998474121094,
+    -12.0,
+    14.5,
+    -69.5999984741211
+   ],
+   "recorded_tip_to_object_xy_mm": 4.6
+  }
+ }
+}

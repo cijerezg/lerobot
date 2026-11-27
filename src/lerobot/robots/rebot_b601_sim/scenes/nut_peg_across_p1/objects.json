@@ -1,0 +1,148 @@
+{
+ "layout": "nut_peg_across_p1",
+ "tier": "small",
+ "note": "nut right, holder left of the middle, turned a quarter",
+ "generator": "scripts/sim_builders/small_objects/build_small_layouts.py",
+ "objects": {
+  "nut": {
+   "xy": [
+    0.37,
+    -0.2
+   ],
+   "yaw_deg": 0
+  },
+  "nut_holder": {
+   "xy": [
+    0.32,
+    0.12
+   ],
+   "yaw_deg": 90
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "nut": 0.51,
+    "nut_holder": 0.5
+   },
+   "max_moved_mm": 0.51,
+   "contact_dist_mm": {
+    "nut": -0.34,
+    "nut_holder": -0.34
+   },
+   "worst_contact_dist_mm": -0.34
+  },
+  "scripted_moves": [
+   {
+    "body": "nut",
+    "place": "nut_holder",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.8,
+    "hold_deg": -20.6,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     -0.2,
+     1.3
+    ],
+    "rel_mm": [
+     0.1,
+     -0.0,
+     5.0
+    ],
+    "goal_mm": [
+     0.0,
+     0.0
+    ],
+    "yaw_in_place_deg": 30.7,
+    "place_moved_mm": 0.6
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.84,
+     "cursor": 0,
+     "stage": "approach",
+     "reward": 0.1,
+     "why": "reached approach"
+    },
+    {
+     "t": 3.84,
+     "cursor": 1,
+     "stage": "approach",
+     "reward": 0.1,
+     "why": "stage approach"
+    },
+    {
+     "t": 4.4,
+     "cursor": 1,
+     "stage": "contact",
+     "reward": 0.2,
+     "why": "reached contact"
+    },
+    {
+     "t": 5.67,
+     "cursor": 1,
+     "stage": "lifted",
+     "reward": 0.4,
+     "why": "reached lifted"
+    },
+    {
+     "t": 5.67,
+     "cursor": 2,
+     "stage": "lifted",
+     "reward": 0.4,
+     "why": "stage lifted"
+    },
+    {
+     "t": 7.9,
+     "cursor": 2,
+     "stage": "at_peg",
+     "reward": 0.7,
+     "why": "reached at_peg"
+    },
+    {
+     "t": 7.9,
+     "cursor": 3,
+     "stage": "at_peg",
+     "reward": 0.7,
+     "why": "stage at_peg"
+    },
+    {
+     "t": 12.67,
+     "cursor": 3,
+     "stage": "on_peg",
+     "reward": 0.85,
+     "why": "reached on_peg"
+    },
+    {
+     "t": 13.77,
+     "cursor": 3,
+     "stage": "inserted",
+     "reward": 1.0,
+     "why": "reached inserted"
+    },
+    {
+     "t": 13.77,
+     "cursor": 4,
+     "stage": "inserted",
+     "reward": 1.0,
+     "why": "stage inserted"
+    }
+   ],
+   "raw": [
+    {
+     "level": 6,
+     "peg_offset_mm": 0.1,
+     "depth_mm": 10.0,
+     "lift_mm": 2.5,
+     "upright": 1.0,
+     "touched": false
+    }
+   ]
+  }
+ }
+}

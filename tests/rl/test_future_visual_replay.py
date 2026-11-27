@@ -146,6 +146,7 @@ def test_offline_startup_configures_future_frames_in_its_own_scope(monkeypatch, 
         make_processors=lambda *args, **kwargs: (None, None),
         get_optimizer_groups=lambda *args: [],
         sync_subtask_vocabulary=lambda *args, **kwargs: None,
+        prepare_buffer=lambda *args: None,
     )
     monkeypatch.setattr(offline.Trainer, "for_config", lambda cfg: trainer)
     monkeypatch.setattr(offline, "get_offline_dataset_sources", lambda cfg: [SimpleNamespace(
@@ -163,3 +164,13 @@ def test_offline_startup_configures_future_frames_in_its_own_scope(monkeypatch, 
     with pytest.raises(StartupReached):
         offline.run_offline_training(cfg, None, None, TrainingRuntime(device="cpu"))
     assert [replay.future_image_offset for replay in buffers] == ([120, 60] if enabled else [0, 0])
+
+
+def test_list_of_offsets_gives_a_frame_axis_and_one_validity_per_window():
+    replay = buffer()
+    replay.dones[7] = True
+    replay.configure_future_images([1, 3], [KEY])
+    result = replay._gather_future_images(torch.tensor([0, 4, 5]))
+    assert result["future_visual_valid"].tolist() == [True, True, False]
+    assert result[f"future.{KEY}"].shape == (3, 2, 3, 2, 2)
+    assert result[f"future.{KEY}"][:, :, 0, 0, 0].tolist() == [[1, 3], [5, 7], [5, 5]]

@@ -1,0 +1,287 @@
+{
+ "layout": "screwdriver_case_two_p1",
+ "tier": "small",
+ "note": "case near the middle, one screwdriver far left, one right",
+ "generator": "scripts/sim_builders/small_objects/build_small_layouts.py",
+ "objects": {
+  "screwdriver": {
+   "xy": [
+    0.43,
+    0.11
+   ],
+   "yaw_deg": 60
+  },
+  "screwdriver_2": {
+   "xy": [
+    0.37,
+    -0.23
+   ],
+   "yaw_deg": -20
+  },
+  "screwdriver_case": {
+   "xy": [
+    0.3,
+    -0.05
+   ],
+   "yaw_deg": -100
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "screwdriver": 0.53,
+    "screwdriver_2": 0.53,
+    "screwdriver_case": 0.51
+   },
+   "max_moved_mm": 0.53,
+   "contact_dist_mm": {
+    "screwdriver": -0.35,
+    "screwdriver_2": -0.35,
+    "screwdriver_case": -0.34
+   },
+   "worst_contact_dist_mm": -0.35
+  },
+  "scripted_moves": [
+   {
+    "body": "screwdriver",
+    "place": "screwdriver_case",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.6,
+    "hold_deg": -15.6,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     1.0,
+     -0.1
+    ],
+    "rel_mm": [
+     10.1,
+     -21.9,
+     4.5
+    ],
+    "goal_mm": [
+     10.0,
+     -22.0
+    ],
+    "yaw_in_place_deg": 90.0,
+    "place_moved_mm": 0.0
+   },
+   {
+    "body": "screwdriver_2",
+    "place": "screwdriver_case",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.6,
+    "hold_deg": -15.6,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     1.0,
+     -0.2
+    ],
+    "rel_mm": [
+     23.9,
+     -21.9,
+     4.5
+    ],
+    "goal_mm": [
+     24.0,
+     -22.0
+    ],
+    "yaw_in_place_deg": 90.0,
+    "place_moved_mm": 0.0
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.84,
+     "cursor": 0,
+     "stage": "screwdriver_approach",
+     "reward": 0.05,
+     "why": "reached screwdriver_approach"
+    },
+    {
+     "t": 3.84,
+     "cursor": 1,
+     "stage": "screwdriver_approach",
+     "reward": 0.05,
+     "why": "stage screwdriver_approach"
+    },
+    {
+     "t": 4.47,
+     "cursor": 1,
+     "stage": "screwdriver_contact",
+     "reward": 0.1,
+     "why": "reached screwdriver_contact"
+    },
+    {
+     "t": 5.8,
+     "cursor": 1,
+     "stage": "screwdriver_lifted",
+     "reward": 0.2,
+     "why": "reached screwdriver_lifted"
+    },
+    {
+     "t": 5.8,
+     "cursor": 2,
+     "stage": "screwdriver_lifted",
+     "reward": 0.2,
+     "why": "stage screwdriver_lifted"
+    },
+    {
+     "t": 6.7,
+     "cursor": 2,
+     "stage": "screwdriver_transport",
+     "reward": 0.35,
+     "why": "reached screwdriver_transport"
+    },
+    {
+     "t": 7.5,
+     "cursor": 2,
+     "stage": "screwdriver_over",
+     "reward": 0.425,
+     "why": "reached screwdriver_over"
+    },
+    {
+     "t": 7.5,
+     "cursor": 3,
+     "stage": "screwdriver_over",
+     "reward": 0.425,
+     "why": "stage screwdriver_over"
+    },
+    {
+     "t": 13.74,
+     "cursor": 3,
+     "stage": "screwdriver_inside",
+     "reward": 0.5,
+     "why": "reached screwdriver_inside"
+    },
+    {
+     "t": 13.74,
+     "cursor": 4,
+     "stage": "screwdriver_inside",
+     "reward": 0.5,
+     "why": "stage screwdriver_inside"
+    },
+    {
+     "t": 19.04,
+     "cursor": 4,
+     "stage": "screwdriver_2_approach",
+     "reward": 0.55,
+     "why": "reached screwdriver_2_approach"
+    },
+    {
+     "t": 19.04,
+     "cursor": 5,
+     "stage": "screwdriver_2_approach",
+     "reward": 0.55,
+     "why": "stage screwdriver_2_approach"
+    },
+    {
+     "t": 19.74,
+     "cursor": 5,
+     "stage": "screwdriver_2_contact",
+     "reward": 0.6,
+     "why": "reached screwdriver_2_contact"
+    },
+    {
+     "t": 21.0,
+     "cursor": 5,
+     "stage": "screwdriver_2_lifted",
+     "reward": 0.7,
+     "why": "reached screwdriver_2_lifted"
+    },
+    {
+     "t": 21.0,
+     "cursor": 6,
+     "stage": "screwdriver_2_lifted",
+     "reward": 0.7,
+     "why": "stage screwdriver_2_lifted"
+    },
+    {
+     "t": 21.9,
+     "cursor": 6,
+     "stage": "screwdriver_2_transport",
+     "reward": 0.85,
+     "why": "reached screwdriver_2_transport"
+    },
+    {
+     "t": 23.04,
+     "cursor": 6,
+     "stage": "screwdriver_2_over",
+     "reward": 0.925,
+     "why": "reached screwdriver_2_over"
+    },
+    {
+     "t": 23.04,
+     "cursor": 7,
+     "stage": "screwdriver_2_over",
+     "reward": 0.925,
+     "why": "stage screwdriver_2_over"
+    },
+    {
+     "t": 28.9,
+     "cursor": 7,
+     "stage": "screwdriver_2_inside",
+     "reward": 1.0,
+     "why": "reached screwdriver_2_inside"
+    },
+    {
+     "t": 28.9,
+     "cursor": 8,
+     "stage": "screwdriver_2_inside",
+     "reward": 1.0,
+     "why": "stage screwdriver_2_inside"
+    }
+   ],
+   "carried_time_s": 12.8,
+   "objects": {
+    "screwdriver": {
+     "carried_time_s": 6.4,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.0957,
+      "contact": false,
+      "lift_m": 0.0015,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 6.4,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.2261
+     }
+    },
+    "screwdriver_2": {
+     "carried_time_s": 6.4,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.095,
+      "contact": false,
+      "lift_m": 0.0015,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 6.4,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.1867
+     }
+    }
+   },
+   "drop": null,
+   "drops": 0
+  }
+ }
+}

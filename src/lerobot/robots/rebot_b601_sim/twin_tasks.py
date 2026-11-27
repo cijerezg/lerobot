@@ -109,19 +109,21 @@ def _py(x):
 
 
 class PickPlaceLadder:
-    """One object's pick-and-place quantities, predicates and progress; owned by a scorer, stateful over the episode."""
+    """One object's pick-and-place quantities, predicates and progress; owned by a scorer, stateful over the episode.
+    ``region`` = name of a box geom that is the place (its body is the container, the box alone gives footprint and rim);
+    None = the basket."""
 
     NAMES = ("approach", "contact", "lifted", "transport", "over", "inside")
 
-    def __init__(self, scorer: TaskScorer, body: str) -> None:
+    def __init__(self, scorer: TaskScorer, body: str, region: str | None = None) -> None:
         self.s = scorer
         m = scorer.model
         self.body = m.body(body).id
-        self.basket = m.body(BASKET).id
+        self.basket = m.body(BASKET).id if region is None else int(m.geom_bodyid[m.geom(region).id])
         # basket footprint and rim in the basket frame, from its collision geoms' local AABBs
         lo, hi = [], []
         for g in range(m.ngeom):
-            if m.geom_bodyid[g] == self.basket and (m.geom_contype[g] or m.geom_conaffinity[g]):
+            if (m.geom_bodyid[g] == self.basket and (m.geom_contype[g] or m.geom_conaffinity[g])) if region is None else g == m.geom(region).id:
                 c, h = m.geom_aabb[g, :3], m.geom_aabb[g, 3:]
                 Rm = np.zeros(9); mujoco.mju_quat2Mat(Rm, m.geom_quat[g]); Rm = Rm.reshape(3, 3)
                 cw = m.geom_pos[g] + Rm @ c; hw = np.abs(Rm) @ h
@@ -211,8 +213,8 @@ class PickPlaceLadder:
         return pred, prog
 
 
-def pick_place_scorer(body: str, cursors: tuple[int, ...]) -> type[DenseScorer]:
-    """Scorer class for "put the <body> in the basket"; ``cursors`` = the script step each stage justifies (6 entries)."""
+def pick_place_scorer(body: str, cursors: tuple[int, ...], region: str | None = None) -> type[DenseScorer]:
+    """Scorer class for "put the <body> in the basket" (or in ``region``, PickPlaceLadder); ``cursors`` = the script step each stage justifies (6 entries)."""
     values = (0.1, 0.2, 0.4, 0.7, 0.85, 1.0)
 
     class PickPlaceScorer(DenseScorer):
@@ -220,7 +222,7 @@ def pick_place_scorer(body: str, cursors: tuple[int, ...]) -> type[DenseScorer]:
         BODY = body
 
         def _setup(self) -> None:
-            self.ladder = PickPlaceLadder(self, body)
+            self.ladder = PickPlaceLadder(self, body, region)
 
         def _reset(self) -> None:
             super()._reset()
@@ -238,15 +240,16 @@ def pick_place_scorer(body: str, cursors: tuple[int, ...]) -> type[DenseScorer]:
     return PickPlaceScorer
 
 
-def sequence_scorer(bodies: tuple[str, ...], cursors: tuple[tuple[int, ...], ...], any_order: bool = False) -> type[DenseScorer]:
+def sequence_scorer(bodies: tuple[str, ...], cursors: tuple[tuple[int, ...], ...], any_order: bool = False, regions: tuple[str, ...] | None = None) -> type[DenseScorer]:
     """"Put the <a>, the <b> ... in the basket": one pick-and-place ladder per object in task order, the i-th scaled to
     [i / n, (i + 1) / n]; a ladder only runs once the previous object is placed (its carried time, drops and progress are
     not counted before its turn). ``cursors[i]`` = the script step each of the i-th object's six stages justifies.
     ``any_order`` (identical objects, "the two bits"): slot i is not tied to bodies[i]; it binds to the first not yet bound
     object lifted while the slot is active and, until then, reports the best of the unbound objects (stage names keep
-    bodies[i] as the slot label)."""
+    bodies[i] as the slot label). ``regions[i]`` = the i-th object's place (PickPlaceLadder ``region``); None = the basket for all."""
     values = (0.1, 0.2, 0.4, 0.7, 0.85, 1.0)
     n = len(bodies)
+    regions = regions or (None,) * n
     assert n == len(cursors) >= 2
 
     class SequenceScorer(DenseScorer):
@@ -255,7 +258,7 @@ def sequence_scorer(bodies: tuple[str, ...], cursors: tuple[tuple[int, ...], ...
         BODIES = bodies
 
         def _setup(self) -> None:
-            self.ladders = [PickPlaceLadder(self, body) for body in bodies]
+            self.ladders = [PickPlaceLadder(self, body, region) for body, region in zip(bodies, regions, strict=True)]
 
         def _reset(self) -> None:
             super()._reset()

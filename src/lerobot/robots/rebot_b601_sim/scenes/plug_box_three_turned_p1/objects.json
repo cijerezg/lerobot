@@ -1,0 +1,92 @@
+{
+ "layout": "plug_box_three_turned_p1",
+ "tier": "small_turned",
+ "note": "box near right, plugs far middle, right of the middle and near left; arm starts turned (plug_box_three_p1)",
+ "generator": "scripts/sim_builders/small_objects/build_small_starts.py",
+ "objects": {
+  "plug_yellow": {
+   "xy": [
+    0.44,
+    0.07
+   ],
+   "yaw_deg": 80
+  },
+  "plug_red": {
+   "xy": [
+    0.4,
+    -0.08
+   ],
+   "yaw_deg": 15
+  },
+  "plug_blue": {
+   "xy": [
+    0.36,
+    0.25
+   ],
+   "yaw_deg": -45
+  },
+  "plug_box": {
+   "xy": [
+    0.28,
+    -0.22
+   ],
+   "yaw_deg": -70
+  }
+ },
+ "start": {
+  "level": "turned",
+  "base": "plug_box_three_p1",
+  "start_deg": [
+   -1.79,
+   -120.17,
+   -93.45,
+   51.25,
+   -13.79,
+   57.99,
+   -60.75
+  ],
+  "object": "plug_yellow",
+  "distance": "close",
+  "side": "right",
+  "start_vel": [
+   3.47,
+   -3.1,
+   -0.04,
+   -1.69,
+   -1.09,
+   -0.0,
+   0.0
+  ],
+  "tip_speed_mm_s": 36,
+  "tip_to_object_mm": 49,
+  "tip_left_of_object_mm": -40,
+  "tip_height_mm": 31,
+  "finger_tilt_deg": 16,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.25,
+  "observed_vel": [
+   3.4,
+   -3.1,
+   -0.0,
+   -1.5,
+   -0.8,
+   0.0,
+   -0.0
+  ],
+  "object_moved_mm": 0.53,
+  "first_subtask": "approach yellow plug",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    -2.200000047683716,
+    -114.0999984741211,
+    -88.69999694824219,
+    59.400001525878906,
+    -14.199999809265137,
+    13.0,
+    -39.70000076293945
+   ],
+   "recorded_tip_to_object_xy_mm": 66.1
+  }
+ }
+}

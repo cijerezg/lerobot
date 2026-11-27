@@ -1,0 +1,411 @@
+{
+ "layout": "die_cup_three_p1",
+ "tier": "small",
+ "note": "cup near the middle, dice far left, far middle and right",
+ "generator": "scripts/sim_builders/small_objects/build_small_layouts.py",
+ "objects": {
+  "die": {
+   "xy": [
+    0.42,
+    0.15
+   ],
+   "yaw_deg": 10
+  },
+  "die_2": {
+   "xy": [
+    0.43,
+    -0.05
+   ],
+   "yaw_deg": 45
+  },
+  "die_3": {
+   "xy": [
+    0.36,
+    -0.25
+   ],
+   "yaw_deg": 70
+  },
+  "dice_cup": {
+   "xy": [
+    0.29,
+    0.03
+   ],
+   "yaw_deg": 0
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "die": 0.53,
+    "die_2": 0.53,
+    "die_3": 0.53,
+    "dice_cup": 0.4
+   },
+   "max_moved_mm": 0.53,
+   "contact_dist_mm": {
+    "die": -0.35,
+    "die_2": -0.35,
+    "die_3": -0.35,
+    "dice_cup": -0.41
+   },
+   "worst_contact_dist_mm": -0.41
+  },
+  "scripted_moves": [
+   {
+    "body": "die",
+    "place": "dice_cup",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 55.6,
+    "hold_deg": -40.5,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     1.7,
+     0.3
+    ],
+    "rel_mm": [
+     1.5,
+     1.0,
+     11.9
+    ],
+    "goal_mm": [
+     0.0,
+     0.0
+    ],
+    "yaw_in_place_deg": 5.8,
+    "place_moved_mm": 0.0
+   },
+   {
+    "body": "die_2",
+    "place": "dice_cup",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 55.6,
+    "hold_deg": -40.5,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     0.3,
+     0.6
+    ],
+    "rel_mm": [
+     -4.2,
+     -17.1,
+     14.1
+    ],
+    "goal_mm": [
+     0.0,
+     0.0
+    ],
+    "yaw_in_place_deg": -3.1,
+    "place_moved_mm": 0.0
+   },
+   {
+    "body": "die_3",
+    "place": "dice_cup",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 55.7,
+    "hold_deg": -40.5,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     -0.4,
+     -0.4
+    ],
+    "rel_mm": [
+     1.2,
+     -0.1,
+     27.9
+    ],
+    "goal_mm": [
+     0.0,
+     0.0
+    ],
+    "yaw_in_place_deg": 96.3,
+    "place_moved_mm": 0.0
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.7,
+     "cursor": 0,
+     "stage": "die_approach",
+     "reward": 0.0333,
+     "why": "reached die_approach"
+    },
+    {
+     "t": 3.7,
+     "cursor": 1,
+     "stage": "die_approach",
+     "reward": 0.0333,
+     "why": "stage die_approach"
+    },
+    {
+     "t": 4.27,
+     "cursor": 1,
+     "stage": "die_contact",
+     "reward": 0.0667,
+     "why": "reached die_contact"
+    },
+    {
+     "t": 5.84,
+     "cursor": 1,
+     "stage": "die_lifted",
+     "reward": 0.1333,
+     "why": "reached die_lifted"
+    },
+    {
+     "t": 5.84,
+     "cursor": 2,
+     "stage": "die_lifted",
+     "reward": 0.1333,
+     "why": "stage die_lifted"
+    },
+    {
+     "t": 7.17,
+     "cursor": 2,
+     "stage": "die_transport",
+     "reward": 0.2333,
+     "why": "reached die_transport"
+    },
+    {
+     "t": 9.2,
+     "cursor": 2,
+     "stage": "die_over",
+     "reward": 0.2833,
+     "why": "reached die_over"
+    },
+    {
+     "t": 9.2,
+     "cursor": 3,
+     "stage": "die_over",
+     "reward": 0.2833,
+     "why": "stage die_over"
+    },
+    {
+     "t": 14.0,
+     "cursor": 3,
+     "stage": "die_inside",
+     "reward": 0.3333,
+     "why": "reached die_inside"
+    },
+    {
+     "t": 14.0,
+     "cursor": 4,
+     "stage": "die_inside",
+     "reward": 0.3333,
+     "why": "stage die_inside"
+    },
+    {
+     "t": 18.9,
+     "cursor": 4,
+     "stage": "die_2_approach",
+     "reward": 0.3667,
+     "why": "reached die_2_approach"
+    },
+    {
+     "t": 18.9,
+     "cursor": 5,
+     "stage": "die_2_approach",
+     "reward": 0.3667,
+     "why": "stage die_2_approach"
+    },
+    {
+     "t": 19.44,
+     "cursor": 5,
+     "stage": "die_2_contact",
+     "reward": 0.4,
+     "why": "reached die_2_contact"
+    },
+    {
+     "t": 21.04,
+     "cursor": 5,
+     "stage": "die_2_lifted",
+     "reward": 0.4667,
+     "why": "reached die_2_lifted"
+    },
+    {
+     "t": 21.04,
+     "cursor": 6,
+     "stage": "die_2_lifted",
+     "reward": 0.4667,
+     "why": "stage die_2_lifted"
+    },
+    {
+     "t": 22.27,
+     "cursor": 6,
+     "stage": "die_2_transport",
+     "reward": 0.5667,
+     "why": "reached die_2_transport"
+    },
+    {
+     "t": 24.44,
+     "cursor": 6,
+     "stage": "die_2_over",
+     "reward": 0.6167,
+     "why": "reached die_2_over"
+    },
+    {
+     "t": 24.44,
+     "cursor": 7,
+     "stage": "die_2_over",
+     "reward": 0.6167,
+     "why": "stage die_2_over"
+    },
+    {
+     "t": 29.17,
+     "cursor": 7,
+     "stage": "die_2_inside",
+     "reward": 0.6667,
+     "why": "reached die_2_inside"
+    },
+    {
+     "t": 29.17,
+     "cursor": 8,
+     "stage": "die_2_inside",
+     "reward": 0.6667,
+     "why": "stage die_2_inside"
+    },
+    {
+     "t": 34.1,
+     "cursor": 8,
+     "stage": "die_3_approach",
+     "reward": 0.7,
+     "why": "reached die_3_approach"
+    },
+    {
+     "t": 34.1,
+     "cursor": 9,
+     "stage": "die_3_approach",
+     "reward": 0.7,
+     "why": "stage die_3_approach"
+    },
+    {
+     "t": 34.64,
+     "cursor": 9,
+     "stage": "die_3_contact",
+     "reward": 0.7333,
+     "why": "reached die_3_contact"
+    },
+    {
+     "t": 36.24,
+     "cursor": 9,
+     "stage": "die_3_lifted",
+     "reward": 0.8,
+     "why": "reached die_3_lifted"
+    },
+    {
+     "t": 36.24,
+     "cursor": 10,
+     "stage": "die_3_lifted",
+     "reward": 0.8,
+     "why": "stage die_3_lifted"
+    },
+    {
+     "t": 37.97,
+     "cursor": 10,
+     "stage": "die_3_transport",
+     "reward": 0.9,
+     "why": "reached die_3_transport"
+    },
+    {
+     "t": 39.67,
+     "cursor": 10,
+     "stage": "die_3_over",
+     "reward": 0.95,
+     "why": "reached die_3_over"
+    },
+    {
+     "t": 39.67,
+     "cursor": 11,
+     "stage": "die_3_over",
+     "reward": 0.95,
+     "why": "stage die_3_over"
+    },
+    {
+     "t": 44.4,
+     "cursor": 11,
+     "stage": "die_3_inside",
+     "reward": 1.0,
+     "why": "reached die_3_inside"
+    },
+    {
+     "t": 44.4,
+     "cursor": 12,
+     "stage": "die_3_inside",
+     "reward": 1.0,
+     "why": "stage die_3_inside"
+    }
+   ],
+   "carried_time_s": 22.8,
+   "objects": {
+    "die": {
+     "carried_time_s": 7.6,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.1369,
+      "contact": false,
+      "lift_m": 0.0035,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 7.6,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.1749
+     }
+    },
+    "die_2": {
+     "carried_time_s": 7.6,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.1374,
+      "contact": false,
+      "lift_m": 0.0035,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 7.6,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.1596
+     }
+    },
+    "die_3": {
+     "carried_time_s": 7.6,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.1209,
+      "contact": false,
+      "lift_m": 0.0195,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 7.6,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.2882
+     }
+    }
+   },
+   "drop": null,
+   "drops": 0
+  }
+ }
+}

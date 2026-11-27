@@ -70,6 +70,8 @@ uv run --no-project --python .venv/bin/python python -m lerobot.scripts.lerobot_
     --image-storage-dtype uint8 \
     --image-stride 3
 
+For `flux3_rl`: `--image-storage-size 448 448 --image-stride 1 --no-depth` (every frame; depth is recorded at 10 Hz and not read).
+
 ## Offline training
 
 uv run python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml

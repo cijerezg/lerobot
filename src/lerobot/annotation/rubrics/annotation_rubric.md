@@ -15,7 +15,7 @@ read off the frames.
 | subtask | segment | section 2 | gripper signal proposes the boundaries, frames decide |
 | speed | segment | slow / normal / fast | computed (section 3) |
 | mistake | span | type (section 4) | frames + signals |
-| quality | segment | high, or nothing | signals screen, frames decide (section 5) |
+| quality | segment | high, or nothing | frames decide, tip path as support (section 5) |
 | tip target | frame | offset to the next gripper event | computed (section 6) |
 
 Not labelled any more: precision, contact strategy, control mode, quality grades 1-4, quality spans and their causes.
@@ -35,10 +35,11 @@ every episode (list below; a new object or place gets a new line there).
 | return home | return home | end of the last release | the arm rests |
 
 - **Object** = what it is, with the colour only when the scene holds the same thing in several colours: `die`, `nut`,
-  `ring`, `screwdriver`, `hex key`, `yellow plug`, `red plug`, `blue plug`.
+  `ring`, `screwdriver`, `hex key`, `yellow plug`, `red plug`, `blue plug`, `bit` (screwdriver bit), `bottle` (black spray bottle), `cup` (when the cup itself is picked up).
 - **Place** = where the operator puts it, as seen in the frames: `to cup`, `to case` (screwdriver case),
-  `to peg` (the holder the ring / nut goes on), `with the other yellow plugs` (its compartment of the box),
-  `to the top left drawer`. Example texts: "approach die", "grasp die", "move die to cup", "release die",
+  `to peg` (the holder the ring / nut goes on, also when the nut ends in a hole of its base), `with the other yellow
+  plugs` / `red plugs` / `blue plugs` (its compartment of the box), `to the top left drawer`, `on the other cup` (a cup stacked on a cup), `to box` (nuts dropped
+  into the clear parts box), `to basket` (the wicker basket). Example texts: "approach die", "grasp die", "move die to cup", "release die",
   "move yellow plug with the other yellow plugs", "move nut to peg".
 - The place is where the object ends up in that segment. Fitting or re-seating the object at its place is part of the
   move.
@@ -85,28 +86,52 @@ path length is taken out, and a fast stretch is followed by a fast one (rank cor
 | `other` | a failure that passes both tests below and fits no row above; say what in the note |
 
 - **Two tests, both must hold:** you can point at the frame where it happens, and you can see the result.
-- **Timing:** a mistake is a span of frames, not a whole segment. It is anchored on the event frame (the fingers
-  finish closing on nothing; the torque drops while the gripper is commanded shut; the object leaves the fingers). It
-  starts where the motion that causes it starts, at most 1 s before the event, and ends at the frame the result is
-  visible (fingers reopened and the object still on the table; the object at rest). Typically 1-2 s. Half-open, in
-  dataset frames. Frames outside the span carry no mistake.
-- **Not a mistake:** a hard squeeze that holds the object; hovering, a slow or indirect approach, searching; a
+- **Timing:** a mistake covers the whole mistaken motion, not the instant it shows. It starts where the motion that
+  goes wrong starts (a missed grasp: the frame the gripper starts closing with the arm badly placed, staged closes
+  included; a slip: the close of that grasp; a knock: the start of the sweep that hits) and ends at the event frame
+  (the fingers are shut on nothing; the torque drops while the gripper is commanded shut; the object leaves the
+  fingers). The recovery after the event (reopening, re-aiming) carries no mistake.
+- **Look-ahead:** the policy predicts the next 1 s of actions, so a frame's label describes its next 1 s. When the
+  labels are printed, the mistake starts 1 s before the annotated start (a fixed offset; the annotator marks the
+  motion itself). Boundaries cannot be exact; when in doubt, start the mistake earlier, not later.
+- **Not a mistake:** a half close that reopens before the fingers shut or touch the object (it stays inside the
+  approach, which is then not high); a hard squeeze that holds the object; hovering, a slow or indirect approach, searching; a
   reposition; picking a different object than expected.
 
 ## 5. Quality
 
-One label, `high`, per segment: it covers every frame of the segment, from its first to its last. A segment is either
-high or carries no quality label.
+One label, `high`, per segment: it is judged on the whole motion and covers the segment from its first frame. A
+segment is either high or carries no quality label.
 
-High = the right motion, done relatively smoothly. It does not have to be perfect. Neither rare nor the default: a
-clean operator gets it on roughly half of the segments.
+**Look-ahead** (same reason as section 4): a frame is high only when its next 1 s is high. When the labels are
+printed, high is dropped on the last 1 s of a high segment that is followed by a segment that is not high, and on
+every frame that carries a mistake.
+
+High = decisive and on target: the motion you would want the policy to copy. It does not have to be perfect, and it
+is neither rare nor the default. The annotator judges it from the frames, wrist view first.
 
 **Immediately high:** a move and its release that end with the object seated on a peg or in a hole (nut on the peg,
 tube in the peg), whatever the path looked like, unless the object is lost on the way.
 
-**Otherwise, two parts, both must hold.**
+**High:**
 
-1. Smooth, measured on the fingertip path by `rebot/tip_motion.py` (forward kinematics of the recorded joints):
+- decisive: the arm goes to the object or place in one go and commits; it does not stop to re-aim;
+- on target: in the wrist view the object (in a move: the place) sits near the centre for most of the segment, and
+  the fingers arrive around it. Judged on the frames where it is in view: in an approach the object, and in a carry
+  the place, comes in from the edge of the frame, and what counts is that it then comes straight to the fingers.
+  Over a wide container (cup, drawer) anywhere inside the rim is on target;
+- grasp: the first close holds, and the object is not lost in the carry that follows;
+- release: the object lands at its place and stays.
+
+**Not high:**
+
+- missing a little: the fingers arrive beside the object or place and shift over, before or during the close;
+- sideways motion: the arm drifts off its line and comes back, or slides sideways near the object or place;
+- a search over several objects, an aborted descent, a change of slot, a stop to think;
+- a mistake (section 4) overlaps the segment.
+
+**Support, not a gate:** the fingertip path measured by `rebot/tip_motion.py` (forward kinematics of the recorded
+joints). Typical values of a high segment are below; the annotator can decide against them either way and says why.
 
 | measure | approach, move | grasp | release |
 |---|---|---|---|
@@ -115,16 +140,11 @@ tube in the peg), whatever the path looked like, unless the object is lost on th
 | longest pause (below 1 cm/s) | at most 0.3 s | at most 0.5 s | - |
 | turns of more than 2 mm within 1 s (shaking) | at most 2 | at most 2 | at most 2 |
 
-2. The right motion, read off the frames:
-
-- it goes to the object or place it ends at: no search over several objects, no aborted descent, no change of slot;
-- grasp: the first close holds, and the object is not lost in the carry that follows;
-- release: the object lands at its place and stays;
-- no mistake span (section 4) overlaps the segment.
+A release is judged with the move it ends: it is high only when that move is high.
 
 - A retry can be high: the grasp after a failed close is judged on its own.
 - How the object sits in the fingers (end grip, off centre) does not matter if it is held.
-- The thresholds were set on the 65 segments of the 2026-11-26 pilot and are provisional.
+- The typical values come from the 65 segments of the 2026-11-26 pilot.
 - Stored in the existing `quality` column as 5 for high and -1 otherwise.
 
 ## 6. Tip target
@@ -140,16 +160,21 @@ fingertip at the next gripper event of the episode, in the current tool frame.
 
 ## 7. Order of work
 
-1. Boundaries proposed from the gripper signal (holds), classes filled in by rule.
-2. Review on the clips (`rebot/subtask_labeler`): fix boundaries, add reposition and return home, mark failed grasps.
-3. Mistakes, then quality.
-4. Computed channels: speed, tip target.
-5. Print the root and run `verify_root`.
+`<work>` = the results folder of the pass; commands and file formats are in the README ("A pass under
+annotation_rubric.md").
+
+1. `rebot/window_prepare`: per window (a stretch of an episode) sheets, signals and the holds from the gripper torque.
+2. One agent per window (`rebot/WINDOW_BRIEF.md`): segments, texts, mistakes, quality. The agents are Opus 5.5
+   (`model: opus`), the same model for every window of a pass, about 8 running at a time.
+3. `rebot/window_assemble`: fixed quality rules, tip path measures, speed, per-frame labels with the 1 s look-ahead.
+4. `rebot/window_render`: clips with the labels burned in; the user reviews those, and the feedback goes into this
+   rubric and the brief.
+5. Tip target, print the root, `verify_root` (not built for this rubric yet).
 
 ## 8. Open
 
 | item | pending |
 |---|---|
-| thresholds of the quality screen (section 5) | provisional, from the pilot; no shaking seen yet, so the turns limit is untested |
+| typical tip values of a high segment (section 5) | from the pilot; no shaking seen yet, so the turns value is untested |
 | prompt wording of the quality, mistake and speed clauses | with the trainer change |
 | gripper torque levels ("N of 8") | bounds were fit on the tube roots (max about 0.5 N*m); recompute on this data |

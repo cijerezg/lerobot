@@ -1,0 +1,155 @@
+{
+ "layout": "screwdriver_case_right_p1",
+ "tier": "small",
+ "note": "screwdriver far middle, case near right, turned",
+ "generator": "scripts/sim_builders/small_objects/build_small_layouts.py",
+ "objects": {
+  "screwdriver": {
+   "xy": [
+    0.43,
+    -0.03
+   ],
+   "yaw_deg": 20
+  },
+  "screwdriver_case": {
+   "xy": [
+    0.3,
+    -0.24
+   ],
+   "yaw_deg": -70
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "screwdriver": 0.53,
+    "screwdriver_case": 0.51
+   },
+   "max_moved_mm": 0.53,
+   "contact_dist_mm": {
+    "screwdriver": -0.35,
+    "screwdriver_case": -0.34
+   },
+   "worst_contact_dist_mm": -0.35
+  },
+  "scripted_moves": [
+   {
+    "body": "screwdriver",
+    "place": "screwdriver_case",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.6,
+    "hold_deg": -15.6,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     1.9,
+     0.9
+    ],
+    "rel_mm": [
+     9.5,
+     -22.1,
+     4.5
+    ],
+    "goal_mm": [
+     10.0,
+     -22.0
+    ],
+    "yaw_in_place_deg": 90.0,
+    "place_moved_mm": 0.0
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.84,
+     "cursor": 0,
+     "stage": "approach",
+     "reward": 0.1,
+     "why": "reached approach"
+    },
+    {
+     "t": 3.84,
+     "cursor": 1,
+     "stage": "approach",
+     "reward": 0.1,
+     "why": "stage approach"
+    },
+    {
+     "t": 4.5,
+     "cursor": 1,
+     "stage": "contact",
+     "reward": 0.2,
+     "why": "reached contact"
+    },
+    {
+     "t": 5.8,
+     "cursor": 1,
+     "stage": "lifted",
+     "reward": 0.4,
+     "why": "reached lifted"
+    },
+    {
+     "t": 5.8,
+     "cursor": 2,
+     "stage": "lifted",
+     "reward": 0.4,
+     "why": "stage lifted"
+    },
+    {
+     "t": 6.8,
+     "cursor": 2,
+     "stage": "transport",
+     "reward": 0.7,
+     "why": "reached transport"
+    },
+    {
+     "t": 7.4,
+     "cursor": 2,
+     "stage": "over",
+     "reward": 0.85,
+     "why": "reached over"
+    },
+    {
+     "t": 7.4,
+     "cursor": 3,
+     "stage": "over",
+     "reward": 0.85,
+     "why": "stage over"
+    },
+    {
+     "t": 13.74,
+     "cursor": 3,
+     "stage": "inside",
+     "reward": 1.0,
+     "why": "reached inside"
+    },
+    {
+     "t": 13.74,
+     "cursor": 4,
+     "stage": "inside",
+     "reward": 1.0,
+     "why": "stage inside"
+    }
+   ],
+   "carried_time_s": 6.4,
+   "drop": null,
+   "drops": 0,
+   "raw": {
+    "d_finger_surface_m": 0.095,
+    "contact": false,
+    "lift_m": 0.0015,
+    "d_basket_m": 0.0,
+    "in_footprint": true,
+    "above_rim": 0.0,
+    "carried_time_s": 6.4,
+    "drops": 0,
+    "drop": null,
+    "off_desk": false,
+    "basket_moved_m": 0.0,
+    "displaced_m": 0.2703
+   }
+  }
+ }
+}

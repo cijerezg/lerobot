@@ -120,9 +120,7 @@ def build_named_schedulers(
             continue
         schedulers[name] = preset.build(optimizers[name], num_training_steps=steps)
         logging.info(
-            f"[RL] LR schedule for group {name!r}: {type(preset).__name__} over {steps} of its own "
-            f"steps (warmup={preset.num_warmup_steps}, peak_lr={preset.peak_lr}, "
-            f"decay_lr={preset.decay_lr})"
+            f"[RL] LR schedule for group {name!r} over {steps} of its own steps: {preset}"
         )
     return schedulers
 

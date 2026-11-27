@@ -2,8 +2,10 @@
 
 Generic value-based RL training for LeRobot.  
 MolmoAct2 is the active policy; the PI05 trainer is still registered for the online and inference
-entry points but `rl_offline.py` accepts `molmoact2_rl` only. All model-specific logic is isolated
-behind the `Trainer` ABC. Project-level docs live in `docs/` (see `docs/README.md`).
+entry points but `rl_offline.py` accepts `molmoact2_rl` and `flux3_rl` only. All model-specific logic is isolated
+behind the `Trainer` ABC. `flux3_rl` (`rl/flux3/`, FLUX 3 Action) is an actor-only finetune: no critic, no
+probes, no runtime yet; its trainer installs its own buffer columns in the `prepare_buffer(buffer, cfg)` hook,
+which `rl_offline.py` calls once per source buffer after loading (no-op for the other trainers). Project-level docs live in `docs/` (see `docs/README.md`).
 
 ---
 

@@ -1,0 +1,411 @@
+{
+ "layout": "plug_box_three_p1",
+ "tier": "small",
+ "note": "box near right, plugs far middle, right of the middle and near left",
+ "generator": "scripts/sim_builders/small_objects/build_small_layouts.py",
+ "objects": {
+  "plug_yellow": {
+   "xy": [
+    0.44,
+    0.07
+   ],
+   "yaw_deg": 80
+  },
+  "plug_red": {
+   "xy": [
+    0.4,
+    -0.08
+   ],
+   "yaw_deg": 15
+  },
+  "plug_blue": {
+   "xy": [
+    0.36,
+    0.25
+   ],
+   "yaw_deg": -45
+  },
+  "plug_box": {
+   "xy": [
+    0.28,
+    -0.22
+   ],
+   "yaw_deg": -70
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "plug_yellow": 0.53,
+    "plug_red": 0.53,
+    "plug_blue": 0.53,
+    "plug_box": 0.5
+   },
+   "max_moved_mm": 0.53,
+   "contact_dist_mm": {
+    "plug_yellow": -0.35,
+    "plug_red": -0.35,
+    "plug_blue": -0.35,
+    "plug_box": -0.34
+   },
+   "worst_contact_dist_mm": -0.35
+  },
+  "scripted_moves": [
+   {
+    "body": "plug_yellow",
+    "place": "plug_box",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.5,
+    "hold_deg": -14.1,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     -1.0,
+     3.2
+    ],
+    "rel_mm": [
+     37.0,
+     -24.0,
+     4.5
+    ],
+    "goal_mm": [
+     39.0,
+     -23.6
+    ],
+    "yaw_in_place_deg": 0.0,
+    "place_moved_mm": 0.0
+   },
+   {
+    "body": "plug_red",
+    "place": "plug_box",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.4,
+    "hold_deg": -14.1,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     -1.1,
+     2.9
+    ],
+    "rel_mm": [
+     -40.9,
+     -23.9,
+     4.5
+    ],
+    "goal_mm": [
+     -39.0,
+     -23.6
+    ],
+    "yaw_in_place_deg": -0.2,
+    "place_moved_mm": 0.0
+   },
+   {
+    "body": "plug_blue",
+    "place": "plug_box",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.4,
+    "hold_deg": -14.0,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     -1.1,
+     3.1
+    ],
+    "rel_mm": [
+     -1.8,
+     -23.8,
+     4.5
+    ],
+    "goal_mm": [
+     0.0,
+     -23.6
+    ],
+    "yaw_in_place_deg": 0.0,
+    "place_moved_mm": 0.0
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.8,
+     "cursor": 0,
+     "stage": "plug_yellow_approach",
+     "reward": 0.0333,
+     "why": "reached plug_yellow_approach"
+    },
+    {
+     "t": 3.8,
+     "cursor": 1,
+     "stage": "plug_yellow_approach",
+     "reward": 0.0333,
+     "why": "stage plug_yellow_approach"
+    },
+    {
+     "t": 4.44,
+     "cursor": 1,
+     "stage": "plug_yellow_contact",
+     "reward": 0.0667,
+     "why": "reached plug_yellow_contact"
+    },
+    {
+     "t": 5.8,
+     "cursor": 1,
+     "stage": "plug_yellow_lifted",
+     "reward": 0.1333,
+     "why": "reached plug_yellow_lifted"
+    },
+    {
+     "t": 5.8,
+     "cursor": 2,
+     "stage": "plug_yellow_lifted",
+     "reward": 0.1333,
+     "why": "stage plug_yellow_lifted"
+    },
+    {
+     "t": 7.4,
+     "cursor": 2,
+     "stage": "plug_yellow_transport",
+     "reward": 0.2333,
+     "why": "reached plug_yellow_transport"
+    },
+    {
+     "t": 7.87,
+     "cursor": 2,
+     "stage": "plug_yellow_over",
+     "reward": 0.2833,
+     "why": "reached plug_yellow_over"
+    },
+    {
+     "t": 7.87,
+     "cursor": 3,
+     "stage": "plug_yellow_over",
+     "reward": 0.2833,
+     "why": "stage plug_yellow_over"
+    },
+    {
+     "t": 13.77,
+     "cursor": 3,
+     "stage": "plug_yellow_inside",
+     "reward": 0.3333,
+     "why": "reached plug_yellow_inside"
+    },
+    {
+     "t": 13.77,
+     "cursor": 4,
+     "stage": "plug_yellow_inside",
+     "reward": 0.3333,
+     "why": "stage plug_yellow_inside"
+    },
+    {
+     "t": 19.0,
+     "cursor": 4,
+     "stage": "plug_red_approach",
+     "reward": 0.3667,
+     "why": "reached plug_red_approach"
+    },
+    {
+     "t": 19.0,
+     "cursor": 5,
+     "stage": "plug_red_approach",
+     "reward": 0.3667,
+     "why": "stage plug_red_approach"
+    },
+    {
+     "t": 19.67,
+     "cursor": 5,
+     "stage": "plug_red_contact",
+     "reward": 0.4,
+     "why": "reached plug_red_contact"
+    },
+    {
+     "t": 21.0,
+     "cursor": 5,
+     "stage": "plug_red_lifted",
+     "reward": 0.4667,
+     "why": "reached plug_red_lifted"
+    },
+    {
+     "t": 21.0,
+     "cursor": 6,
+     "stage": "plug_red_lifted",
+     "reward": 0.4667,
+     "why": "stage plug_red_lifted"
+    },
+    {
+     "t": 22.1,
+     "cursor": 6,
+     "stage": "plug_red_transport",
+     "reward": 0.5667,
+     "why": "reached plug_red_transport"
+    },
+    {
+     "t": 22.97,
+     "cursor": 6,
+     "stage": "plug_red_over",
+     "reward": 0.6167,
+     "why": "reached plug_red_over"
+    },
+    {
+     "t": 22.97,
+     "cursor": 7,
+     "stage": "plug_red_over",
+     "reward": 0.6167,
+     "why": "stage plug_red_over"
+    },
+    {
+     "t": 28.94,
+     "cursor": 7,
+     "stage": "plug_red_inside",
+     "reward": 0.6667,
+     "why": "reached plug_red_inside"
+    },
+    {
+     "t": 28.94,
+     "cursor": 8,
+     "stage": "plug_red_inside",
+     "reward": 0.6667,
+     "why": "stage plug_red_inside"
+    },
+    {
+     "t": 34.2,
+     "cursor": 8,
+     "stage": "plug_blue_approach",
+     "reward": 0.7,
+     "why": "reached plug_blue_approach"
+    },
+    {
+     "t": 34.2,
+     "cursor": 9,
+     "stage": "plug_blue_approach",
+     "reward": 0.7,
+     "why": "stage plug_blue_approach"
+    },
+    {
+     "t": 34.87,
+     "cursor": 9,
+     "stage": "plug_blue_contact",
+     "reward": 0.7333,
+     "why": "reached plug_blue_contact"
+    },
+    {
+     "t": 36.2,
+     "cursor": 9,
+     "stage": "plug_blue_lifted",
+     "reward": 0.8,
+     "why": "reached plug_blue_lifted"
+    },
+    {
+     "t": 36.2,
+     "cursor": 10,
+     "stage": "plug_blue_lifted",
+     "reward": 0.8,
+     "why": "stage plug_blue_lifted"
+    },
+    {
+     "t": 37.97,
+     "cursor": 10,
+     "stage": "plug_blue_transport",
+     "reward": 0.9,
+     "why": "reached plug_blue_transport"
+    },
+    {
+     "t": 38.3,
+     "cursor": 10,
+     "stage": "plug_blue_over",
+     "reward": 0.95,
+     "why": "reached plug_blue_over"
+    },
+    {
+     "t": 38.3,
+     "cursor": 11,
+     "stage": "plug_blue_over",
+     "reward": 0.95,
+     "why": "stage plug_blue_over"
+    },
+    {
+     "t": 44.17,
+     "cursor": 11,
+     "stage": "plug_blue_inside",
+     "reward": 1.0,
+     "why": "reached plug_blue_inside"
+    },
+    {
+     "t": 44.17,
+     "cursor": 12,
+     "stage": "plug_blue_inside",
+     "reward": 1.0,
+     "why": "stage plug_blue_inside"
+    }
+   ],
+   "carried_time_s": 20.77,
+   "objects": {
+    "plug_yellow": {
+     "carried_time_s": 6.93,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.0961,
+      "contact": false,
+      "lift_m": 0.001,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 6.93,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.3738
+     }
+    },
+    "plug_red": {
+     "carried_time_s": 6.93,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.0989,
+      "contact": false,
+      "lift_m": 0.001,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 6.93,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.1911
+     }
+    },
+    "plug_blue": {
+     "carried_time_s": 6.9,
+     "drop": null,
+     "drops": 0,
+     "placed": true,
+     "raw": {
+      "d_finger_surface_m": 0.0943,
+      "contact": false,
+      "lift_m": 0.001,
+      "d_basket_m": 0.0,
+      "in_footprint": true,
+      "above_rim": 0.0,
+      "carried_time_s": 6.9,
+      "drops": 0,
+      "drop": null,
+      "off_desk": false,
+      "basket_moved_m": 0.0,
+      "displaced_m": 0.4875
+     }
+    }
+   },
+   "drop": null,
+   "drops": 0
+  }
+ }
+}

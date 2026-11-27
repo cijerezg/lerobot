@@ -1,0 +1,85 @@
+{
+ "layout": "nut_peg_two_turned_p1",
+ "tier": "small_turned",
+ "note": "holder near the middle, nuts left and right, the second goes on top of the first; arm starts turned (nut_peg_two_p1)",
+ "generator": "scripts/sim_builders/small_objects/build_small_starts.py",
+ "objects": {
+  "nut": {
+   "xy": [
+    0.38,
+    0.22
+   ],
+   "yaw_deg": 0
+  },
+  "nut_2": {
+   "xy": [
+    0.42,
+    -0.16
+   ],
+   "yaw_deg": 0
+  },
+  "nut_holder": {
+   "xy": [
+    0.3,
+    0.0
+   ],
+   "yaw_deg": 180
+  }
+ },
+ "start": {
+  "level": "turned",
+  "base": "nut_peg_two_p1",
+  "start_deg": [
+   34.84,
+   -119.52,
+   -87.99,
+   39.64,
+   1.17,
+   34.48,
+   -40.77
+  ],
+  "object": "nut",
+  "distance": "close",
+  "side": "left",
+  "start_vel": [
+   -3.03,
+   0.3,
+   1.95,
+   1.87,
+   1.21,
+   0.0,
+   0.0
+  ],
+  "tip_speed_mm_s": 36,
+  "tip_to_object_mm": 42,
+  "tip_left_of_object_mm": 40,
+  "tip_height_mm": 14,
+  "finger_tilt_deg": 15,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.26,
+  "observed_vel": [
+   -3.0,
+   0.3,
+   1.9,
+   1.7,
+   0.9,
+   -0.0,
+   0.0
+  ],
+  "object_moved_mm": 0.51,
+  "first_subtask": "approach nut",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    32.29999923706055,
+    -113.0,
+    -82.5999984741211,
+    47.900001525878906,
+    2.4000000953674316,
+    -10.5,
+    -48.400001525878906
+   ],
+   "recorded_tip_to_object_xy_mm": 35.7
+  }
+ }
+}

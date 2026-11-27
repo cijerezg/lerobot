@@ -326,3 +326,18 @@ def test_tube_start_levels_registered():
     assert near.overrides() == task_for("tube_peg_left_p1").overrides()
     assert tasks.eval_layouts(tasks.TUBE_START_LAYOUTS) == [f"tube_peg_{side}{level}_p1" for side in ("left", "right") for level in ("", "_half", "_near")]
     assert tasks.eval_layouts(tasks.TUBE_LAYOUTS) == [f"tube_peg_{n}_p1" for n in ("left", "right", "two", "three", "left_half", "left_near", "right_half", "right_near")]
+
+
+def test_small_layouts_registered():
+    assert not set(tasks.SMALL_LAYOUTS) & set(LAYOUTS) and len(tasks.eval_layouts(tasks.SMALL_LAYOUTS)) == 48
+    assert tasks.eval_layouts(tasks.SMALL_LAYOUTS)[:3] == ["die_cup_left_p1", "die_cup_left_near_p1", "die_cup_left_turned_p1"]
+    turned = task_for("nut_peg_across_turned_p1")
+    assert turned.tier == "small_turned" and task_for("nut_peg_across_near_p1").tier == "small_near" and turned.overrides() == task_for("nut_peg_across_p1").overrides()
+    three = task_for("plug_box_three_p1")
+    assert three.tier == "small" and three.time_s == 90.0 and len(three.eval_subtasks) == 13
+    assert three.eval_subtasks[2] == "move yellow plug with the other yellow plugs" and three.stages[-1] == ("plug_blue_inside", 1.0, 12)
+    assert task_for("nut_peg_two_p1").stages[-1] == ("inserted_2", 1.0, 8)
+    flags = task_for("die_cup_left_p1").overrides()
+    assert "--policy.task=tidy up the table" in flags and "--env.robot.gripper_force_cap=10.0" in flags
+    assert '--policy.eval_subtasks=["approach die", "grasp die", "move die to cup", "release die", "return home"]' in flags
+

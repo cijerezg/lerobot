@@ -93,7 +93,7 @@ CODE="$(cd "$CODE" && pwd)"
 if (( SIM )); then CONFIG="${CONFIG:-$WS/config_rl_sim.yaml}"; LAUNCHER=run_sim_eval.sh; else CONFIG="${CONFIG:-$WS/config_rl_validate.yaml}"; LAUNCHER=run_probes.sh; fi
 [[ -f "$CONFIG" ]] || die "config not found: $CONFIG"
 (( SIM && WITH_SIM )) && die "--sim and --with-sim are exclusive"
-SIM_CONFIG="${SIM_CONFIG:-$WS/config_rl_sim.yaml}"  # --with-sim: sim config; SIM_LAYOUTS = layouts (default: the registry's eval set)
+SIM_CONFIG="${SIM_CONFIG:-$WS/config_rl_sim.yaml}"  # --with-sim: sim config; SIM_LAYOUTS = layouts (default: the registry's eval set); SIM_EVAL_ARGS = run_sim_eval.sh's extra flags
 (( WITH_SIM )) && { [[ -f "$SIM_CONFIG" ]] || die "sim config not found: $SIM_CONFIG"; }
 
 if   [[ -d "$CODE/src/lerobot" ]];         then SRC="$CODE/src/lerobot"
@@ -230,6 +230,7 @@ export PARALLEL='${SIM_PARALLEL:-3}'
 export SIM_VIDEOS='${SIM_VIDEOS:-p1}'
 export SIM_SERVER='${SIM_SERVER:-1}'
 export LAYOUTS='${SIM_LAYOUTS:-}'
+export SIM_EVAL_ARGS='${SIM_EVAL_ARGS:-}'
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
 bash lerobot/scripts/$LAUNCHER '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'

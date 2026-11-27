@@ -1,0 +1,260 @@
+{
+ "layout": "nut_peg_two_p1",
+ "tier": "small",
+ "note": "holder near the middle, nuts left and right, the second goes on top of the first",
+ "generator": "scripts/sim_builders/small_objects/build_small_layouts.py",
+ "objects": {
+  "nut": {
+   "xy": [
+    0.38,
+    0.22
+   ],
+   "yaw_deg": 0
+  },
+  "nut_2": {
+   "xy": [
+    0.42,
+    -0.16
+   ],
+   "yaw_deg": 0
+  },
+  "nut_holder": {
+   "xy": [
+    0.3,
+    0.0
+   ],
+   "yaw_deg": 180
+  }
+ },
+ "checks": {
+  "settle": {
+   "moved_mm": {
+    "nut": 0.51,
+    "nut_2": 0.51,
+    "nut_holder": 0.5
+   },
+   "max_moved_mm": 0.51,
+   "contact_dist_mm": {
+    "nut": -0.34,
+    "nut_2": -0.34,
+    "nut_holder": -0.34
+   },
+   "worst_contact_dist_mm": -0.34
+  },
+  "scripted_moves": [
+   {
+    "body": "nut",
+    "place": "nut_holder",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.7,
+    "hold_deg": -20.6,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     1.1,
+     0.2
+    ],
+    "rel_mm": [
+     0.1,
+     -0.2,
+     5.0
+    ],
+    "goal_mm": [
+     0.0,
+     0.0
+    ],
+    "yaw_in_place_deg": -209.8,
+    "place_moved_mm": 0.3
+   },
+   {
+    "body": "nut_2",
+    "place": "nut_holder",
+    "cap": 10.0,
+    "miss_mm": 0.0,
+    "grasp_miss_mm": 0.0,
+    "lift_mm": 58.8,
+    "hold_deg": -20.6,
+    "hold_force_N": 10.0,
+    "in_grasp_mm": [
+     1.0,
+     -0.2
+    ],
+    "rel_mm": [
+     0.2,
+     0.0,
+     9.0
+    ],
+    "goal_mm": [
+     0.0,
+     0.0
+    ],
+    "yaw_in_place_deg": -150.3,
+    "place_moved_mm": 0.2
+   }
+  ],
+  "scorer": {
+   "reward": 1.0,
+   "events": [
+    {
+     "t": 3.84,
+     "cursor": 0,
+     "stage": "approach_1",
+     "reward": 0.05,
+     "why": "reached approach_1"
+    },
+    {
+     "t": 3.84,
+     "cursor": 1,
+     "stage": "approach_1",
+     "reward": 0.05,
+     "why": "stage approach_1"
+    },
+    {
+     "t": 4.4,
+     "cursor": 1,
+     "stage": "contact_1",
+     "reward": 0.1,
+     "why": "reached contact_1"
+    },
+    {
+     "t": 5.67,
+     "cursor": 1,
+     "stage": "lifted_1",
+     "reward": 0.2,
+     "why": "reached lifted_1"
+    },
+    {
+     "t": 5.67,
+     "cursor": 2,
+     "stage": "lifted_1",
+     "reward": 0.2,
+     "why": "stage lifted_1"
+    },
+    {
+     "t": 7.9,
+     "cursor": 2,
+     "stage": "at_peg_1",
+     "reward": 0.35,
+     "why": "reached at_peg_1"
+    },
+    {
+     "t": 7.9,
+     "cursor": 3,
+     "stage": "at_peg_1",
+     "reward": 0.35,
+     "why": "stage at_peg_1"
+    },
+    {
+     "t": 12.67,
+     "cursor": 3,
+     "stage": "on_peg_1",
+     "reward": 0.425,
+     "why": "reached on_peg_1"
+    },
+    {
+     "t": 13.77,
+     "cursor": 3,
+     "stage": "inserted_1",
+     "reward": 0.5,
+     "why": "reached inserted_1"
+    },
+    {
+     "t": 13.77,
+     "cursor": 4,
+     "stage": "inserted_1",
+     "reward": 0.5,
+     "why": "stage inserted_1"
+    },
+    {
+     "t": 19.04,
+     "cursor": 4,
+     "stage": "approach_2",
+     "reward": 0.55,
+     "why": "reached approach_2"
+    },
+    {
+     "t": 19.04,
+     "cursor": 5,
+     "stage": "approach_2",
+     "reward": 0.55,
+     "why": "stage approach_2"
+    },
+    {
+     "t": 19.64,
+     "cursor": 5,
+     "stage": "contact_2",
+     "reward": 0.6,
+     "why": "reached contact_2"
+    },
+    {
+     "t": 20.87,
+     "cursor": 5,
+     "stage": "lifted_2",
+     "reward": 0.7,
+     "why": "reached lifted_2"
+    },
+    {
+     "t": 20.87,
+     "cursor": 6,
+     "stage": "lifted_2",
+     "reward": 0.7,
+     "why": "stage lifted_2"
+    },
+    {
+     "t": 23.07,
+     "cursor": 6,
+     "stage": "at_peg_2",
+     "reward": 0.85,
+     "why": "reached at_peg_2"
+    },
+    {
+     "t": 23.07,
+     "cursor": 7,
+     "stage": "at_peg_2",
+     "reward": 0.85,
+     "why": "stage at_peg_2"
+    },
+    {
+     "t": 28.47,
+     "cursor": 7,
+     "stage": "on_peg_2",
+     "reward": 0.925,
+     "why": "reached on_peg_2"
+    },
+    {
+     "t": 28.97,
+     "cursor": 7,
+     "stage": "inserted_2",
+     "reward": 1.0,
+     "why": "reached inserted_2"
+    },
+    {
+     "t": 28.97,
+     "cursor": 8,
+     "stage": "inserted_2",
+     "reward": 1.0,
+     "why": "stage inserted_2"
+    }
+   ],
+   "raw": [
+    {
+     "level": 6,
+     "peg_offset_mm": 0.2,
+     "depth_mm": 10.0,
+     "lift_mm": 2.5,
+     "upright": 1.0,
+     "touched": false
+    },
+    {
+     "level": 6,
+     "peg_offset_mm": 0.2,
+     "depth_mm": 6.0,
+     "lift_mm": 6.5,
+     "upright": 1.0,
+     "touched": false
+    }
+   ]
+  }
+ }
+}

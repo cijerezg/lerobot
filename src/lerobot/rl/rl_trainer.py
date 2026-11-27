@@ -94,6 +94,9 @@ class Trainer(ABC):
         additional offline datasets load (the vocab remap extends the metadata).
         """
 
+    def prepare_buffer(self, buffer, cfg) -> None:  # noqa: B027 — optional hook, deliberately non-abstract
+        """Per-model additions to one offline replay buffer (extra columns, future frames), after its labels."""
+
     def save_training_state(self, training_state_dir) -> None:  # noqa: B027 — optional hook, deliberately non-abstract
         """Write trainer-owned state that is not in the policy next to a checkpoint. No-op by default."""
 
@@ -129,6 +132,14 @@ class Trainer(ABC):
         local critic for value overlays.
         """
         return self.make_policy(cfg)
+
+    def make_inference_policy(self, cfg) -> nn.Module:
+        """The policy standalone inference runs from ``cfg.policy.pretrained_path``. Default: make_policy."""
+        return self.make_policy(cfg)
+
+    def make_inference_processors(self, cfg) -> tuple:
+        """The processors standalone inference runs with. Default: make_processors."""
+        return self.make_processors(cfg)
 
     @abstractmethod
     def freeze_model(self, policy: nn.Module, cfg) -> None:
@@ -395,10 +406,10 @@ class Trainer(ABC):
             )
 
             return MolmoAct2Trainer()
-        if policy_type == "flux3_remote":
-            from lerobot.rl.flux3.rl_flux3_trainer import Flux3RemoteTrainer
+        if policy_type == "flux3_rl":
+            from lerobot.rl.flux3.rl_flux3_trainer import Flux3Trainer
 
-            return Flux3RemoteTrainer()
+            return Flux3Trainer()
         raise ValueError(
             f"No Trainer registered for policy type {policy_type!r}. "
             f"Add a new rl_<model>.py and register it in Trainer.for_config()."

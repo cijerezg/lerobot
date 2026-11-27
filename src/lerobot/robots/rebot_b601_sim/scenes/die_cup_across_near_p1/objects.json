@@ -1,0 +1,78 @@
+{
+ "layout": "die_cup_across_near_p1",
+ "tier": "small_near",
+ "note": "die near right, cup left, carried across the desk; arm starts near (die_cup_across_p1)",
+ "generator": "scripts/sim_builders/small_objects/build_small_starts.py",
+ "objects": {
+  "die": {
+   "xy": [
+    0.38,
+    -0.18
+   ],
+   "yaw_deg": 40
+  },
+  "dice_cup": {
+   "xy": [
+    0.3,
+    0.12
+   ],
+   "yaw_deg": 0
+  }
+ },
+ "start": {
+  "level": "near",
+  "base": "die_cup_across_p1",
+  "start_deg": [
+   -27.74,
+   -103.78,
+   -70.29,
+   31.03,
+   -5.5,
+   -35.0,
+   -84.32
+  ],
+  "object": "die",
+  "distance": "ontop",
+  "side": "none",
+  "start_vel": [
+   0.08,
+   -4.61,
+   0.07,
+   -1.87,
+   0.19,
+   0.0,
+   0.0
+  ],
+  "tip_speed_mm_s": 30,
+  "tip_to_object_mm": 39,
+  "tip_left_of_object_mm": 0,
+  "tip_height_mm": 47,
+  "finger_tilt_deg": 23,
+  "arm_contact_mm": null,
+  "observed_state_error_deg": 0.33,
+  "observed_vel": [
+   0.1,
+   -4.5,
+   0.0,
+   -1.7,
+   0.1,
+   -0.0,
+   0.0
+  ],
+  "object_moved_mm": 0.53,
+  "first_subtask": "approach die",
+  "reward_at_start": 0.0,
+  "near_from": {
+   "recorded_state": [
+    -28.0,
+    -100.5999984741211,
+    -70.5,
+    32.20000076293945,
+    -5.5,
+    -35.0,
+    -75.69999694824219
+   ],
+   "recorded_tip_to_object_xy_mm": 1.8
+  }
+ }
+}

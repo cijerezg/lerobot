@@ -36,8 +36,9 @@ FAR_M = 0.30  # approach / at_peg progress is 0 at this distance
 class TubeLadder:
     """One tube and its holder: ``level`` = number of ladder stages reached so far (latched, in order)."""
 
-    def __init__(self, scorer: TaskScorer, tube: str, holder: str) -> None:
+    def __init__(self, scorer: TaskScorer, tube: str, holder: str, bore_r: float = BORE_R_M) -> None:
         self.s = scorer
+        self.bore_r = bore_r
         m = scorer.model
         self.tube, self.holder = m.body(tube).id, m.body(holder).id
         peg = m.geom(f"{holder}_peg").id  # capsule along the holder's z
@@ -60,8 +61,8 @@ class TubeLadder:
         rel = d.xmat[self.holder].reshape(3, 3).T @ (d.xpos[self.tube] - d.xpos[self.holder])  # tube bottom centre in the holder frame
         off = float(np.linalg.norm(rel[:2]))
         depth = self.peg_top - float(rel[2])  # tube bottom below the peg top
-        upright = float(d.xmat[self.tube].reshape(3, 3)[:, 2] @ d.xmat[self.holder].reshape(3, 3)[:, 2])
-        on_peg = off < BORE_R_M and depth > ON_PEG_DEPTH_M and upright > UPRIGHT_COS
+        upright = abs(float(d.xmat[self.tube].reshape(3, 3)[:, 2] @ d.xmat[self.holder].reshape(3, 3)[:, 2]))  # either end up
+        on_peg = off < self.bore_r and depth > ON_PEG_DEPTH_M and upright > UPRIGHT_COS
         if on_peg and not touched:
             self.untouched_since = s.t if self.untouched_since is None else self.untouched_since
         else:
@@ -78,13 +79,15 @@ class TubeLadder:
             contact=0.0,
             lifted=lift / LIFT_M if touched else 0.0,
             at_peg=1.0 - (off - NEAR_M) / (FAR_M - NEAR_M),
-            on_peg=depth / ON_PEG_DEPTH_M if off < BORE_R_M else 0.0,
+            on_peg=depth / ON_PEG_DEPTH_M if off < self.bore_r else 0.0,
             inserted=held / HOLD_S,
         )
 
 
-def tube_peg_scorer(n: int) -> type[DenseScorer]:
-    """Scorer class for n tubes (bodies ``tube``, ``tube_2``, ...) on their holders, in script order."""
+def tube_peg_scorer(n: int, tube: str = "tube", holder: str = "tube_holder", bore_r: float = BORE_R_M, one_holder: bool = False) -> type[DenseScorer]:
+    """Scorer class for n tubes (bodies ``tube``, ``tube_2``, ...) on their holders, in script order. Any part with a bore that
+    goes over a peg takes ``tube`` / ``holder`` / ``bore_r`` (the nut of the small objects set: origin at its centre);
+    ``one_holder``: every part goes on the peg of ``holder``, stacked."""
     suffixes = [""] + [f"_{i}" for i in range(2, n + 1)]
 
     class TubePegScorer(DenseScorer):
@@ -92,7 +95,7 @@ def tube_peg_scorer(n: int) -> type[DenseScorer]:
                   for i in range(n) for name, value, cursor in zip(NAMES, VALUES, CURSORS, strict=True)]
 
         def _setup(self) -> None:
-            self.ladders = [TubeLadder(self, f"tube{sfx}", f"tube_holder{sfx}") for sfx in suffixes]
+            self.ladders = [TubeLadder(self, f"{tube}{sfx}", holder if one_holder else f"{holder}{sfx}", bore_r) for sfx in suffixes]
 
         def _reset(self) -> None:
             super()._reset()
@@ -114,5 +117,5 @@ def tube_peg_scorer(n: int) -> type[DenseScorer]:
         def extra(self) -> dict:
             return dict(raw=[ladder.raw for ladder in self.ladders])
 
-    TubePegScorer.__name__ = f"TubePeg_{n}"
+    TubePegScorer.__name__ = f"{tube.capitalize()}Peg_{n}"
     return TubePegScorer

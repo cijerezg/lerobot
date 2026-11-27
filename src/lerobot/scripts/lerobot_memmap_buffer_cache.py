@@ -258,6 +258,11 @@ def main():
         help="Store image/depth rows only every N-th frame (low-dim stays dense at every frame). "
         "Must divide the policy chunk_size. sample() then draws image-aligned starts.",
     )
+    parser.add_argument(
+        "--no-depth",
+        action="store_true",
+        help="Leave the depth sidecars out of the cache (for a policy that does not read depth).",
+    )
     args = parser.parse_args()
 
     if args.data_dir is None and args.repo_id is None:
@@ -308,6 +313,8 @@ def main():
     # full 0.1mm precision (depth_pointmap_design.md §A.1).
     depth_root = Path(dataset.root) / "depth"
     depth_keys = sorted(p.name for p in depth_root.iterdir()) if depth_root.exists() else []
+    if args.no_depth:
+        depth_keys = []
     logger.info(f"Depth sidecar keys: {depth_keys}")
     if "subtask_index" in sample:
         complementary_info_keys.append("subtask_index")

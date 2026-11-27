@@ -57,8 +57,8 @@ def approach_ends():
 class Arm:
     """Kinematics of the corrected sim arm in follower degrees (the layouts' joint zero offset applied)."""
 
-    def __init__(self, scene_xml, zero_deg):
-        self.s = V1.Scene(scene_xml, ["tube", "tube_holder"])
+    def __init__(self, scene_xml, zero_deg, bodies=("tube", "tube_holder")):
+        self.s = V1.Scene(scene_xml, bodies)
         self.zero = np.asarray(zero_deg)
         self.ge = self.s.m.body("gripper_end").id
 
@@ -79,6 +79,21 @@ class Arm:
         s = self.s
         dists = [c.dist for c in s.d.contact[: s.d.ncon] if (s.m.geom_bodyid[c.geom1] in s.robot_bodies) != (s.m.geom_bodyid[c.geom2] in s.robot_bodies)]
         return round(min(dists) * 1e3, 2) if dists else None
+
+    def tip_jacobian(self, deg):
+        """d fingertip point / d arm joints (3, 6), m per deg."""
+        s = self.s
+        jp = np.zeros((3, s.m.nv))
+        mujoco.mj_jac(s.m, s.d, jp, None, self.tip(deg)[0], self.ge)
+        return np.radians(jp[:, s.dofs])
+
+    def tip_vel(self, deg, vel):
+        return self.tip_jacobian(deg) @ np.asarray(vel)[:6]
+
+    def joint_vel(self, deg, tip_vel):
+        """Smallest arm joint velocity (6,), deg/s, that moves the fingertip point at `tip_vel` (m/s)."""
+        J = self.tip_jacobian(deg)
+        return J.T @ np.linalg.solve(J @ J.T, tip_vel)
 
     def move_tip(self, deg, target):
         """Position-only IK from `deg`: the smallest joint change that puts the fingertip point at `target`."""

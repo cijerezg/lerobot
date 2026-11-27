@@ -57,6 +57,7 @@ ARM_BODIES = ("link1", "link2", "link3", "link4", "link5", "link6", "gripper_end
 DEPTH_UNITS_M = 1e-4
 DEPTH_MIN_M = 0.07
 DEPTH_MAX_M = 2.5
+START_RUN_IN_S = 0.3  # a start velocity (scene numeric start_vel): the arm moves at it for this long before the start pose
 
 
 def to_qpos(action_deg: np.ndarray) -> np.ndarray:
@@ -103,6 +104,7 @@ class RebotB601Sim(Robot):
         self.episodes_done = 0
         self.subtask_scorer: TaskScorer | None = None
         self._start_deg: np.ndarray | None = None
+        self._start_vel: np.ndarray | None = None
         self._backgrounds: dict[str, np.ndarray] = {}
 
     @property
@@ -149,6 +151,10 @@ class RebotB601Sim(Robot):
         # scripts/sim_builders/tube_peg/build_tube_starts.py). None = every episode starts at the park pose.
         start = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_NUMERIC, "start_deg")
         self._start_deg = None if start < 0 else self.model.numeric_data[self.model.numeric_adr[start] :][: len(self.motor_names)].copy()
+        # ... and may carry the arm's velocity there (<numeric name="start_vel">, deg/s per motor;
+        # scripts/sim_builders/small_objects/build_small_starts.py): the episode starts with the arm moving through the start pose.
+        vel = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_NUMERIC, "start_vel")
+        self._start_vel = None if vel < 0 else self.model.numeric_data[self.model.numeric_adr[vel] :][: len(self.motor_names)].copy()
         for cam, config in self.config.cameras.items():
             if config.background is not None:
                 background = scene.parent / config.background  # absolute paths pass through the join unchanged
@@ -173,11 +179,15 @@ class RebotB601Sim(Robot):
         pass
 
     def _reset_scene(self) -> None:
-        """Objects back to their MJCF poses, arm at qpos0 (the park pose) or at the scene's start pose, targets holding it."""
+        """Objects back to their MJCF poses, arm at qpos0 (the park pose) or at the scene's start pose, targets holding it.
+        With a start velocity the arm settles START_RUN_IN_S of that velocity before the start pose and its targets then run
+        to the start pose at that velocity, so the episode's first observation has the arm moving."""
         mujoco.mj_resetData(self.model, self.data)
         self._ctrl_deg = from_qpos(self._qpos_robot())  # qpos0 read as follower degrees: the park pose
         if self._start_deg is not None:
             self._ctrl_deg = self._start_deg.copy()
+        if self._start_vel is not None:
+            self._ctrl_deg = self._start_deg - self._start_vel * START_RUN_IN_S
         self._qpos_robot()[:] = to_qpos(self._ctrl_deg + self._zero_deg)
         self.data.ctrl[:] = self._qpos_robot()
         self._vel_deg = np.zeros(len(self.motor_names))
@@ -186,6 +196,15 @@ class RebotB601Sim(Robot):
         # poses are taken: the composite renders a clutter body only once it has moved from here
         for _ in range(int(0.5 / self.model.opt.timestep)):
             mujoco.mj_step(self.model, self.data)
+        if self._start_vel is not None:
+            ticks = round(START_RUN_IN_S * self.config.fps)
+            for _ in range(ticks):
+                before = self._present_deg()
+                for _ in range(self.config.substeps):
+                    self._ctrl_deg = self._ctrl_deg + self._start_vel * self.model.opt.timestep
+                    self.data.ctrl[:] = to_qpos(self._ctrl_deg + self._zero_deg)
+                    mujoco.mj_step(self.model, self.data)
+            self._vel_deg = (self._present_deg() - before) * self.config.fps
         self._start_xpos = self.data.xpos.copy(); self._start_xquat = self.data.xquat.copy()
         if self.subtask_scorer is not None:
             self.subtask_scorer.reset()

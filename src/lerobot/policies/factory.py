@@ -127,6 +127,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .molmoact2.modeling_molmoact2 import MolmoAct2Policy
 
         return MolmoAct2Policy
+    elif name == "flux3":
+        from .flux3.modeling_flux3 import Flux3Policy
+
+        return Flux3Policy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -231,6 +235,23 @@ def make_pre_post_processors(
         NotImplementedError: If a processor factory is not implemented for the given
             policy configuration type.
     """
+    if pretrained_path and policy_cfg.type == "flux3":
+        # The saved history steps are stateful and linked to each other; flux3 reconnects them itself.
+        from .flux3.processor_flux3 import make_flux3_pre_post_processors_from_pretrained
+
+        return make_flux3_pre_post_processors_from_pretrained(
+            policy_cfg,
+            pretrained_path,
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+            preprocessor_config_filename=kwargs.get(
+                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+            ),
+            postprocessor_config_filename=kwargs.get(
+                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+            ),
+        )
+
     if pretrained_path:
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
